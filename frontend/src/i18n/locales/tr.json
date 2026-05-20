@@ -1,0 +1,437 @@
+{
+  "product": {
+    "name": "DevDeploy Hub",
+    "shortName": "DDH",
+    "description": "Kubernetes teslimatı, çalışma zamanı sağlığı, loglar ve gözlemlenebilirlik için self-service DevOps platformu."
+  },
+  "language": {
+    "label": "Dil",
+    "english": "İngilizce",
+    "turkish": "Türkçe"
+  },
+  "common": {
+    "actions": "İşlemler",
+    "active": "Aktif",
+    "all": "Tümü",
+    "application": "Uygulama",
+    "applications": "Uygulamalar",
+    "apply": "Uygula",
+    "cancel": "İptal",
+    "clear": "Temizle",
+    "close": "Kapat",
+    "comingSoon": "Yakında",
+    "copy": "Kopyala",
+    "create": "Oluştur",
+    "created": "Oluşturulma",
+    "dashboard": "Dashboard",
+    "deploy": "Deploy et",
+    "details": "Detaylar",
+    "duration": "Süre",
+    "email": "E-posta",
+    "environment": "Ortam",
+    "filters": "Filtreler",
+    "health": "Sağlık",
+    "image": "Image",
+    "age": "Yaş",
+    "commit": "Commit",
+    "cpu": "CPU",
+    "lastUpdated": "Son güncelleme",
+    "loading": "Yükleniyor",
+    "memory": "Memory",
+    "name": "Ad",
+    "namespace": "Namespace",
+    "node": "Node",
+    "owner": "Sahip",
+    "password": "Şifre",
+    "pod": "Pod",
+    "replicas": "Replica",
+    "repository": "Repository",
+    "restarts": "Restart",
+    "required": "Zorunlu",
+    "role": "Rol",
+    "save": "Değişiklikleri kaydet",
+    "search": "Ara",
+    "settings": "Ayarlar",
+    "status": "Durum",
+    "strategy": "Strateji",
+    "submit": "Gönder",
+    "view": "Görüntüle",
+    "version": "Version",
+    "viewDetails": "Detayları görüntüle",
+    "zone": "Zone"
+  },
+  "nav": {
+    "main": "Ana",
+    "platform": "Platform",
+    "operations": "Operasyon",
+    "dashboard": "Dashboard",
+    "applications": "Uygulamalar",
+    "deployments": "Deploymentlar",
+    "cluster": "Cluster",
+    "logs": "Loglar",
+    "monitoring": "Monitoring",
+    "settings": "Ayarlar"
+  },
+  "topbar": {
+    "searchPlaceholder": "Uygulama, deployment, pod ara...",
+    "environmentLabel": "Ortam",
+    "commandCenter": "Komut merkezi",
+    "notifications": "Bildirimler",
+    "profile": "Profil",
+    "demoUser": "Platform Mühendisi"
+  },
+  "status": {
+    "pending": "Beklemede",
+    "running": "Çalışıyor",
+    "success": "Başarılı",
+    "failed": "Başarısız"
+  },
+  "health": {
+    "healthy": "Sağlıklı",
+    "degraded": "Zayıflamış",
+    "critical": "Kritik"
+  },
+  "environment": {
+    "production": "Production",
+    "staging": "Staging",
+    "development": "Development"
+  },
+  "strategy": {
+    "rolling": "Rolling update",
+    "blueGreen": "Blue-green",
+    "canary": "Canary"
+  },
+  "landing": {
+    "eyebrow": "Self-service DevOps platformu",
+    "headline": "Daha hızlı deploy et. Daha akıllı gözlemle. Kubernetes'i güvenle yönet.",
+    "subheadline": "DevDeploy Hub; uygulama kaydı, Kubernetes deployment tetikleme, pod sağlığı inceleme, log görüntüleme ve kritik metrikleri izleme için ekiplere şık bir kontrol katmanı sunar.",
+    "openDashboard": "Dashboard'u Aç",
+    "createAccount": "Hesap Oluştur",
+    "previewTitle": "Production deploy kontrol merkezi",
+    "previewSubtitle": "Canlı release aktivitesi, pod sağlığı ve cluster baskısı tek operasyonel görünümde.",
+    "featuresTitle": "Yüksek güven isteyen platform ekipleri için",
+    "featuresSubtitle": "Uygulama ekipleri için hızlı, DevOps ekipleri için kontrollü bir geliştirici deneyimi.",
+    "features": {
+      "deployments": {
+        "title": "Self-service deploymentlar",
+        "description": "Platform mühendisinin komut çalıştırmasını beklemeden güvenli deployment akışlarını tetikle."
+      },
+      "gitops": {
+        "title": "GitOps uyumlu akışlar",
+        "description": "Image tag, ortam, rollout stratejisi ve onayları gerçek teslimat pratiklerine göre modelle."
+      },
+      "kubernetes": {
+        "title": "Kubernetes görünürlüğü",
+        "description": "Incident sırasında araç değiştirmeden pod, namespace, workload ve cluster sağlığını gör."
+      },
+      "observability": {
+        "title": "Yerleşik observability",
+        "description": "Logları, metrikleri, deployment timeline'ını ve çalışma zamanı sinyallerini release yüzeyine yakın tut."
+      }
+    },
+    "stackTitle": "Modern cloud-native stack etrafında tasarlandı",
+    "footerTagline": "Internal developer platformlar için premium frontend temeli.",
+    "footerProduct": "DevDeploy Hub"
+  },
+  "auth": {
+    "backHome": "Ana sayfaya dön",
+    "demoHint": "Demo bilgileri: platform@devdeploy.local / deploy123",
+    "login": {
+      "title": "Tekrar hoş geldin",
+      "subtitle": "Deployment yönetmek, log incelemek ve cluster sağlığını izlemek için giriş yap.",
+      "button": "Giriş yap",
+      "switchText": "DevDeploy Hub'a yeni misin?",
+      "switchLink": "Hesap oluştur",
+      "success": "Demo erişimiyle giriş yapıldı."
+    },
+    "register": {
+      "title": "Workspace oluştur",
+      "subtitle": "Mock organizasyonla başla ve platform deneyimini keşfet.",
+      "button": "Hesap oluştur",
+      "switchText": "Zaten hesabın var mı?",
+      "switchLink": "Giriş yap",
+      "success": "Demo workspace oluşturuldu."
+    },
+    "fields": {
+      "name": "Ad soyad",
+      "email": "İş e-postası",
+      "password": "Şifre",
+      "organization": "Organizasyon"
+    },
+    "placeholders": {
+      "name": "Ada Lovelace",
+      "email": "platform@devdeploy.local",
+      "password": "deploy123",
+      "organization": "Acme Cloud"
+    },
+    "visualTitle": "Operasyonel güvenle release yap",
+    "visualDescription": "Geliştiriciler, DevOps ekipleri ve nöbetçi mühendisler için tek arayüz."
+  },
+  "dashboard": {
+    "title": "Operasyon dashboard'u",
+    "description": "Uygulamalar, deploymentlar, podlar ve cluster baskısı için canlı yönetici görünümü.",
+    "stats": {
+      "totalApps": "Toplam Uygulama",
+      "activeDeployments": "Aktif Deployment",
+      "healthyPods": "Sağlıklı Pod",
+      "failedDeployments": "Başarısız Deployment",
+      "clusterHealth": "Cluster Sağlığı",
+      "details": {
+        "totalApps": "Tüm takip edilen namespace'lerde",
+        "activeDeployments": "Bekleyen veya çalışanlar",
+        "healthyPods": "Ready ve probe kontrolleri başarılı",
+        "failedDeployments": "Platform incelemesi gerekiyor",
+        "clusterHealth": "Control plane normal"
+      }
+    },
+    "charts": {
+      "deploymentActivity": "Deployment aktivitesi",
+      "deploymentActivityDescription": "Son deploy pencerelerindeki başarılı ve başarısız rollout hacmi.",
+      "environmentDistribution": "Ortam dağılımı",
+      "environmentDistributionDescription": "Mevcut uygulamaların hedef ortamlara göre dağılımı."
+    },
+    "recentDeployments": "Son deploymentlar",
+    "timeline": "Deployment timeline",
+    "clusterStatus": "Cluster durumu",
+    "quickActions": "Hızlı işlemler",
+    "quickActionsDescription": "Geçerli ortam için sık kullanılan platform görevleri.",
+    "actions": {
+      "registerApplication": "Uygulama kaydet",
+      "createDeployment": "Deployment oluştur",
+      "viewLogs": "Logları görüntüle",
+      "openMonitoring": "Monitoring aç"
+    },
+    "cluster": {
+      "apiServer": "API server",
+      "scheduler": "Scheduler",
+      "controllerManager": "Controller manager",
+      "ingress": "Ingress"
+    }
+  },
+  "applications": {
+    "title": "Uygulamalar",
+    "description": "Servisleri kaydet, sahipliği takip et ve ortamlar arasında deployment sağlığını incele.",
+    "newApplication": "Yeni Uygulama",
+    "searchPlaceholder": "Ad, image, sahip veya namespace ile ara...",
+    "statusFilter": "Sağlık filtresi",
+    "emptyTitle": "Filtrelerle eşleşen uygulama yok",
+    "emptyDescription": "Filtreleri temizle veya workspace'e yeni bir uygulama kaydet.",
+    "table": {
+      "name": "Ad",
+      "image": "Image",
+      "environment": "Ortam",
+      "owner": "Sahip",
+      "lastDeployment": "Son Deployment",
+      "health": "Sağlık",
+      "actions": "İşlemler"
+    },
+    "modal": {
+      "title": "Uygulama kaydet",
+      "description": "Platform kataloğu için mock uygulama kaydı oluştur.",
+      "name": "Uygulama adı",
+      "image": "Container image",
+      "environment": "Ortam",
+      "owner": "Sahip",
+      "namespace": "Namespace",
+      "replicas": "Replica sayısı",
+      "submit": "Uygulama oluştur",
+      "success": "Uygulama mock kataloğa eklendi."
+    },
+    "detail": {
+      "subtitle": "Uygulama runtime bilgisi, release geçmişi, pod sağlığı, loglar, metrikler ve ayarlar.",
+      "currentImage": "Mevcut Image",
+      "lastDeploy": "Son Deploy",
+      "healthScore": "Sağlık Skoru",
+      "deploymentHistory": "Deployment geçmişi",
+      "relatedPods": "İlgili podlar",
+      "runtimeMetrics": "Runtime metrikleri",
+      "settingsTitle": "Uygulama ayarları",
+      "settingsDescription": "Bu servis için sahiplik, namespace ve deployment varsayılanları.",
+      "notFoundTitle": "Uygulama bulunamadı",
+      "notFoundDescription": "Uygulama mock katalogda yer almıyor."
+    },
+    "tabs": {
+      "overview": "Genel Bakış",
+      "deployments": "Deploymentlar",
+      "pods": "Podlar",
+      "logs": "Loglar",
+      "metrics": "Metrikler",
+      "settings": "Ayarlar"
+    }
+  },
+  "deployments": {
+    "title": "Deploymentlar",
+    "description": "Image release'lerini, rollout stratejilerini ve deployment sağlığını tek kuyruktan yönet.",
+    "createDeployment": "Deployment oluştur",
+    "filters": {
+      "environment": "Ortam",
+      "status": "Durum",
+      "application": "Uygulama"
+    },
+    "table": {
+      "deployment": "Deployment",
+      "application": "Uygulama",
+      "imageTag": "Image Tag",
+      "environment": "Ortam",
+      "status": "Durum",
+      "owner": "Sahip",
+      "duration": "Süre",
+      "created": "Oluşturulma",
+      "actions": "İşlemler"
+    },
+    "modal": {
+      "title": "Deployment oluştur",
+      "description": "Mock Kubernetes rollout isteği hazırla.",
+      "application": "Uygulama",
+      "environment": "Ortam",
+      "imageTag": "Image tag",
+      "replicas": "Replica sayısı",
+      "strategy": "Strateji",
+      "submit": "Deployment başlat",
+      "success": "Deployment isteği oluşturuldu."
+    },
+    "detail": {
+      "subtitle": "Deployment yürütme timeline'ı, metadata ve log önizlemesi.",
+      "metadata": "Deployment metadata",
+      "logsPreview": "Log önizlemesi",
+      "rollback": "Rollback",
+      "rollbackDisabled": "Rollback bu frontend temelinde mock olarak tutuluyor.",
+      "notFoundTitle": "Deployment bulunamadı",
+      "notFoundDescription": "Deployment mock kuyrukta yer almıyor."
+    }
+  },
+  "timeline": {
+    "requestCreated": "İstek oluşturuldu",
+    "requestCreatedDescription": "Deployment isteği kontrol katmanı tarafından kabul edildi.",
+    "manifestGenerated": "Manifest üretildi",
+    "manifestGeneratedDescription": "Kubernetes manifestleri seçilen release profiline göre render edildi.",
+    "appliedToCluster": "Cluster'a uygulandı",
+    "appliedToClusterDescription": "Rollout hedef namespace'e uygulandı.",
+    "podsScheduled": "Podlar schedule edildi",
+    "podsScheduledDescription": "Yeni podlar schedule edildi ve readiness kontrolleri başlıyor.",
+    "healthCheckPassed": "Sağlık kontrolü geçti",
+    "healthCheckPassedDescription": "Servis sağlığı ve erişilebilirlik kontrolleri başarılı oldu."
+  },
+  "cluster": {
+    "title": "Cluster",
+    "description": "Node kapasitesi, namespace'ler, workload sağlığı ve Kubernetes kaynak baskısını incele.",
+    "overview": {
+      "nodes": "Node",
+      "namespaces": "Namespace",
+      "pods": "Pod",
+      "services": "Service",
+      "deployments": "Deployment",
+      "cpuUsage": "CPU Kullanımı",
+      "memoryUsage": "Memory Kullanımı"
+    },
+    "nodes": "Node tablosu",
+    "namespaces": "Namespace'ler",
+    "workloadHealth": "Workload sağlığı",
+    "table": {
+      "node": "Node",
+      "status": "Durum",
+      "cpu": "CPU",
+      "memory": "Memory",
+      "pods": "Podlar",
+      "version": "Version",
+      "zone": "Zone"
+    }
+  },
+  "logs": {
+    "title": "Loglar",
+    "description": "Uygulama ve pod loglarını seviye filtresi ve aranabilir runtime bağlamıyla takip et.",
+    "level": {
+      "info": "Info",
+      "warn": "Uyarı",
+      "error": "Hata",
+      "debug": "Debug"
+    },
+    "filters": {
+      "app": "Uygulama",
+      "pod": "Pod",
+      "level": "Seviye",
+      "search": "Loglarda ara"
+    },
+    "autoScroll": "Auto-scroll",
+    "copyLogs": "Logları kopyala",
+    "copied": "Loglar panoya kopyalandı.",
+    "terminalTitle": "Runtime akışı",
+    "messages": {
+      "deploymentStarted": "{{deployment}} deployment'ı {{image}} image'ı için başladı.",
+      "readinessProbe": "{{pod}} için readiness probe başarılı oldu.",
+      "cacheWarm": "Cache warmup {{duration}} içinde tamamlandı.",
+      "slowQuery": "{{service}} üzerinde {{duration}} sonrası yavaş sorgu algılandı.",
+      "errorBudget": "Error budget burn rate {{rate}} eşiğini geçti.",
+      "rolloutComplete": "Rollout tamamlandı ve trafik {{image}} image'ına aktarıldı.",
+      "metricsScraped": "{{namespace}} namespace'i için Prometheus scrape tamamlandı.",
+      "podRestart": "{{pod}} pod'u memory baskısı sonrası yeniden başladı."
+    }
+  },
+  "monitoring": {
+    "title": "Monitoring",
+    "description": "Kaynak kullanımı, trafik, hatalar ve pod restartları için Grafana tarzı operasyonel görünüm.",
+    "timeRange": "Zaman aralığı",
+    "ranges": {
+      "oneHour": "1s",
+      "sixHours": "6s",
+      "twentyFourHours": "24s",
+      "sevenDays": "7g"
+    },
+    "charts": {
+      "cpu": "Zamana göre CPU kullanımı",
+      "memory": "Zamana göre memory kullanımı",
+      "requests": "Request rate",
+      "errors": "Error rate",
+      "restarts": "Pod restartları"
+    }
+  },
+  "settings": {
+    "title": "Ayarlar",
+    "description": "Workspace kimliği, tercihler, mock API tokenları ve platform entegrasyonlarını yönet.",
+    "profile": {
+      "title": "Profil",
+      "description": "Deployment sahipliği ve audit kayıtlarında kullanılan kişisel bilgiler.",
+      "name": "Ad",
+      "email": "E-posta",
+      "role": "Rol"
+    },
+    "organization": {
+      "title": "Organizasyon",
+      "description": "Ekipler ve ortam politikası için workspace seviyesinde kimlik.",
+      "name": "Organizasyon adı",
+      "plan": "Plan",
+      "planValue": "Platform Premium"
+    },
+    "appearance": {
+      "title": "Görünüm",
+      "description": "Arayüzü operasyon odaları ve odaklı mühendislik seansları için uygun tut.",
+      "theme": "Tema",
+      "dark": "Koyu",
+      "compactMode": "Kompakt mod"
+    },
+    "apiTokens": {
+      "title": "API tokenları",
+      "description": "Gelecekteki API entegrasyonları için mock token yönetimi.",
+      "create": "Token oluştur",
+      "lastUsed": "Son kullanım"
+    },
+    "integrations": {
+      "title": "Entegrasyonlar",
+      "description": "Backend hazır olduğunda delivery, cluster ve observability sistemlerini bağla.",
+      "connected": "Bağlı",
+      "mocked": "Mock",
+      "configure": "Yapılandır"
+    }
+  },
+  "empty": {
+    "title": "Henüz veri yok",
+    "description": "Veri geldiğinde bu alan son platform aktivitesini gösterecek."
+  },
+  "charts": {
+    "success": "Başarılı",
+    "failed": "Başarısız",
+    "production": "Production",
+    "staging": "Staging",
+    "development": "Development"
+  }
+}
