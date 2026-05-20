@@ -44,3 +44,13 @@ In development mode, the first registered user becomes `admin`; later users are 
 ## Local Development
 
 The Docker setup does not replace local workflows. You can still run the backend with `uvicorn app.main:app --reload` from `backend/`, and the frontend with `npm run dev` from `frontend/`.
+
+## Continuous Integration
+
+GitHub Actions workflows live in `.github/workflows`:
+
+- `frontend-ci.yml` validates the React/Vite frontend with `npm ci`, `npm run lint`, and `npm run build`.
+- `backend-ci.yml` validates the FastAPI backend by installing Python dependencies, compiling modules, running Alembic migrations against PostgreSQL, importing the app, and smoke testing `/api/v1/health`.
+- `docker-ci.yml` validates `docker-compose.yml` and builds the backend and frontend Docker images.
+
+These workflows are CI only. They do not deploy, publish images, or require secrets.

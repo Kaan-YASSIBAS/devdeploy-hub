@@ -1,0 +1,27 @@
+name: Docker CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  docker-ci:
+    name: Docker build validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate Docker Compose config
+        run: docker compose config
+
+      - name: Build backend image
+        run: docker build -t devdeploy-backend:ci ./backend
+
+      - name: Build frontend image
+        run: docker build --build-arg VITE_API_BASE_URL=http://localhost:8000/api/v1 -t devdeploy-frontend:ci ./frontend
