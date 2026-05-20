@@ -4,7 +4,7 @@
 
 These manifests deploy DevDeploy Hub to a local Kubernetes cluster such as kind or minikube. They are intended for local development and portfolio validation only.
 
-This phase does not add Kubernetes automation inside the backend, Terraform, Argo CD, or observability infrastructure.
+These manifests do not add Kubernetes automation inside the backend or observability infrastructure.
 
 ## Prerequisites
 
@@ -73,6 +73,46 @@ kubectl apply -k infra/kubernetes/overlays/dev
 The base ConfigMap keeps `FRONTEND_ORIGIN=http://devdeploy.local` for ingress. The dev overlay allows both `http://devdeploy.local` and `http://localhost:5173` so the port-forward first-test path works without changing application code.
 
 The backend Deployment uses an initContainer to wait for PostgreSQL before running Alembic migrations and starting Uvicorn. This reduces startup restarts when the database pod is running but not ready yet.
+
+## Release Overlay With GHCR Images
+
+The dev overlay uses local kind or minikube images:
+
+```text
+devdeploy-backend:local
+devdeploy-frontend:local
+```
+
+The release overlay uses GitHub Container Registry release images:
+
+```text
+ghcr.io/kaan-yassibas/devdeploy-backend:v1.0.0
+ghcr.io/kaan-yassibas/devdeploy-frontend:v1.0.0
+```
+
+Use the release overlay after the `v1.0.0` backend and frontend images have been published to GHCR.
+
+Render the release overlay:
+
+```powershell
+kubectl kustomize infra/kubernetes/overlays/release
+```
+
+Apply the release overlay:
+
+```powershell
+kubectl apply -k infra/kubernetes/overlays/release
+```
+
+Argo CD release application:
+
+```powershell
+kubectl apply -f infra/argocd/applications/devdeploy-hub-release.yaml
+kubectl get applications -n argocd
+kubectl describe application devdeploy-hub-release -n argocd
+```
+
+The dev and release overlays manage the same Kubernetes resources in the `devdeploy` namespace. Run one Argo CD Application at a time unless you are intentionally testing resource ownership overlap.
 
 ## Check Resources
 
@@ -152,10 +192,16 @@ kubectl logs -n devdeploy deployment/postgres
 kubectl delete -k infra/kubernetes/overlays/dev
 ```
 
+For the release overlay:
+
+```powershell
+kubectl delete -k infra/kubernetes/overlays/release
+```
+
 ## Notes
 
 - Secret values are local-only and intentionally simple.
 - PostgreSQL runs as a simple Deployment for local development.
 - A production setup should use managed PostgreSQL or a proper StatefulSet/operator.
 - Kubernetes deployment automation is not implemented yet.
-- Terraform, GitOps, and monitoring infrastructure will be added later.
+- Monitoring infrastructure will be added later.

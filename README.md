@@ -120,6 +120,8 @@ devdeploy-frontend:local
 
 The frontend image is currently built with `VITE_API_BASE_URL=http://localhost:8000/api/v1` to preserve the local port-forward workflow. Future phases will add environment-specific overlays, image tags, or Argo CD Image Updater for GitOps deployment.
 
+The registry-based release overlay lives at `infra/kubernetes/overlays/release`. It uses GHCR images tagged `v1.0.0` and is intended for registry-based GitOps testing.
+
 ## Kubernetes Local Manifests
 
 Local Kubernetes manifests live in `infra/kubernetes`.
@@ -150,12 +152,18 @@ terraform apply
 
 ## GitOps / Argo CD
 
-Argo CD is installed by Terraform as a local platform add-on. It watches the DevDeploy Hub Kustomize overlay at `infra/kubernetes/overlays/dev` and syncs it into the cluster.
+Argo CD is installed by Terraform as a local platform add-on. It can sync the dev overlay at `infra/kubernetes/overlays/dev` or the GHCR-backed release overlay at `infra/kubernetes/overlays/release`.
 
-The Argo CD Application manifest lives at:
+The dev Argo CD Application manifest lives at:
 
 ```text
 infra/argocd/applications/devdeploy-hub-dev.yaml
+```
+
+A release Application is also available for the GHCR-backed release overlay:
+
+```text
+infra/argocd/applications/devdeploy-hub-release.yaml
 ```
 
 Quick commands:
@@ -168,4 +176,4 @@ kubectl apply -f infra/argocd/applications/devdeploy-hub-dev.yaml
 kubectl get applications -n argocd
 ```
 
-Kustomize remains the source of application manifests; Terraform manages the platform bootstrap, and Argo CD performs the app sync.
+Kustomize remains the source of application manifests; Terraform manages the platform bootstrap, and Argo CD performs the app sync. Use either the dev or release Application in the `devdeploy` namespace at a time unless you are intentionally testing overlap.
