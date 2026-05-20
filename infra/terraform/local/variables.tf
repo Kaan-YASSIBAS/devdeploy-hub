@@ -21,3 +21,15 @@ variable "install_ingress_nginx" {
   type        = bool
   default     = true
 }
+
+variable "argocd_chart_version" {
+  description = "Optional Argo CD chart version. Null uses the provider's latest resolvable chart version."
+  type        = string
+  default     = null
+}
+
+variable "install_argocd" {
+  description = "Whether to install Argo CD through Helm."
+  type        = bool
+  default     = true
+}

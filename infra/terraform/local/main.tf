@@ -51,3 +51,29 @@ resource "helm_release" "ingress_nginx" {
     kubernetes_namespace_v1.ingress_nginx
   ]
 }
+
+resource "helm_release" "argocd" {
+  count = var.install_argocd ? 1 : 0
+
+  name       = "argocd"
+  repository = "https://argoproj.github.io/argo-helm"
+  chart      = "argo-cd"
+  version    = var.argocd_chart_version
+  namespace  = kubernetes_namespace_v1.argocd.metadata[0].name
+
+  create_namespace = false
+
+  values = [
+    yamlencode({
+      server = {
+        service = {
+          type = "ClusterIP"
+        }
+      }
+    })
+  ]
+
+  depends_on = [
+    kubernetes_namespace_v1.argocd
+  ]
+}

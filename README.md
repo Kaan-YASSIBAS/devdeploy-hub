@@ -54,6 +54,7 @@ GitHub Actions workflows live in `.github/workflows`:
 - `docker-ci.yml` validates `docker-compose.yml` and builds the backend and frontend Docker images.
 - `kubernetes-ci.yml` validates Kustomize rendering and Kubernetes manifest schemas for the local dev overlay.
 - `terraform-ci.yml` validates Terraform formatting, initialization, and configuration for the local platform bootstrap layer.
+- `argocd-ci.yml` validates the Argo CD Application manifests used for local GitOps sync.
 
 These workflows are CI only. They do not deploy, publish images, or require secrets.
 
@@ -74,7 +75,7 @@ The detailed guide in `infra/kubernetes/README.md` covers local image builds for
 
 Terraform local platform bootstrap lives in `infra/terraform/local`.
 
-It manages local platform add-ons and namespaces, such as `ingress-nginx`, `argocd`, and `monitoring`. Application manifests are still applied from `infra/kubernetes` with Kustomize.
+It manages local platform add-ons and namespaces, such as `ingress-nginx`, Argo CD, and `monitoring`. Application manifests stay in `infra/kubernetes` and are applied with Kustomize or synced by Argo CD.
 
 Quick commands:
 
@@ -84,3 +85,25 @@ terraform init
 terraform plan
 terraform apply
 ```
+
+## GitOps / Argo CD
+
+Argo CD is installed by Terraform as a local platform add-on. It watches the DevDeploy Hub Kustomize overlay at `infra/kubernetes/overlays/dev` and syncs it into the cluster.
+
+The Argo CD Application manifest lives at:
+
+```text
+infra/argocd/applications/devdeploy-hub-dev.yaml
+```
+
+Quick commands:
+
+```powershell
+cd infra/terraform/local
+terraform apply
+
+kubectl apply -f infra/argocd/applications/devdeploy-hub-dev.yaml
+kubectl get applications -n argocd
+```
+
+Kustomize remains the source of application manifests; Terraform manages the platform bootstrap, and Argo CD performs the app sync.

@@ -1,0 +1,62 @@
+name: Argo CD CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  argocd-ci:
+    name: Argo CD manifest validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install YAML parser
+        run: python -m pip install pyyaml
+
+      - name: Validate Argo CD Application manifests
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          files = sorted(Path("infra/argocd/applications").glob("*.y*ml"))
+          if not files:
+              raise SystemExit("No Argo CD Application manifests found.")
+
+          for path in files:
+              docs = [doc for doc in yaml.safe_load_all(path.read_text()) if doc]
+              if not docs:
+                  raise SystemExit(f"{path} does not contain any YAML documents.")
+
+              for doc in docs:
+                  if doc.get("apiVersion") != "argoproj.io/v1alpha1":
+                      raise SystemExit(f"{path}: expected apiVersion=argoproj.io/v1alpha1")
+                  if doc.get("kind") != "Application":
+                      raise SystemExit(f"{path}: expected kind=Application")
+
+                  metadata = doc.get("metadata") or {}
+                  spec = doc.get("spec") or {}
+                  source = spec.get("source") or {}
+                  destination = spec.get("destination") or {}
+
+                  if metadata.get("namespace") != "argocd":
+                      raise SystemExit(f"{path}: Application must live in the argocd namespace.")
+                  if source.get("path") != "infra/kubernetes/overlays/dev":
+                      raise SystemExit(f"{path}: source.path must target infra/kubernetes/overlays/dev.")
+                  if destination.get("namespace") != "devdeploy":
+                      raise SystemExit(f"{path}: destination.namespace must be devdeploy.")
+
+          print(f"Validated {len(files)} Argo CD manifest file(s).")
+          PY
