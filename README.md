@@ -139,7 +139,7 @@ The detailed guide in `infra/kubernetes/README.md` covers local image builds for
 
 Terraform local platform bootstrap lives in `infra/terraform/local`.
 
-It manages local platform add-ons and namespaces, such as `ingress-nginx`, Argo CD, and `monitoring`. Application manifests stay in `infra/kubernetes` and are applied with Kustomize or synced by Argo CD.
+It manages local platform add-ons and namespaces, such as `ingress-nginx`, Argo CD, and kube-prometheus-stack in `monitoring`. Application manifests stay in `infra/kubernetes` and are applied with Kustomize or synced by Argo CD.
 
 Quick commands:
 
@@ -149,6 +149,30 @@ terraform init
 terraform plan
 terraform apply
 ```
+
+## Monitoring
+
+The local monitoring stack is installed by Terraform from `infra/terraform/local` using the `kube-prometheus-stack` Helm chart.
+
+It includes:
+
+```text
+Prometheus
+Grafana
+Alertmanager
+kube-state-metrics
+node-exporter
+```
+
+Access is local-only through port-forwarding:
+
+```powershell
+kubectl get svc -n monitoring
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
+```
+
+Grafana uses `admin` / `admin` for local development. This is cluster-level monitoring; application-level FastAPI metrics will be added later.
 
 ## GitOps / Argo CD
 

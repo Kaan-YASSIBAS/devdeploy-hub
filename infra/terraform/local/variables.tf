@@ -33,3 +33,15 @@ variable "install_argocd" {
   type        = bool
   default     = true
 }
+
+variable "kube_prometheus_stack_chart_version" {
+  description = "Optional kube-prometheus-stack chart version. Null uses the provider's latest resolvable chart version for local development."
+  type        = string
+  default     = null
+}
+
+variable "install_monitoring" {
+  description = "Whether to install kube-prometheus-stack through Helm."
+  type        = bool
+  default     = true
+}
