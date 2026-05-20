@@ -53,6 +53,7 @@ GitHub Actions workflows live in `.github/workflows`:
 - `backend-ci.yml` validates the FastAPI backend by installing Python dependencies, compiling modules, running Alembic migrations against PostgreSQL, importing the app, and smoke testing `/api/v1/health`.
 - `docker-ci.yml` validates `docker-compose.yml` and builds the backend and frontend Docker images.
 - `kubernetes-ci.yml` validates Kustomize rendering and Kubernetes manifest schemas for the local dev overlay.
+- `terraform-ci.yml` validates Terraform formatting, initialization, and configuration for the local platform bootstrap layer.
 
 These workflows are CI only. They do not deploy, publish images, or require secrets.
 
@@ -68,3 +69,18 @@ kubectl get all -n devdeploy
 ```
 
 The detailed guide in `infra/kubernetes/README.md` covers local image builds for kind/minikube, the first-test port-forward path, and the optional `devdeploy.local` ingress path.
+
+## Terraform Local Bootstrap
+
+Terraform local platform bootstrap lives in `infra/terraform/local`.
+
+It manages local platform add-ons and namespaces, such as `ingress-nginx`, `argocd`, and `monitoring`. Application manifests are still applied from `infra/kubernetes` with Kustomize.
+
+Quick commands:
+
+```powershell
+cd infra/terraform/local
+terraform init
+terraform plan
+terraform apply
+```

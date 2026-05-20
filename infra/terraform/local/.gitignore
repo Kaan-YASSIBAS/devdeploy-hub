@@ -1,0 +1,5 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Commit .terraform.lock.hcl after terraform init for reproducible provider versions.
