@@ -61,7 +61,7 @@ These workflows do not deploy the application. Publishing uses the built-in `GIT
 
 ## Container Registry
 
-Backend and frontend images are published to GitHub Container Registry on pushes to `main`.
+Backend and frontend images are published to GitHub Container Registry on pushes to `main`, and on semantic release tags that match `v*.*.*`.
 
 Images:
 
@@ -70,15 +70,46 @@ Backend:  ghcr.io/kaan-yassibas/devdeploy-backend
 Frontend: ghcr.io/kaan-yassibas/devdeploy-frontend
 ```
 
-Tags:
+Main branch builds produce:
 
 ```text
+main
 latest
-sha-<commit>
-<branch>
+sha-<shortsha>
+```
+
+Release tag builds produce:
+
+```text
+v1.0.0
+sha-<shortsha>
 ```
 
 The workflow can also be started manually with `workflow_dispatch`.
+
+Create and push a release tag:
+
+```powershell
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Pushing a `v*.*.*` Git tag triggers `container-publish.yml` and publishes release-tagged backend and frontend images to GHCR.
+
+Recommended deployment tags:
+
+- Use `sha-<shortsha>` for exact traceability.
+- Use `v1.0.0` style tags for stable release deployments.
+- Avoid `latest` for GitOps production-like deployments.
+
+Release checklist:
+
+- Ensure CI is green on `main`.
+- Create a semantic version tag.
+- Push the tag.
+- Verify the `Container Publish` workflow.
+- Verify the GHCR backend and frontend packages.
+- Later, update the GitOps manifest or overlay to the release tag.
 
 The local kind and minikube workflow still uses local images:
 

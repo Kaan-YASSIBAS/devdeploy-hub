@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*.*.*"
   workflow_dispatch:
 
 permissions:
@@ -39,9 +41,10 @@ jobs:
         with:
           images: ${{ env.BACKEND_IMAGE }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,prefix=sha-,format=short
             type=ref,event=branch
+            type=semver,pattern=v{{version}}
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push backend image
         uses: docker/build-push-action@v6
@@ -77,9 +80,10 @@ jobs:
         with:
           images: ${{ env.FRONTEND_IMAGE }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,prefix=sha-,format=short
             type=ref,event=branch
+            type=semver,pattern=v{{version}}
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push frontend image
         uses: docker/build-push-action@v6
