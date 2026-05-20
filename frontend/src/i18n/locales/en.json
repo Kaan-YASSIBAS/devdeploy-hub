@@ -1,0 +1,437 @@
+{
+  "product": {
+    "name": "DevDeploy Hub",
+    "shortName": "DDH",
+    "description": "A self-service DevOps platform for Kubernetes delivery, runtime health, logs, and observability."
+  },
+  "language": {
+    "label": "Language",
+    "english": "English",
+    "turkish": "Turkish"
+  },
+  "common": {
+    "actions": "Actions",
+    "active": "Active",
+    "all": "All",
+    "application": "Application",
+    "applications": "Applications",
+    "apply": "Apply",
+    "cancel": "Cancel",
+    "clear": "Clear",
+    "close": "Close",
+    "comingSoon": "Coming soon",
+    "copy": "Copy",
+    "create": "Create",
+    "created": "Created",
+    "dashboard": "Dashboard",
+    "deploy": "Deploy",
+    "details": "Details",
+    "duration": "Duration",
+    "email": "Email",
+    "environment": "Environment",
+    "filters": "Filters",
+    "health": "Health",
+    "image": "Image",
+    "age": "Age",
+    "commit": "Commit",
+    "cpu": "CPU",
+    "lastUpdated": "Last updated",
+    "loading": "Loading",
+    "memory": "Memory",
+    "name": "Name",
+    "namespace": "Namespace",
+    "node": "Node",
+    "owner": "Owner",
+    "password": "Password",
+    "pod": "Pod",
+    "replicas": "Replicas",
+    "repository": "Repository",
+    "restarts": "Restarts",
+    "required": "Required",
+    "role": "Role",
+    "save": "Save changes",
+    "search": "Search",
+    "settings": "Settings",
+    "status": "Status",
+    "strategy": "Strategy",
+    "submit": "Submit",
+    "view": "View",
+    "version": "Version",
+    "viewDetails": "View details",
+    "zone": "Zone"
+  },
+  "nav": {
+    "main": "Main",
+    "platform": "Platform",
+    "operations": "Operations",
+    "dashboard": "Dashboard",
+    "applications": "Applications",
+    "deployments": "Deployments",
+    "cluster": "Cluster",
+    "logs": "Logs",
+    "monitoring": "Monitoring",
+    "settings": "Settings"
+  },
+  "topbar": {
+    "searchPlaceholder": "Search apps, deployments, pods...",
+    "environmentLabel": "Environment",
+    "commandCenter": "Command center",
+    "notifications": "Notifications",
+    "profile": "Profile",
+    "demoUser": "Platform Engineer"
+  },
+  "status": {
+    "pending": "Pending",
+    "running": "Running",
+    "success": "Success",
+    "failed": "Failed"
+  },
+  "health": {
+    "healthy": "Healthy",
+    "degraded": "Degraded",
+    "critical": "Critical"
+  },
+  "environment": {
+    "production": "Production",
+    "staging": "Staging",
+    "development": "Development"
+  },
+  "strategy": {
+    "rolling": "Rolling update",
+    "blueGreen": "Blue-green",
+    "canary": "Canary"
+  },
+  "landing": {
+    "eyebrow": "Self-service DevOps platform",
+    "headline": "Deploy faster. Observe smarter. Control Kubernetes with confidence.",
+    "subheadline": "DevDeploy Hub gives engineering teams a polished command layer for registering applications, triggering Kubernetes deployments, inspecting pod health, viewing logs, and watching the metrics that matter.",
+    "openDashboard": "Open Dashboard",
+    "createAccount": "Create Account",
+    "previewTitle": "Production deploy control plane",
+    "previewSubtitle": "Live release activity, pod health, and cluster pressure in one operational view.",
+    "featuresTitle": "Built for high-trust platform teams",
+    "featuresSubtitle": "A developer experience that feels fast for app teams and controlled for DevOps.",
+    "features": {
+      "deployments": {
+        "title": "Self-service deployments",
+        "description": "Trigger curated deployment workflows without waiting for a platform engineer to run commands."
+      },
+      "gitops": {
+        "title": "GitOps-ready workflows",
+        "description": "Model image tags, environments, rollout strategies, and approvals around real delivery practices."
+      },
+      "kubernetes": {
+        "title": "Kubernetes visibility",
+        "description": "See pods, namespaces, workloads, and cluster health without switching tools mid-incident."
+      },
+      "observability": {
+        "title": "Observability built in",
+        "description": "Keep logs, metrics, deployment timelines, and runtime signals close to the release surface."
+      }
+    },
+    "stackTitle": "Designed around the modern cloud-native stack",
+    "footerTagline": "Premium frontend foundation for internal developer platforms.",
+    "footerProduct": "DevDeploy Hub"
+  },
+  "auth": {
+    "backHome": "Back to home",
+    "demoHint": "Demo credentials: platform@devdeploy.local / deploy123",
+    "login": {
+      "title": "Welcome back",
+      "subtitle": "Sign in to manage deployments, inspect logs, and monitor cluster health.",
+      "button": "Sign in",
+      "switchText": "New to DevDeploy Hub?",
+      "switchLink": "Create an account",
+      "success": "Signed in with demo access."
+    },
+    "register": {
+      "title": "Create your workspace",
+      "subtitle": "Start with a mock organization and explore the platform experience.",
+      "button": "Create account",
+      "switchText": "Already have an account?",
+      "switchLink": "Sign in",
+      "success": "Demo workspace created."
+    },
+    "fields": {
+      "name": "Full name",
+      "email": "Work email",
+      "password": "Password",
+      "organization": "Organization"
+    },
+    "placeholders": {
+      "name": "Ada Lovelace",
+      "email": "platform@devdeploy.local",
+      "password": "deploy123",
+      "organization": "Acme Cloud"
+    },
+    "visualTitle": "Release with operational confidence",
+    "visualDescription": "One interface for developers, DevOps teams, and on-call engineers."
+  },
+  "dashboard": {
+    "title": "Operations dashboard",
+    "description": "A live executive view of applications, deployments, pods, and cluster pressure.",
+    "stats": {
+      "totalApps": "Total Apps",
+      "activeDeployments": "Active Deployments",
+      "healthyPods": "Healthy Pods",
+      "failedDeployments": "Failed Deployments",
+      "clusterHealth": "Cluster Health",
+      "details": {
+        "totalApps": "Across all tracked namespaces",
+        "activeDeployments": "Currently pending or running",
+        "healthyPods": "Ready and passing probes",
+        "failedDeployments": "Needs platform review",
+        "clusterHealth": "Control plane nominal"
+      }
+    },
+    "charts": {
+      "deploymentActivity": "Deployment activity",
+      "deploymentActivityDescription": "Successful and failed rollout volume across the last deploy windows.",
+      "environmentDistribution": "Environment distribution",
+      "environmentDistributionDescription": "Current application spread by target environment."
+    },
+    "recentDeployments": "Recent deployments",
+    "timeline": "Deployment timeline",
+    "clusterStatus": "Cluster status",
+    "quickActions": "Quick actions",
+    "quickActionsDescription": "Common platform tasks for the current environment.",
+    "actions": {
+      "registerApplication": "Register application",
+      "createDeployment": "Create deployment",
+      "viewLogs": "View logs",
+      "openMonitoring": "Open monitoring"
+    },
+    "cluster": {
+      "apiServer": "API server",
+      "scheduler": "Scheduler",
+      "controllerManager": "Controller manager",
+      "ingress": "Ingress"
+    }
+  },
+  "applications": {
+    "title": "Applications",
+    "description": "Register services, track ownership, and inspect deployment health across environments.",
+    "newApplication": "New Application",
+    "searchPlaceholder": "Search by name, image, owner, or namespace...",
+    "statusFilter": "Health filter",
+    "emptyTitle": "No applications match your filters",
+    "emptyDescription": "Clear the filters or register a new application to populate this workspace.",
+    "table": {
+      "name": "Name",
+      "image": "Image",
+      "environment": "Environment",
+      "owner": "Owner",
+      "lastDeployment": "Last Deployment",
+      "health": "Health",
+      "actions": "Actions"
+    },
+    "modal": {
+      "title": "Register application",
+      "description": "Create a mock application record for the platform catalog.",
+      "name": "Application name",
+      "image": "Container image",
+      "environment": "Environment",
+      "owner": "Owner",
+      "namespace": "Namespace",
+      "replicas": "Replica count",
+      "submit": "Create application",
+      "success": "Application created in the mock catalog."
+    },
+    "detail": {
+      "subtitle": "Application runtime, release history, pod health, logs, metrics, and settings.",
+      "currentImage": "Current Image",
+      "lastDeploy": "Last Deploy",
+      "healthScore": "Health Score",
+      "deploymentHistory": "Deployment history",
+      "relatedPods": "Related pods",
+      "runtimeMetrics": "Runtime metrics",
+      "settingsTitle": "Application settings",
+      "settingsDescription": "Ownership, namespace, and deployment defaults for this service.",
+      "notFoundTitle": "Application not found",
+      "notFoundDescription": "The application does not exist in the mock catalog."
+    },
+    "tabs": {
+      "overview": "Overview",
+      "deployments": "Deployments",
+      "pods": "Pods",
+      "logs": "Logs",
+      "metrics": "Metrics",
+      "settings": "Settings"
+    }
+  },
+  "deployments": {
+    "title": "Deployments",
+    "description": "Coordinate image releases, rollout strategies, and deployment health from one queue.",
+    "createDeployment": "Create deployment",
+    "filters": {
+      "environment": "Environment",
+      "status": "Status",
+      "application": "Application"
+    },
+    "table": {
+      "deployment": "Deployment",
+      "application": "Application",
+      "imageTag": "Image Tag",
+      "environment": "Environment",
+      "status": "Status",
+      "owner": "Owner",
+      "duration": "Duration",
+      "created": "Created",
+      "actions": "Actions"
+    },
+    "modal": {
+      "title": "Create deployment",
+      "description": "Prepare a mock Kubernetes rollout request.",
+      "application": "Application",
+      "environment": "Environment",
+      "imageTag": "Image tag",
+      "replicas": "Replica count",
+      "strategy": "Strategy",
+      "submit": "Start deployment",
+      "success": "Deployment request created."
+    },
+    "detail": {
+      "subtitle": "Deployment execution timeline, metadata, and logs preview.",
+      "metadata": "Deployment metadata",
+      "logsPreview": "Logs preview",
+      "rollback": "Rollback",
+      "rollbackDisabled": "Rollback is mocked in this frontend foundation.",
+      "notFoundTitle": "Deployment not found",
+      "notFoundDescription": "The deployment does not exist in the mock queue."
+    }
+  },
+  "timeline": {
+    "requestCreated": "Request created",
+    "requestCreatedDescription": "The deployment request was accepted by the control plane.",
+    "manifestGenerated": "Manifest generated",
+    "manifestGeneratedDescription": "Kubernetes manifests were rendered from the selected release profile.",
+    "appliedToCluster": "Applied to cluster",
+    "appliedToClusterDescription": "The rollout was applied to the target namespace.",
+    "podsScheduled": "Pods scheduled",
+    "podsScheduledDescription": "New pods were scheduled and are starting readiness checks.",
+    "healthCheckPassed": "Health check passed",
+    "healthCheckPassedDescription": "Service health and availability checks passed."
+  },
+  "cluster": {
+    "title": "Cluster",
+    "description": "Inspect node capacity, namespaces, workload health, and Kubernetes resource pressure.",
+    "overview": {
+      "nodes": "Nodes",
+      "namespaces": "Namespaces",
+      "pods": "Pods",
+      "services": "Services",
+      "deployments": "Deployments",
+      "cpuUsage": "CPU Usage",
+      "memoryUsage": "Memory Usage"
+    },
+    "nodes": "Node table",
+    "namespaces": "Namespaces",
+    "workloadHealth": "Workload health",
+    "table": {
+      "node": "Node",
+      "status": "Status",
+      "cpu": "CPU",
+      "memory": "Memory",
+      "pods": "Pods",
+      "version": "Version",
+      "zone": "Zone"
+    }
+  },
+  "logs": {
+    "title": "Logs",
+    "description": "Tail application and pod logs with level filters and searchable runtime context.",
+    "level": {
+      "info": "Info",
+      "warn": "Warn",
+      "error": "Error",
+      "debug": "Debug"
+    },
+    "filters": {
+      "app": "App",
+      "pod": "Pod",
+      "level": "Level",
+      "search": "Search logs"
+    },
+    "autoScroll": "Auto-scroll",
+    "copyLogs": "Copy logs",
+    "copied": "Logs copied to clipboard.",
+    "terminalTitle": "Runtime stream",
+    "messages": {
+      "deploymentStarted": "Deployment {{deployment}} started for image {{image}}.",
+      "readinessProbe": "Readiness probe passed for {{pod}}.",
+      "cacheWarm": "Cache warmup completed in {{duration}}.",
+      "slowQuery": "Slow query detected on {{service}} after {{duration}}.",
+      "errorBudget": "Error budget burn rate crossed {{rate}}.",
+      "rolloutComplete": "Rollout completed and traffic shifted to {{image}}.",
+      "metricsScraped": "Prometheus scrape completed for namespace {{namespace}}.",
+      "podRestart": "Pod {{pod}} restarted after memory pressure."
+    }
+  },
+  "monitoring": {
+    "title": "Monitoring",
+    "description": "Grafana-style operational views for resource use, traffic, errors, and pod restarts.",
+    "timeRange": "Time range",
+    "ranges": {
+      "oneHour": "1h",
+      "sixHours": "6h",
+      "twentyFourHours": "24h",
+      "sevenDays": "7d"
+    },
+    "charts": {
+      "cpu": "CPU usage over time",
+      "memory": "Memory usage over time",
+      "requests": "Request rate",
+      "errors": "Error rate",
+      "restarts": "Pod restarts"
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "description": "Manage workspace identity, preferences, mock API tokens, and platform integrations.",
+    "profile": {
+      "title": "Profile",
+      "description": "Personal details used across deployment ownership and audit trails.",
+      "name": "Name",
+      "email": "Email",
+      "role": "Role"
+    },
+    "organization": {
+      "title": "Organization",
+      "description": "Workspace-level identity for teams and environment policy.",
+      "name": "Organization name",
+      "plan": "Plan",
+      "planValue": "Platform Premium"
+    },
+    "appearance": {
+      "title": "Appearance",
+      "description": "Keep the interface tuned for operations rooms and focused engineering sessions.",
+      "theme": "Theme",
+      "dark": "Dark",
+      "compactMode": "Compact mode"
+    },
+    "apiTokens": {
+      "title": "API tokens",
+      "description": "Mock token management for future API integrations.",
+      "create": "Create token",
+      "lastUsed": "Last used"
+    },
+    "integrations": {
+      "title": "Integrations",
+      "description": "Connect delivery, cluster, and observability systems when the backend is ready.",
+      "connected": "Connected",
+      "mocked": "Mocked",
+      "configure": "Configure"
+    }
+  },
+  "empty": {
+    "title": "Nothing here yet",
+    "description": "Once data is available, this area will show the latest platform activity."
+  },
+  "charts": {
+    "success": "Success",
+    "failed": "Failed",
+    "production": "Production",
+    "staging": "Staging",
+    "development": "Development"
+  }
+}
