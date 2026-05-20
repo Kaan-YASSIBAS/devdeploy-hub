@@ -9,6 +9,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
+import { useId } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { MetricPoint } from "@/types";
 
@@ -31,6 +32,8 @@ export function MetricChart({
   color = "#22d3ee",
   type = "area"
 }: MetricChartProps) {
+  const gradientId = useId().replace(/:/g, "");
+
   return (
     <Card>
       <CardHeader>
@@ -59,7 +62,7 @@ export function MetricChart({
             ) : (
               <AreaChart data={data}>
                 <defs>
-                  <linearGradient id={`${String(dataKey)}Gradient`} x1="0" x2="0" y1="0" y2="1">
+                  <linearGradient id={`${String(dataKey)}Gradient${gradientId}`} x1="0" x2="0" y1="0" y2="1">
                     <stop offset="5%" stopColor={color} stopOpacity={0.42} />
                     <stop offset="95%" stopColor={color} stopOpacity={0.02} />
                   </linearGradient>
@@ -81,7 +84,7 @@ export function MetricChart({
                   name={label}
                   stroke={color}
                   strokeWidth={2}
-                  fill={`url(#${String(dataKey)}Gradient)`}
+                  fill={`url(#${String(dataKey)}Gradient${gradientId})`}
                 />
               </AreaChart>
             )}

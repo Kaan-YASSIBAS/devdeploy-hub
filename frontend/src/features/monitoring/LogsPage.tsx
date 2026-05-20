@@ -96,7 +96,7 @@ export function LogsPage() {
           <CardTitle>{t("logs.terminalTitle")}</CardTitle>
         </CardHeader>
         <CardContent>
-          <TerminalLogs logs={filteredLogs} />
+          <TerminalLogs autoScroll={autoScroll} logs={filteredLogs} />
         </CardContent>
       </Card>
     </div>

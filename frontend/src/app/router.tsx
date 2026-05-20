@@ -1,31 +1,38 @@
+import { lazy, Suspense, type ReactNode } from "react";
 import { createBrowserRouter, Navigate } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { ProtectedRoute } from "@/app/ProtectedRoute";
-import { LandingPage } from "@/features/auth/LandingPage";
-import { LoginPage } from "@/features/auth/LoginPage";
-import { RegisterPage } from "@/features/auth/RegisterPage";
-import { DashboardPage } from "@/features/dashboard/DashboardPage";
-import { ApplicationsPage } from "@/features/applications/ApplicationsPage";
-import { ApplicationDetailPage } from "@/features/applications/ApplicationDetailPage";
-import { DeploymentsPage } from "@/features/deployments/DeploymentsPage";
-import { DeploymentDetailPage } from "@/features/deployments/DeploymentDetailPage";
-import { ClusterPage } from "@/features/cluster/ClusterPage";
-import { LogsPage } from "@/features/monitoring/LogsPage";
-import { MonitoringPage } from "@/features/monitoring/MonitoringPage";
-import { SettingsPage } from "@/features/settings/SettingsPage";
+import { RouteLoader } from "@/app/RouteLoader";
+
+const LandingPage = lazy(() => import("@/features/auth/LandingPage").then(({ LandingPage }) => ({ default: LandingPage })));
+const LoginPage = lazy(() => import("@/features/auth/LoginPage").then(({ LoginPage }) => ({ default: LoginPage })));
+const RegisterPage = lazy(() => import("@/features/auth/RegisterPage").then(({ RegisterPage }) => ({ default: RegisterPage })));
+const DashboardPage = lazy(() => import("@/features/dashboard/DashboardPage").then(({ DashboardPage }) => ({ default: DashboardPage })));
+const ApplicationsPage = lazy(() => import("@/features/applications/ApplicationsPage").then(({ ApplicationsPage }) => ({ default: ApplicationsPage })));
+const ApplicationDetailPage = lazy(() => import("@/features/applications/ApplicationDetailPage").then(({ ApplicationDetailPage }) => ({ default: ApplicationDetailPage })));
+const DeploymentsPage = lazy(() => import("@/features/deployments/DeploymentsPage").then(({ DeploymentsPage }) => ({ default: DeploymentsPage })));
+const DeploymentDetailPage = lazy(() => import("@/features/deployments/DeploymentDetailPage").then(({ DeploymentDetailPage }) => ({ default: DeploymentDetailPage })));
+const ClusterPage = lazy(() => import("@/features/cluster/ClusterPage").then(({ ClusterPage }) => ({ default: ClusterPage })));
+const LogsPage = lazy(() => import("@/features/monitoring/LogsPage").then(({ LogsPage }) => ({ default: LogsPage })));
+const MonitoringPage = lazy(() => import("@/features/monitoring/MonitoringPage").then(({ MonitoringPage }) => ({ default: MonitoringPage })));
+const SettingsPage = lazy(() => import("@/features/settings/SettingsPage").then(({ SettingsPage }) => ({ default: SettingsPage })));
+
+function withSuspense(element: ReactNode) {
+  return <Suspense fallback={<RouteLoader />}>{element}</Suspense>;
+}
 
 export const router = createBrowserRouter([
   {
     path: "/",
-    element: <LandingPage />
+    element: withSuspense(<LandingPage />)
   },
   {
     path: "/login",
-    element: <LoginPage />
+    element: withSuspense(<LoginPage />)
   },
   {
     path: "/register",
-    element: <RegisterPage />
+    element: withSuspense(<RegisterPage />)
   },
   {
     element: <ProtectedRoute />,
@@ -33,15 +40,15 @@ export const router = createBrowserRouter([
       {
         element: <AppShell />,
         children: [
-          { path: "/dashboard", element: <DashboardPage /> },
-          { path: "/applications", element: <ApplicationsPage /> },
-          { path: "/applications/:id", element: <ApplicationDetailPage /> },
-          { path: "/deployments", element: <DeploymentsPage /> },
-          { path: "/deployments/:id", element: <DeploymentDetailPage /> },
-          { path: "/cluster", element: <ClusterPage /> },
-          { path: "/logs", element: <LogsPage /> },
-          { path: "/monitoring", element: <MonitoringPage /> },
-          { path: "/settings", element: <SettingsPage /> }
+          { path: "/dashboard", element: withSuspense(<DashboardPage />) },
+          { path: "/applications", element: withSuspense(<ApplicationsPage />) },
+          { path: "/applications/:id", element: withSuspense(<ApplicationDetailPage />) },
+          { path: "/deployments", element: withSuspense(<DeploymentsPage />) },
+          { path: "/deployments/:id", element: withSuspense(<DeploymentDetailPage />) },
+          { path: "/cluster", element: withSuspense(<ClusterPage />) },
+          { path: "/logs", element: withSuspense(<LogsPage />) },
+          { path: "/monitoring", element: withSuspense(<MonitoringPage />) },
+          { path: "/settings", element: withSuspense(<SettingsPage />) }
         ]
       }
     ]

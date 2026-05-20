@@ -11,7 +11,15 @@ export const supportedLanguages = [
 
 export type SupportedLanguage = (typeof supportedLanguages)[number]["code"];
 
-i18n
+function updateDocumentLanguage(language: string) {
+  if (typeof document !== "undefined") {
+    document.documentElement.lang = language.startsWith("tr") ? "tr" : "en";
+  }
+}
+
+i18n.on("languageChanged", updateDocumentLanguage);
+
+void i18n
   .use(LanguageDetector)
   .use(initReactI18next)
   .init({
@@ -26,10 +34,11 @@ i18n
       escapeValue: false
     },
     detection: {
-      order: ["localStorage", "navigator"],
+      order: ["localStorage"],
       caches: ["localStorage"],
       lookupLocalStorage: "devdeploy-language"
     }
-  });
+  })
+  .then(() => updateDocumentLanguage(i18n.resolvedLanguage ?? i18n.language));
 
 export default i18n;

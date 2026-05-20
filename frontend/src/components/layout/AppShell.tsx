@@ -30,7 +30,7 @@ export function AppShell() {
                   <X className="h-5 w-5" />
                 </Button>
               </div>
-              <Sidebar mobile />
+              <Sidebar mobile onNavigate={() => setMobileOpen(false)} />
             </motion.div>
           </motion.div>
         ) : null}
