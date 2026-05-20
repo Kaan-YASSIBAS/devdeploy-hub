@@ -54,3 +54,16 @@ GitHub Actions workflows live in `.github/workflows`:
 - `docker-ci.yml` validates `docker-compose.yml` and builds the backend and frontend Docker images.
 
 These workflows are CI only. They do not deploy, publish images, or require secrets.
+
+## Kubernetes Local Manifests
+
+Local Kubernetes manifests live in `infra/kubernetes`.
+
+Quick commands:
+
+```powershell
+kubectl apply -k infra/kubernetes/overlays/dev
+kubectl get all -n devdeploy
+```
+
+The detailed guide in `infra/kubernetes/README.md` covers local image builds for kind/minikube, the first-test port-forward path, and the optional `devdeploy.local` ingress path.
