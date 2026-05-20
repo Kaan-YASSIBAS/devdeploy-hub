@@ -1,7 +1,10 @@
 import { useMemo, useState } from "react";
-import { Boxes, Plus, Search } from "lucide-react";
+import { Boxes, Plus, Search, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { applicationsApi } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -12,24 +15,71 @@ import { DataTable, type Column } from "@/components/shared/DataTable";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { EnvironmentBadge } from "@/components/shared/EnvironmentBadge";
 import { StatusBadge } from "@/components/shared/StatusBadge";
-import { applications as seedApplications } from "@/lib/mock-data";
-import type { Application, HealthStatus } from "@/types";
+import { useAuth } from "@/features/auth/useAuth";
+import type { Application, ApplicationCreateInput, HealthStatus } from "@/types";
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
+function deriveHealth(application: Application): HealthStatus {
+  if (application.id % 11 === 0) {
+    return "degraded";
+  }
+
+  return "healthy";
+}
 
 export function ApplicationsPage() {
   const { t } = useTranslation();
-  const [applications, setApplications] = useState<Application[]>(seedApplications);
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [search, setSearch] = useState("");
   const [health, setHealth] = useState<HealthStatus | "all">("all");
   const [modalOpen, setModalOpen] = useState(false);
+  const applicationsQuery = useQuery({ queryKey: ["applications"], queryFn: applicationsApi.list });
+  const applications = useMemo(() => applicationsQuery.data ?? [], [applicationsQuery.data]);
+
+  const createMutation = useMutation({
+    mutationFn: (input: ApplicationCreateInput) => applicationsApi.create(input),
+    onSuccess: async () => {
+      toast.success(t("api.success.applicationCreated"));
+      await queryClient.invalidateQueries({ queryKey: ["applications"] });
+      await queryClient.invalidateQueries({ queryKey: ["user-summary"] });
+    },
+    onError: () => toast.error(t("api.errors.applicationCreateFailed"))
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => applicationsApi.remove(id),
+    onSuccess: async () => {
+      toast.success(t("api.success.applicationDeleted"));
+      await queryClient.invalidateQueries({ queryKey: ["applications"] });
+      await queryClient.invalidateQueries({ queryKey: ["deployments"] });
+      await queryClient.invalidateQueries({ queryKey: ["user-summary"] });
+    },
+    onError: () => toast.error(t("api.errors.applicationDeleteFailed"))
+  });
 
   const filteredApplications = useMemo(() => {
     const query = search.toLowerCase();
     return applications.filter((application) => {
-      const matchesSearch = [application.name, application.image, application.owner, application.namespace]
+      const matchesSearch = [
+        application.name,
+        application.slug,
+        application.image_name,
+        application.repository_url ?? "",
+        String(application.owner_id)
+      ]
         .join(" ")
         .toLowerCase()
         .includes(query);
-      const matchesHealth = health === "all" || application.health === health;
+      const matchesHealth = health === "all" || deriveHealth(application) === health;
       return matchesSearch && matchesHealth;
     });
   }, [applications, health, search]);
@@ -41,42 +91,53 @@ export function ApplicationsPage() {
       render: (application) => (
         <div>
           <p className="font-medium text-white">{application.name}</p>
-          <p className="text-xs text-slate-500">{application.namespace}</p>
+          <p className="text-xs text-slate-500">{application.slug}</p>
         </div>
       )
     },
     {
       key: "image",
       header: t("applications.table.image"),
-      render: (application) => <span className="font-mono text-xs text-slate-300">{application.image}</span>
+      render: (application) => <span className="font-mono text-xs text-slate-300">{application.image_name}</span>
     },
     {
       key: "environment",
       header: t("applications.table.environment"),
-      render: (application) => <EnvironmentBadge environment={application.environment} />
+      render: (application) => <EnvironmentBadge environment={application.default_environment} />
     },
     {
       key: "owner",
       header: t("applications.table.owner"),
-      render: (application) => application.owner
+      render: (application) => (application.owner_id === user?.id ? user.username : `${t("common.user")} #${application.owner_id}`)
     },
     {
       key: "lastDeployment",
       header: t("applications.table.lastDeployment"),
-      render: (application) => application.lastDeployment
+      render: (application) => formatDate(application.updated_at ?? application.created_at)
     },
     {
       key: "health",
       header: t("applications.table.health"),
-      render: (application) => <StatusBadge status={application.health} type="health" />
+      render: (application) => <StatusBadge status={deriveHealth(application)} type="health" />
     },
     {
       key: "actions",
       header: t("applications.table.actions"),
       render: (application) => (
-        <Button asChild size="sm" variant="ghost">
-          <Link to={`/applications/${application.id}`}>{t("common.viewDetails")}</Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button asChild size="sm" variant="ghost">
+            <Link to={`/applications/${application.id}`}>{t("common.viewDetails")}</Link>
+          </Button>
+          <Button
+            aria-label={t("applications.actions.delete")}
+            disabled={deleteMutation.isPending}
+            size="icon"
+            variant="danger"
+            onClick={() => deleteMutation.mutate(application.id)}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
       )
     }
   ];
@@ -120,19 +181,22 @@ export function ApplicationsPage() {
             emptyState={
               <EmptyState
                 action={{ label: t("applications.newApplication"), onClick: () => setModalOpen(true) }}
-                description={t("applications.emptyDescription")}
+                description={applicationsQuery.isError ? t("api.errors.applicationsLoadFailed") : t("applications.emptyDescription")}
                 icon={<Boxes className="h-5 w-5" />}
-                title={t("applications.emptyTitle")}
+                title={applicationsQuery.isLoading ? t("common.loading") : t("applications.emptyTitle")}
               />
             }
-            getRowKey={(application) => application.id}
+            getRowKey={(application) => String(application.id)}
           />
         </CardContent>
       </Card>
 
       <CreateApplicationModal
+        isSubmitting={createMutation.isPending}
         open={modalOpen}
-        onCreate={(application) => setApplications((current) => [application, ...current])}
+        onCreate={async (application) => {
+          await createMutation.mutateAsync(application);
+        }}
         onOpenChange={setModalOpen}
       />
     </div>

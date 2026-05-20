@@ -24,7 +24,9 @@
     "create": "Oluştur",
     "created": "Oluşturulma",
     "dashboard": "Dashboard",
+    "delete": "Sil",
     "deploy": "Deploy et",
+    "description": "Açıklama",
     "details": "Detaylar",
     "duration": "Süre",
     "email": "E-posta",
@@ -55,6 +57,7 @@
     "status": "Durum",
     "strategy": "Strateji",
     "submit": "Gönder",
+    "user": "Kullanıcı",
     "view": "Görüntüle",
     "version": "Version",
     "viewDetails": "Detayları görüntüle",
@@ -92,12 +95,15 @@
     "critical": "Kritik"
   },
   "environment": {
+    "dev": "Dev",
+    "prod": "Prod",
     "production": "Production",
     "staging": "Staging",
     "development": "Development"
   },
   "strategy": {
     "rolling": "Rolling update",
+    "recreate": "Recreate",
     "blueGreen": "Blue-green",
     "canary": "Canary"
   },
@@ -135,14 +141,16 @@
   },
   "auth": {
     "backHome": "Ana sayfaya dön",
+    "backendHint": "Backend hesabını kullan veya bu ekrandan yeni hesap oluştur.",
     "demoHint": "Demo bilgileri: platform@devdeploy.local / deploy123",
+    "logout": "Çıkış yap",
     "login": {
       "title": "Tekrar hoş geldin",
       "subtitle": "Deployment yönetmek, log incelemek ve cluster sağlığını izlemek için giriş yap.",
       "button": "Giriş yap",
       "switchText": "DevDeploy Hub'a yeni misin?",
       "switchLink": "Hesap oluştur",
-      "success": "Demo erişimiyle giriş yapıldı."
+      "success": "Başarıyla giriş yapıldı."
     },
     "register": {
       "title": "Workspace oluştur",
@@ -150,16 +158,18 @@
       "button": "Hesap oluştur",
       "switchText": "Zaten hesabın var mı?",
       "switchLink": "Giriş yap",
-      "success": "Demo workspace oluşturuldu."
+      "success": "Hesap oluşturuldu ve giriş yapıldı."
     },
     "fields": {
       "name": "Ad soyad",
+      "username": "Kullanıcı adı",
       "email": "İş e-postası",
       "password": "Şifre",
       "organization": "Organizasyon"
     },
     "placeholders": {
       "name": "Ada Lovelace",
+      "username": "kaan",
       "email": "platform@devdeploy.local",
       "password": "deploy123",
       "organization": "Acme Cloud"
@@ -172,13 +182,21 @@
     "description": "Uygulamalar, deploymentlar, podlar ve cluster baskısı için canlı yönetici görünümü.",
     "stats": {
       "totalApps": "Toplam Uygulama",
+      "totalDeployments": "Toplam Deployment",
       "activeDeployments": "Aktif Deployment",
+      "pendingDeployments": "Bekleyen",
+      "runningDeployments": "Çalışan",
+      "successfulDeployments": "Başarılı",
       "healthyPods": "Sağlıklı Pod",
       "failedDeployments": "Başarısız Deployment",
       "clusterHealth": "Cluster Sağlığı",
       "details": {
         "totalApps": "Tüm takip edilen namespace'lerde",
+        "totalDeployments": "Tüm deployment istekleri",
         "activeDeployments": "Bekleyen veya çalışanlar",
+        "pendingDeployments": "Kuyrukta bekleyenler",
+        "runningDeployments": "Şu anda ilerleyenler",
+        "successfulDeployments": "Başarıyla tamamlananlar",
         "healthyPods": "Ready ve probe kontrolleri başarılı",
         "failedDeployments": "Platform incelemesi gerekiyor",
         "clusterHealth": "Control plane normal"
@@ -227,15 +245,24 @@
     },
     "modal": {
       "title": "Uygulama kaydet",
-      "description": "Platform kataloğu için mock uygulama kaydı oluştur.",
+      "description": "Platform kataloğunda uygulama kaydı oluştur.",
       "name": "Uygulama adı",
       "image": "Container image",
+      "imageName": "Image adı",
+      "imagePlaceholder": "kaanyassibas/notes-api",
       "environment": "Ortam",
+      "defaultEnvironment": "Varsayılan ortam",
       "owner": "Sahip",
       "namespace": "Namespace",
+      "containerPort": "Container port",
+      "descriptionPlaceholder": "FastAPI notes servisi",
+      "repositoryPlaceholder": "https://github.com/example/notes-api",
       "replicas": "Replica sayısı",
       "submit": "Uygulama oluştur",
-      "success": "Uygulama mock kataloğa eklendi."
+      "success": "Uygulama oluşturuldu."
+    },
+    "actions": {
+      "delete": "Uygulamayı sil"
     },
     "detail": {
       "subtitle": "Uygulama runtime bilgisi, release geçmişi, pod sağlığı, loglar, metrikler ve ayarlar.",
@@ -246,9 +273,11 @@
       "relatedPods": "İlgili podlar",
       "runtimeMetrics": "Runtime metrikleri",
       "settingsTitle": "Uygulama ayarları",
-      "settingsDescription": "Bu servis için sahiplik, namespace ve deployment varsayılanları.",
+      "settingsDescription": "Bu servis için sahiplik, repository ve deployment varsayılanları.",
+      "loadingDescription": "Uygulama verisi backend'den yükleniyor.",
+      "previewHealth": "Runtime sağlık bağlantısına kadar türetilmiş",
       "notFoundTitle": "Uygulama bulunamadı",
-      "notFoundDescription": "Uygulama mock katalogda yer almıyor."
+      "notFoundDescription": "Uygulama platform kataloğunda yer almıyor."
     },
     "tabs": {
       "overview": "Genel Bakış",
@@ -281,10 +310,11 @@
     },
     "modal": {
       "title": "Deployment oluştur",
-      "description": "Mock Kubernetes rollout isteği hazırla.",
+      "description": "Seçilen uygulama için deployment isteği oluştur.",
       "application": "Uygulama",
       "environment": "Ortam",
       "imageTag": "Image tag",
+      "imageTagPlaceholder": "v1.0.0",
       "replicas": "Replica sayısı",
       "strategy": "Strateji",
       "submit": "Deployment başlat",
@@ -296,9 +326,13 @@
       "logsPreview": "Log önizlemesi",
       "rollback": "Rollback",
       "rollbackDisabled": "Rollback bu frontend temelinde mock olarak tutuluyor.",
+      "loadingDescription": "Deployment verisi backend'den yükleniyor.",
+      "noEvents": "Henüz deployment eventi kaydedilmedi.",
       "notFoundTitle": "Deployment bulunamadı",
-      "notFoundDescription": "Deployment mock kuyrukta yer almıyor."
-    }
+      "notFoundDescription": "Deployment kuyruğunda bu kayıt yer almıyor."
+    },
+    "emptyTitle": "Henüz deployment yok",
+    "emptyDescription": "Uygulama kaydettikten sonra deployment isteği oluştur."
   },
   "timeline": {
     "requestCreated": "İstek oluşturuldu",
@@ -400,7 +434,8 @@
       "description": "Ekipler ve ortam politikası için workspace seviyesinde kimlik.",
       "name": "Organizasyon adı",
       "plan": "Plan",
-      "planValue": "Platform Premium"
+      "planValue": "Platform Premium",
+      "placeholderName": "DevDeploy Hub Workspace"
     },
     "appearance": {
       "title": "Görünüm",
@@ -433,5 +468,24 @@
     "production": "Production",
     "staging": "Staging",
     "development": "Development"
+  },
+  "api": {
+    "errors": {
+      "sessionExpired": "Oturum süren doldu. Lütfen tekrar giriş yap.",
+      "loginFailed": "Giriş başarısız. E-posta ve şifreni kontrol et.",
+      "registrationFailed": "Kayıt başarısız. Formu kontrol edip tekrar dene.",
+      "dashboardSummaryFailed": "Dashboard özeti yüklenemedi.",
+      "applicationsLoadFailed": "Uygulamalar yüklenemedi.",
+      "applicationCreateFailed": "Uygulama oluşturulamadı.",
+      "applicationDeleteFailed": "Uygulama silinemedi.",
+      "deploymentsLoadFailed": "Deploymentlar yüklenemedi.",
+      "deploymentCreateFailed": "Deployment oluşturulamadı.",
+      "generic": "Bir şeyler ters gitti. Lütfen tekrar dene."
+    },
+    "success": {
+      "applicationCreated": "Uygulama oluşturuldu.",
+      "applicationDeleted": "Uygulama silindi.",
+      "deploymentCreated": "Deployment isteği oluşturuldu."
+    }
   }
 }

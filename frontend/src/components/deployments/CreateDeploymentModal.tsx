@@ -1,48 +1,51 @@
 import { FormEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
-import { applications, environments, mockUser } from "@/lib/mock-data";
-import type { Deployment } from "@/types";
+import type { Application, DeploymentCreateInput, DeploymentStrategy, Environment } from "@/types";
 
 type CreateDeploymentModalProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreate: (deployment: Deployment) => void;
+  applications: Application[];
+  onCreate: (deployment: DeploymentCreateInput) => Promise<void> | void;
+  isSubmitting?: boolean;
 };
 
-const strategies = ["rolling", "blueGreen", "canary"] as const;
+const environments: Environment[] = ["dev", "staging", "prod"];
+const strategies: DeploymentStrategy[] = ["rolling", "recreate"];
 
-export function CreateDeploymentModal({ open, onOpenChange, onCreate }: CreateDeploymentModalProps) {
+export function CreateDeploymentModal({
+  applications,
+  open,
+  onOpenChange,
+  onCreate,
+  isSubmitting = false
+}: CreateDeploymentModalProps) {
   const { t } = useTranslation();
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    const applicationId = String(formData.get("application"));
-    const application = applications.find((item) => item.id === applicationId) ?? applications[0];
-    const deployment: Deployment = {
-      id: `dep-${crypto.randomUUID().slice(0, 8)}`,
-      applicationId: application.id,
-      applicationName: application.name,
-      environment: formData.get("environment") as Deployment["environment"],
-      imageTag: String(formData.get("imageTag")),
-      strategy: formData.get("strategy") as Deployment["strategy"],
-      status: "pending",
-      owner: mockUser.name,
-      createdAt: new Date().toISOString().slice(0, 16).replace("T", " "),
-      duration: "0m 00s",
-      commit: crypto.randomUUID().slice(0, 7)
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const deployment: DeploymentCreateInput = {
+      application_id: Number(formData.get("application_id")),
+      environment: formData.get("environment") as Environment,
+      image_tag: String(formData.get("image_tag")),
+      replica_count: Number(formData.get("replica_count")),
+      strategy: formData.get("strategy") as DeploymentStrategy
     };
 
-    onCreate(deployment);
-    toast.success(t("deployments.modal.success"));
-    onOpenChange(false);
-    event.currentTarget.reset();
+    try {
+      await onCreate(deployment);
+      onOpenChange(false);
+      form.reset();
+    } catch {
+      // Parent mutation owns translated error toast.
+    }
   };
 
   return (
@@ -59,8 +62,9 @@ export function CreateDeploymentModal({ open, onOpenChange, onCreate }: CreateDe
             <Label htmlFor="deployment-application">{t("deployments.modal.application")}</Label>
             <Select
               id="deployment-application"
-              name="application"
-              options={applications.map((application) => ({ value: application.id, label: application.name }))}
+              name="application_id"
+              options={applications.map((application) => ({ value: String(application.id), label: application.name }))}
+              required
             />
           </div>
           <div className="space-y-2">
@@ -78,11 +82,11 @@ export function CreateDeploymentModal({ open, onOpenChange, onCreate }: CreateDe
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
             <Label htmlFor="deployment-image-tag">{t("deployments.modal.imageTag")}</Label>
-            <Input id="deployment-image-tag" name="imageTag" required />
+            <Input id="deployment-image-tag" name="image_tag" placeholder={t("deployments.modal.imageTagPlaceholder")} required />
           </div>
           <div className="space-y-2">
             <Label htmlFor="deployment-replicas">{t("deployments.modal.replicas")}</Label>
-            <Input id="deployment-replicas" min={1} name="replicas" required type="number" />
+            <Input id="deployment-replicas" defaultValue={2} min={1} name="replica_count" required type="number" />
           </div>
         </div>
         <div className="space-y-2">
@@ -94,10 +98,12 @@ export function CreateDeploymentModal({ open, onOpenChange, onCreate }: CreateDe
           />
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+          <Button disabled={isSubmitting} variant="ghost" onClick={() => onOpenChange(false)}>
             {t("common.cancel")}
           </Button>
-          <Button type="submit">{t("deployments.modal.submit")}</Button>
+          <Button disabled={isSubmitting || applications.length === 0} type="submit">
+            {isSubmitting ? t("common.loading") : t("deployments.modal.submit")}
+          </Button>
         </DialogFooter>
       </form>
     </Dialog>

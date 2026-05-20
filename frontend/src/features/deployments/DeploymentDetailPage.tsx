@@ -1,20 +1,43 @@
 import { RotateCcw } from "lucide-react";
 import { useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { useQuery } from "@tanstack/react-query";
+import { applicationsApi, deploymentsApi } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { DeploymentTimeline } from "@/components/shared/DeploymentTimeline";
+import { ApiDeploymentTimeline } from "@/components/shared/ApiDeploymentTimeline";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { EnvironmentBadge } from "@/components/shared/EnvironmentBadge";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { TerminalLogs } from "@/components/shared/TerminalLogs";
-import { deploymentEvents, deployments, logs } from "@/lib/mock-data";
+import { logs } from "@/lib/mock-data";
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
 
 export function DeploymentDetailPage() {
   const { id } = useParams();
   const { t } = useTranslation();
-  const deployment = deployments.find((item) => item.id === id);
+  const deploymentId = Number(id);
+  const deploymentQuery = useQuery({
+    queryKey: ["deployment", deploymentId],
+    queryFn: () => deploymentsApi.get(deploymentId),
+    enabled: Number.isFinite(deploymentId)
+  });
+  const applicationsQuery = useQuery({ queryKey: ["applications"], queryFn: applicationsApi.list });
+  const deployment = deploymentQuery.data;
+  const application = applicationsQuery.data?.find((item) => item.id === deployment?.application_id);
+
+  if (deploymentQuery.isLoading) {
+    return <EmptyState description={t("deployments.detail.loadingDescription")} title={t("common.loading")} />;
+  }
 
   if (!deployment) {
     return (
@@ -22,8 +45,8 @@ export function DeploymentDetailPage() {
     );
   }
 
-  const events = deploymentEvents.filter((event) => event.deploymentId === deployment.id);
-  const deploymentLogs = logs.filter((entry) => entry.app === deployment.applicationName);
+  const events = deployment.events ?? [];
+  const deploymentLogs = logs.filter((entry) => entry.app === application?.name);
 
   return (
     <div>
@@ -35,7 +58,7 @@ export function DeploymentDetailPage() {
           </Button>
         }
         description={t("deployments.detail.subtitle")}
-        title={deployment.id}
+        title={String(deployment.id)}
       />
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
@@ -52,7 +75,7 @@ export function DeploymentDetailPage() {
             <CardTitle>{t("dashboard.timeline")}</CardTitle>
           </CardHeader>
           <CardContent>
-            <DeploymentTimeline events={events.length ? events : deploymentEvents.slice(0, 5)} />
+            <ApiDeploymentTimeline events={events} status={deployment.status} />
           </CardContent>
         </Card>
 
@@ -60,18 +83,18 @@ export function DeploymentDetailPage() {
           <Card>
             <CardHeader>
               <CardTitle>{t("deployments.detail.metadata")}</CardTitle>
-              <CardDescription>{deployment.applicationName}</CardDescription>
+              <CardDescription>{application?.name ?? `${t("common.application")} #${deployment.application_id}`}</CardDescription>
             </CardHeader>
             <CardContent className="grid gap-3 sm:grid-cols-2">
               {[
-                [t("common.application"), deployment.applicationName],
-                [t("deployments.table.imageTag"), deployment.imageTag],
+                [t("common.application"), application?.name ?? `${t("common.application")} #${deployment.application_id}`],
+                [t("deployments.table.imageTag"), deployment.image_tag],
                 [t("common.environment"), t(`environment.${deployment.environment}`)],
                 [t("common.status"), t(`status.${deployment.status}`)],
                 [t("common.strategy"), t(`strategy.${deployment.strategy}`)],
-                [t("common.owner"), deployment.owner],
-                [t("common.duration"), deployment.duration],
-                [t("common.commit"), deployment.commit]
+                [t("common.replicas"), String(deployment.replica_count)],
+                [t("common.owner"), `${t("common.user")} #${deployment.requested_by_id}`],
+                [t("common.created"), formatDate(deployment.created_at)]
               ].map(([label, value]) => (
                 <div key={label} className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
                   <p className="text-xs uppercase text-slate-500">{label}</p>

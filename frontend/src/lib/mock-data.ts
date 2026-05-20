@@ -1,24 +1,16 @@
 import type {
-  Application,
-  Deployment,
-  DeploymentEvent,
   LogEntry,
   MetricPoint,
+  MockApplication,
+  MockDeployment,
+  MockDeploymentEvent,
   Node,
   Pod
 } from "@/types";
 
-export const mockUser = {
-  id: "user-1",
-  name: "Mina Yilmaz",
-  email: "platform@devdeploy.local",
-  role: "Lead Platform Engineer",
-  organization: "Acme Cloud"
-};
-
 export const environments = ["production", "staging", "development"] as const;
 
-export const applications: Application[] = [
+export const applications: MockApplication[] = [
   {
     id: "app-payments",
     name: "payments-api",
@@ -86,7 +78,7 @@ export const applications: Application[] = [
   }
 ];
 
-export const deployments: Deployment[] = [
+export const deployments: MockDeployment[] = [
   {
     id: "dep-1042",
     applicationId: "app-payments",
@@ -154,7 +146,7 @@ export const deployments: Deployment[] = [
   }
 ];
 
-export const deploymentEvents: DeploymentEvent[] = [
+export const deploymentEvents: MockDeploymentEvent[] = [
   {
     id: "event-1",
     deploymentId: "dep-1042",
