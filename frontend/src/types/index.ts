@@ -1,24 +1,55 @@
-export type Environment = "production" | "staging" | "development";
+export type PlatformEnvironment = "production" | "staging" | "development";
+
+export type Environment = "dev" | "staging" | "prod";
 
 export type DeploymentStatus = "pending" | "running" | "success" | "failed";
+
+export type DeploymentStrategy = "rolling" | "recreate";
 
 export type HealthStatus = "healthy" | "degraded" | "critical";
 
 export type LogLevel = "info" | "warn" | "error" | "debug";
 
 export type User = {
-  id: string;
-  name: string;
+  id: number;
   email: string;
-  role: string;
-  organization: string;
+  username: string;
+  role: "admin" | "developer" | string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string | null;
 };
 
 export type Application = {
+  id: number;
+  name: string;
+  slug: string;
+  description: string | null;
+  repository_url: string | null;
+  image_name: string;
+  container_port: number;
+  default_environment: Environment;
+  owner_id: number;
+  created_at: string;
+  updated_at: string | null;
+};
+
+export type ApplicationCreateInput = {
+  name: string;
+  description?: string | null;
+  repository_url?: string | null;
+  image_name: string;
+  container_port: number;
+  default_environment: Environment;
+};
+
+export type ApplicationUpdateInput = Partial<ApplicationCreateInput>;
+
+export type MockApplication = {
   id: string;
   name: string;
   image: string;
-  environment: Environment;
+  environment: PlatformEnvironment;
   owner: string;
   repository: string;
   lastDeployment: string;
@@ -29,11 +60,56 @@ export type Application = {
 };
 
 export type Deployment = {
+  id: number;
+  application_id: number;
+  environment: Environment;
+  image_tag: string;
+  replica_count: number;
+  strategy: DeploymentStrategy;
+  status: DeploymentStatus;
+  requested_by_id: number;
+  created_at: string;
+  updated_at: string | null;
+  events?: DeploymentEvent[];
+};
+
+export type DeploymentCreateInput = {
+  application_id: number;
+  environment: Environment;
+  image_tag: string;
+  replica_count: number;
+  strategy: DeploymentStrategy;
+};
+
+export type DeploymentStatusUpdateInput = {
+  status: DeploymentStatus;
+  message: string;
+};
+
+export type DeploymentEvent = {
+  id: number;
+  deployment_id: number;
+  event_type: string;
+  level: "info" | "warning" | "error" | "success";
+  message: string;
+  created_at: string;
+};
+
+export type UserSummary = {
+  total_applications: number;
+  total_deployments: number;
+  pending_deployments: number;
+  running_deployments: number;
+  successful_deployments: number;
+  failed_deployments: number;
+};
+
+export type MockDeployment = {
   id: string;
   applicationId: string;
   applicationName: string;
   imageTag: string;
-  environment: Environment;
+  environment: PlatformEnvironment;
   status: DeploymentStatus;
   owner: string;
   strategy: "rolling" | "blueGreen" | "canary";
@@ -42,7 +118,7 @@ export type Deployment = {
   commit: string;
 };
 
-export type DeploymentEvent = {
+export type MockDeploymentEvent = {
   id: string;
   deploymentId: string;
   labelKey: string;

@@ -1,9 +1,10 @@
-import { Bell, Menu, Search, UserCircle } from "lucide-react";
+import { Bell, LogOut, Menu, Search, UserCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { LanguageSwitcher } from "@/components/layout/LanguageSwitcher";
-import { mockUser } from "@/lib/mock-data";
+import { useAuth } from "@/features/auth/useAuth";
 
 type TopbarProps = {
   onMenuClick?: () => void;
@@ -11,6 +12,13 @@ type TopbarProps = {
 
 export function Topbar({ onMenuClick }: TopbarProps) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const { logout, user } = useAuth();
+
+  const handleLogout = () => {
+    logout();
+    navigate("/login");
+  };
 
   return (
     <header className="sticky top-0 z-30 border-b border-white/10 bg-slate-950/66 backdrop-blur-xl">
@@ -32,10 +40,13 @@ export function Topbar({ onMenuClick }: TopbarProps) {
           <div className="hidden items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2 xl:flex">
             <UserCircle className="h-7 w-7 text-cyan-200" />
             <div>
-              <p className="text-sm font-medium text-white">{mockUser.name}</p>
-              <p className="text-xs text-slate-500">{t("topbar.demoUser")}</p>
+              <p className="text-sm font-medium text-white">{user?.username ?? t("topbar.profile")}</p>
+              <p className="text-xs text-slate-500">{user?.role ?? t("topbar.demoUser")}</p>
             </div>
           </div>
+          <Button aria-label={t("auth.logout")} size="icon" variant="outline" onClick={handleLogout}>
+            <LogOut className="h-4 w-4" />
+          </Button>
         </div>
       </div>
     </header>

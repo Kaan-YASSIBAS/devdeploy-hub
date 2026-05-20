@@ -1,6 +1,6 @@
-import { FormEvent } from "react";
+import { FormEvent, useState } from "react";
 import { ArrowLeft, ShieldCheck } from "lucide-react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -8,16 +8,32 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LanguageSwitcher } from "@/components/layout/LanguageSwitcher";
+import { useAuth } from "@/features/auth/useAuth";
 
 export function LoginPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
+  const { login } = useAuth();
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    localStorage.setItem("devdeploy-token", "demo-token");
-    toast.success(t("auth.login.success"));
-    navigate("/dashboard");
+    const formData = new FormData(event.currentTarget);
+    const email = String(formData.get("email"));
+    const password = String(formData.get("password"));
+    const redirectTo = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? "/dashboard";
+
+    try {
+      setIsSubmitting(true);
+      await login(email, password);
+      toast.success(t("auth.login.success"));
+      navigate(redirectTo, { replace: true });
+    } catch {
+      toast.error(t("api.errors.loginFailed"));
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -64,9 +80,9 @@ export function LoginPage() {
                 <Label htmlFor="password">{t("auth.fields.password")}</Label>
                 <Input id="password" name="password" placeholder={t("auth.placeholders.password")} required type="password" />
               </div>
-              <p className="text-xs text-slate-500">{t("auth.demoHint")}</p>
-              <Button className="w-full" type="submit">
-                {t("auth.login.button")}
+              <p className="text-xs text-slate-500">{t("auth.backendHint")}</p>
+              <Button className="w-full" disabled={isSubmitting} type="submit">
+                {isSubmitting ? t("common.loading") : t("auth.login.button")}
               </Button>
             </form>
             <p className="mt-6 text-center text-sm text-slate-400">

@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Badge } from "@/components/ui/badge";
-import { mockUser } from "@/lib/mock-data";
+import { useAuth } from "@/features/auth/useAuth";
 
 const integrations = [
   { name: "GitHub", icon: Github, connected: true },
@@ -18,6 +18,7 @@ const integrations = [
 
 export function SettingsPage() {
   const { t } = useTranslation();
+  const { user } = useAuth();
 
   return (
     <div>
@@ -46,15 +47,15 @@ export function SettingsPage() {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="profile-name">{t("settings.profile.name")}</Label>
-              <Input id="profile-name" defaultValue={mockUser.name} />
+              <Input id="profile-name" value={user?.username ?? ""} readOnly />
             </div>
             <div className="space-y-2">
               <Label htmlFor="profile-email">{t("settings.profile.email")}</Label>
-              <Input id="profile-email" defaultValue={mockUser.email} type="email" />
+              <Input id="profile-email" value={user?.email ?? ""} readOnly type="email" />
             </div>
             <div className="space-y-2">
               <Label htmlFor="profile-role">{t("settings.profile.role")}</Label>
-              <Input id="profile-role" defaultValue={t("topbar.demoUser")} />
+              <Input id="profile-role" value={user?.role ?? ""} readOnly />
             </div>
           </CardContent>
         </Card>
@@ -67,7 +68,7 @@ export function SettingsPage() {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="organization-name">{t("settings.organization.name")}</Label>
-              <Input id="organization-name" defaultValue={mockUser.organization} />
+              <Input id="organization-name" value={t("settings.organization.placeholderName")} readOnly />
             </div>
             <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
               <p className="text-xs uppercase text-slate-500">{t("settings.organization.plan")}</p>

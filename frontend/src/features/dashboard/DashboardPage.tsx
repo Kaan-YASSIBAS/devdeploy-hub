@@ -1,31 +1,53 @@
-import { Activity, Boxes, ClipboardList, Gauge, Rocket, Server, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Activity, Boxes, CheckCircle2, ClipboardList, Gauge, Loader2, Rocket, TriangleAlert } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { useTranslation } from "react-i18next";
+import { useQuery } from "@tanstack/react-query";
+import { applicationsApi, deploymentsApi, usersApi } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { DeploymentTimeline } from "@/components/shared/DeploymentTimeline";
+import { EmptyState } from "@/components/shared/EmptyState";
 import { EnvironmentBadge } from "@/components/shared/EnvironmentBadge";
 import { MetricChart } from "@/components/shared/MetricChart";
 import { StatCard } from "@/components/shared/StatCard";
 import { StatusBadge } from "@/components/shared/StatusBadge";
-import { applications, deploymentEvents, deployments, environments, metrics, pods } from "@/lib/mock-data";
-import type { Deployment } from "@/types";
+import { deploymentEvents, metrics } from "@/lib/mock-data";
+import type { Deployment, Environment, UserSummary } from "@/types";
 
 const pieColors = ["#22d3ee", "#a78bfa", "#34d399"];
+const apiEnvironments: Environment[] = ["dev", "staging", "prod"];
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
 
 export function DashboardPage() {
   const { t } = useTranslation();
-  const activeDeployments = deployments.filter((deployment) => ["pending", "running"].includes(deployment.status)).length;
-  const healthyPods = pods.filter((pod) => pod.status === "healthy").length;
-  const failedDeployments = deployments.filter((deployment) => deployment.status === "failed").length;
+  const summaryQuery = useQuery({ queryKey: ["user-summary"], queryFn: usersApi.summary });
+  const applicationsQuery = useQuery({ queryKey: ["applications"], queryFn: applicationsApi.list });
+  const deploymentsQuery = useQuery({ queryKey: ["deployments"], queryFn: deploymentsApi.list });
+  const summary: UserSummary = summaryQuery.data ?? {
+    total_applications: 0,
+    total_deployments: 0,
+    pending_deployments: 0,
+    running_deployments: 0,
+    successful_deployments: 0,
+    failed_deployments: 0
+  };
   const timelineEvents = deploymentEvents.filter((event) => event.deploymentId === "dep-1041");
+  const applicationNameById = new Map((applicationsQuery.data ?? []).map((application) => [application.id, application.name]));
 
-  const environmentDistribution = environments.map((environment) => ({
+  const environmentDistribution = apiEnvironments.map((environment) => ({
     name: t(`environment.${environment}`),
-    value: applications.filter((application) => application.environment === environment).length
+    value: (applicationsQuery.data ?? []).filter((application) => application.default_environment === environment).length
   }));
 
   const columns: Column<Deployment>[] = [
@@ -34,7 +56,7 @@ export function DashboardPage() {
       header: t("deployments.table.application"),
       render: (deployment) => (
         <div>
-          <p className="font-medium text-white">{deployment.applicationName}</p>
+          <p className="font-medium text-white">{applicationNameById.get(deployment.application_id) ?? t("common.application")}</p>
           <p className="text-xs text-slate-500">{deployment.id}</p>
         </div>
       )
@@ -42,7 +64,7 @@ export function DashboardPage() {
     {
       key: "imageTag",
       header: t("deployments.table.imageTag"),
-      render: (deployment) => deployment.imageTag
+      render: (deployment) => deployment.image_tag
     },
     {
       key: "environment",
@@ -55,9 +77,9 @@ export function DashboardPage() {
       render: (deployment) => <StatusBadge status={deployment.status} type="deployment" />
     },
     {
-      key: "duration",
-      header: t("deployments.table.duration"),
-      render: (deployment) => deployment.duration
+      key: "created",
+      header: t("deployments.table.created"),
+      render: (deployment) => formatDate(deployment.created_at)
     }
   ];
 
@@ -65,42 +87,54 @@ export function DashboardPage() {
     <div>
       <PageHeader description={t("dashboard.description")} title={t("dashboard.title")} />
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
         <StatCard
           detail={t("dashboard.stats.details.totalApps")}
           icon={<Boxes className="h-5 w-5" />}
           label={t("dashboard.stats.totalApps")}
-          value={String(applications.length)}
+          value={summaryQuery.isLoading ? "..." : String(summary.total_applications)}
         />
         <StatCard
-          detail={t("dashboard.stats.details.activeDeployments")}
+          detail={t("dashboard.stats.details.totalDeployments")}
           icon={<Rocket className="h-5 w-5" />}
-          label={t("dashboard.stats.activeDeployments")}
+          label={t("dashboard.stats.totalDeployments")}
           tone="violet"
-          value={String(activeDeployments)}
+          value={summaryQuery.isLoading ? "..." : String(summary.total_deployments)}
         />
         <StatCard
-          detail={t("dashboard.stats.details.healthyPods")}
-          icon={<Server className="h-5 w-5" />}
-          label={t("dashboard.stats.healthyPods")}
+          detail={t("dashboard.stats.details.pendingDeployments")}
+          icon={<Activity className="h-5 w-5" />}
+          label={t("dashboard.stats.pendingDeployments")}
+          tone="amber"
+          value={summaryQuery.isLoading ? "..." : String(summary.pending_deployments)}
+        />
+        <StatCard
+          detail={t("dashboard.stats.details.runningDeployments")}
+          icon={<Loader2 className="h-5 w-5" />}
+          label={t("dashboard.stats.runningDeployments")}
+          tone="cyan"
+          value={summaryQuery.isLoading ? "..." : String(summary.running_deployments)}
+        />
+        <StatCard
+          detail={t("dashboard.stats.details.successfulDeployments")}
+          icon={<CheckCircle2 className="h-5 w-5" />}
+          label={t("dashboard.stats.successfulDeployments")}
           tone="emerald"
-          value={String(healthyPods)}
+          value={summaryQuery.isLoading ? "..." : String(summary.successful_deployments)}
         />
         <StatCard
           detail={t("dashboard.stats.details.failedDeployments")}
           icon={<TriangleAlert className="h-5 w-5" />}
           label={t("dashboard.stats.failedDeployments")}
           tone="red"
-          value={String(failedDeployments)}
-        />
-        <StatCard
-          detail={t("dashboard.stats.details.clusterHealth")}
-          icon={<ShieldCheck className="h-5 w-5" />}
-          label={t("dashboard.stats.clusterHealth")}
-          tone="emerald"
-          value="97%"
+          value={summaryQuery.isLoading ? "..." : String(summary.failed_deployments)}
         />
       </div>
+      {summaryQuery.isError ? (
+        <div className="mt-4 rounded-2xl border border-red-300/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+          {t("api.errors.dashboardSummaryFailed")}
+        </div>
+      ) : null}
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[1.35fr_0.9fr]">
         <MetricChart
@@ -157,7 +191,18 @@ export function DashboardPage() {
             <CardTitle>{t("dashboard.recentDeployments")}</CardTitle>
           </CardHeader>
           <CardContent>
-            <DataTable columns={columns} data={deployments.slice(0, 5)} getRowKey={(deployment) => deployment.id} />
+            <DataTable
+              columns={columns}
+              data={(deploymentsQuery.data ?? []).slice(0, 5)}
+              emptyState={
+                <EmptyState
+                  description={deploymentsQuery.isError ? t("api.errors.deploymentsLoadFailed") : t("deployments.emptyDescription")}
+                  icon={<Rocket className="h-5 w-5" />}
+                  title={deploymentsQuery.isLoading ? t("common.loading") : t("deployments.emptyTitle")}
+                />
+              }
+              getRowKey={(deployment) => String(deployment.id)}
+            />
           </CardContent>
         </Card>
 

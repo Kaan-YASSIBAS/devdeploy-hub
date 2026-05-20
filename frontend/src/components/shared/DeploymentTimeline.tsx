@@ -1,10 +1,10 @@
 import { CheckCircle2, CircleDashed, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type { DeploymentEvent } from "@/types";
+import type { MockDeploymentEvent } from "@/types";
 import { cn } from "@/lib/utils";
 
 type DeploymentTimelineProps = {
-  events: DeploymentEvent[];
+  events: MockDeploymentEvent[];
 };
 
 export function DeploymentTimeline({ events }: DeploymentTimelineProps) {

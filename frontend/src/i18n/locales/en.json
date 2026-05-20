@@ -24,7 +24,9 @@
     "create": "Create",
     "created": "Created",
     "dashboard": "Dashboard",
+    "delete": "Delete",
     "deploy": "Deploy",
+    "description": "Description",
     "details": "Details",
     "duration": "Duration",
     "email": "Email",
@@ -55,6 +57,7 @@
     "status": "Status",
     "strategy": "Strategy",
     "submit": "Submit",
+    "user": "User",
     "view": "View",
     "version": "Version",
     "viewDetails": "View details",
@@ -92,12 +95,15 @@
     "critical": "Critical"
   },
   "environment": {
+    "dev": "Dev",
+    "prod": "Prod",
     "production": "Production",
     "staging": "Staging",
     "development": "Development"
   },
   "strategy": {
     "rolling": "Rolling update",
+    "recreate": "Recreate",
     "blueGreen": "Blue-green",
     "canary": "Canary"
   },
@@ -135,14 +141,16 @@
   },
   "auth": {
     "backHome": "Back to home",
+    "backendHint": "Use your backend account, or create one from this screen.",
     "demoHint": "Demo credentials: platform@devdeploy.local / deploy123",
+    "logout": "Sign out",
     "login": {
       "title": "Welcome back",
       "subtitle": "Sign in to manage deployments, inspect logs, and monitor cluster health.",
       "button": "Sign in",
       "switchText": "New to DevDeploy Hub?",
       "switchLink": "Create an account",
-      "success": "Signed in with demo access."
+      "success": "Signed in successfully."
     },
     "register": {
       "title": "Create your workspace",
@@ -150,16 +158,18 @@
       "button": "Create account",
       "switchText": "Already have an account?",
       "switchLink": "Sign in",
-      "success": "Demo workspace created."
+      "success": "Account created and signed in."
     },
     "fields": {
       "name": "Full name",
+      "username": "Username",
       "email": "Work email",
       "password": "Password",
       "organization": "Organization"
     },
     "placeholders": {
       "name": "Ada Lovelace",
+      "username": "kaan",
       "email": "platform@devdeploy.local",
       "password": "deploy123",
       "organization": "Acme Cloud"
@@ -172,13 +182,21 @@
     "description": "A live executive view of applications, deployments, pods, and cluster pressure.",
     "stats": {
       "totalApps": "Total Apps",
+      "totalDeployments": "Total Deployments",
       "activeDeployments": "Active Deployments",
+      "pendingDeployments": "Pending",
+      "runningDeployments": "Running",
+      "successfulDeployments": "Successful",
       "healthyPods": "Healthy Pods",
       "failedDeployments": "Failed Deployments",
       "clusterHealth": "Cluster Health",
       "details": {
         "totalApps": "Across all tracked namespaces",
+        "totalDeployments": "All deployment requests",
         "activeDeployments": "Currently pending or running",
+        "pendingDeployments": "Waiting in the queue",
+        "runningDeployments": "Currently in progress",
+        "successfulDeployments": "Completed successfully",
         "healthyPods": "Ready and passing probes",
         "failedDeployments": "Needs platform review",
         "clusterHealth": "Control plane nominal"
@@ -227,15 +245,24 @@
     },
     "modal": {
       "title": "Register application",
-      "description": "Create a mock application record for the platform catalog.",
+      "description": "Create an application record in the platform catalog.",
       "name": "Application name",
       "image": "Container image",
+      "imageName": "Image name",
+      "imagePlaceholder": "kaanyassibas/notes-api",
       "environment": "Environment",
+      "defaultEnvironment": "Default environment",
       "owner": "Owner",
       "namespace": "Namespace",
+      "containerPort": "Container port",
+      "descriptionPlaceholder": "FastAPI notes service",
+      "repositoryPlaceholder": "https://github.com/example/notes-api",
       "replicas": "Replica count",
       "submit": "Create application",
-      "success": "Application created in the mock catalog."
+      "success": "Application created."
+    },
+    "actions": {
+      "delete": "Delete application"
     },
     "detail": {
       "subtitle": "Application runtime, release history, pod health, logs, metrics, and settings.",
@@ -246,9 +273,11 @@
       "relatedPods": "Related pods",
       "runtimeMetrics": "Runtime metrics",
       "settingsTitle": "Application settings",
-      "settingsDescription": "Ownership, namespace, and deployment defaults for this service.",
+      "settingsDescription": "Ownership, repository, and deployment defaults for this service.",
+      "loadingDescription": "Loading application data from the backend.",
+      "previewHealth": "Derived until runtime health is connected",
       "notFoundTitle": "Application not found",
-      "notFoundDescription": "The application does not exist in the mock catalog."
+      "notFoundDescription": "The application does not exist in the platform catalog."
     },
     "tabs": {
       "overview": "Overview",
@@ -281,10 +310,11 @@
     },
     "modal": {
       "title": "Create deployment",
-      "description": "Prepare a mock Kubernetes rollout request.",
+      "description": "Create a deployment request for the selected application.",
       "application": "Application",
       "environment": "Environment",
       "imageTag": "Image tag",
+      "imageTagPlaceholder": "v1.0.0",
       "replicas": "Replica count",
       "strategy": "Strategy",
       "submit": "Start deployment",
@@ -296,9 +326,13 @@
       "logsPreview": "Logs preview",
       "rollback": "Rollback",
       "rollbackDisabled": "Rollback is mocked in this frontend foundation.",
+      "loadingDescription": "Loading deployment data from the backend.",
+      "noEvents": "No deployment events have been recorded yet.",
       "notFoundTitle": "Deployment not found",
-      "notFoundDescription": "The deployment does not exist in the mock queue."
-    }
+      "notFoundDescription": "The deployment does not exist in the deployment queue."
+    },
+    "emptyTitle": "No deployments yet",
+    "emptyDescription": "Create a deployment request after registering an application."
   },
   "timeline": {
     "requestCreated": "Request created",
@@ -400,7 +434,8 @@
       "description": "Workspace-level identity for teams and environment policy.",
       "name": "Organization name",
       "plan": "Plan",
-      "planValue": "Platform Premium"
+      "planValue": "Platform Premium",
+      "placeholderName": "DevDeploy Hub Workspace"
     },
     "appearance": {
       "title": "Appearance",
@@ -433,5 +468,24 @@
     "production": "Production",
     "staging": "Staging",
     "development": "Development"
+  },
+  "api": {
+    "errors": {
+      "sessionExpired": "Your session expired. Please sign in again.",
+      "loginFailed": "Login failed. Check your email and password.",
+      "registrationFailed": "Registration failed. Check the form and try again.",
+      "dashboardSummaryFailed": "Could not load dashboard summary.",
+      "applicationsLoadFailed": "Could not load applications.",
+      "applicationCreateFailed": "Could not create application.",
+      "applicationDeleteFailed": "Could not delete application.",
+      "deploymentsLoadFailed": "Could not load deployments.",
+      "deploymentCreateFailed": "Could not create deployment.",
+      "generic": "Something went wrong. Please try again."
+    },
+    "success": {
+      "applicationCreated": "Application created.",
+      "applicationDeleted": "Application deleted.",
+      "deploymentCreated": "Deployment request created."
+    }
   }
 }

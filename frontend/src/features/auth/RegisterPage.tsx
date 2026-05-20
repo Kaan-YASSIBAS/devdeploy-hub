@@ -1,4 +1,4 @@
-import { FormEvent } from "react";
+import { FormEvent, useState } from "react";
 import { ArrowLeft, ShieldCheck } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -8,16 +8,31 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LanguageSwitcher } from "@/components/layout/LanguageSwitcher";
+import { useAuth } from "@/features/auth/useAuth";
 
 export function RegisterPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const { register } = useAuth();
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    localStorage.setItem("devdeploy-token", "demo-token");
-    toast.success(t("auth.register.success"));
-    navigate("/dashboard");
+    const formData = new FormData(event.currentTarget);
+    const username = String(formData.get("username"));
+    const email = String(formData.get("email"));
+    const password = String(formData.get("password"));
+
+    try {
+      setIsSubmitting(true);
+      await register(email, username, password);
+      toast.success(t("auth.register.success"));
+      navigate("/dashboard", { replace: true });
+    } catch {
+      toast.error(t("api.errors.registrationFailed"));
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -57,12 +72,8 @@ export function RegisterPage() {
             </div>
             <form className="space-y-4" onSubmit={handleSubmit}>
               <div className="space-y-2">
-                <Label htmlFor="name">{t("auth.fields.name")}</Label>
-                <Input id="name" name="name" placeholder={t("auth.placeholders.name")} required />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="organization">{t("auth.fields.organization")}</Label>
-                <Input id="organization" name="organization" placeholder={t("auth.placeholders.organization")} required />
+                <Label htmlFor="username">{t("auth.fields.username")}</Label>
+                <Input id="username" name="username" placeholder={t("auth.placeholders.username")} required />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="email">{t("auth.fields.email")}</Label>
@@ -72,9 +83,9 @@ export function RegisterPage() {
                 <Label htmlFor="password">{t("auth.fields.password")}</Label>
                 <Input id="password" name="password" placeholder={t("auth.placeholders.password")} required type="password" />
               </div>
-              <p className="text-xs text-slate-500">{t("auth.demoHint")}</p>
-              <Button className="w-full" type="submit">
-                {t("auth.register.button")}
+              <p className="text-xs text-slate-500">{t("auth.backendHint")}</p>
+              <Button className="w-full" disabled={isSubmitting} type="submit">
+                {isSubmitting ? t("common.loading") : t("auth.register.button")}
               </Button>
             </form>
             <p className="mt-6 text-center text-sm text-slate-400">

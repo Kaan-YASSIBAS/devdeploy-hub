@@ -1,0 +1,156 @@
+import axios, { AxiosError } from "axios";
+import type {
+  Application,
+  ApplicationCreateInput,
+  ApplicationUpdateInput,
+  Deployment,
+  DeploymentCreateInput,
+  DeploymentStatusUpdateInput,
+  User,
+  UserSummary
+} from "@/types";
+
+export const AUTH_TOKEN_KEY = "devdeploy-token";
+export const AUTH_USER_KEY = "devdeploy-user";
+
+export type TokenResponse = {
+  access_token: string;
+  token_type: "bearer" | string;
+};
+
+export type LoginInput = {
+  email: string;
+  password: string;
+};
+
+export type RegisterInput = LoginInput & {
+  username: string;
+};
+
+const baseURL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api/v1";
+
+export const apiClient = axios.create({
+  baseURL,
+  headers: {
+    "Content-Type": "application/json"
+  }
+});
+
+export function getStoredToken() {
+  return localStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+export function setStoredToken(token: string) {
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
+}
+
+export function clearStoredAuth() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_USER_KEY);
+}
+
+apiClient.interceptors.request.use((config) => {
+  const token = getStoredToken();
+
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+
+  return config;
+});
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error: AxiosError) => {
+    if (error.response?.status === 401) {
+      clearStoredAuth();
+
+      if (!["/login", "/register", "/"].includes(window.location.pathname)) {
+        window.dispatchEvent(new CustomEvent("devdeploy:session-expired"));
+      }
+    }
+
+    return Promise.reject(error);
+  }
+);
+
+export function getApiErrorMessage(error: unknown) {
+  if (axios.isAxiosError(error)) {
+    const detail = error.response?.data?.detail;
+
+    if (typeof detail === "string") {
+      return detail;
+    }
+
+    if (Array.isArray(detail) && detail.length > 0 && typeof detail[0]?.msg === "string") {
+      return detail[0].msg;
+    }
+
+    return error.message;
+  }
+
+  return error instanceof Error ? error.message : "Unknown error";
+}
+
+export const authApi = {
+  async login(input: LoginInput) {
+    const { data } = await apiClient.post<TokenResponse>("/auth/login", input);
+    return data;
+  },
+  async register(input: RegisterInput) {
+    const { data } = await apiClient.post<User>("/auth/register", input);
+    return data;
+  },
+  async me() {
+    const { data } = await apiClient.get<User>("/auth/me");
+    return data;
+  }
+};
+
+export const usersApi = {
+  async summary() {
+    const { data } = await apiClient.get<UserSummary>("/users/me/summary");
+    return data;
+  }
+};
+
+export const applicationsApi = {
+  async list() {
+    const { data } = await apiClient.get<Application[]>("/applications");
+    return data;
+  },
+  async get(id: number) {
+    const { data } = await apiClient.get<Application>(`/applications/${id}`);
+    return data;
+  },
+  async create(input: ApplicationCreateInput) {
+    const { data } = await apiClient.post<Application>("/applications", input);
+    return data;
+  },
+  async update(id: number, input: ApplicationUpdateInput) {
+    const { data } = await apiClient.put<Application>(`/applications/${id}`, input);
+    return data;
+  },
+  async remove(id: number) {
+    await apiClient.delete(`/applications/${id}`);
+  }
+};
+
+export const deploymentsApi = {
+  async list() {
+    const { data } = await apiClient.get<Deployment[]>("/deployments");
+    return data;
+  },
+  async get(id: number) {
+    const { data } = await apiClient.get<Deployment>(`/deployments/${id}`);
+    return data;
+  },
+  async create(input: DeploymentCreateInput) {
+    const { data } = await apiClient.post<Deployment>("/deployments", input);
+    return data;
+  },
+  async updateStatus(id: number, input: DeploymentStatusUpdateInput) {
+    const { data } = await apiClient.patch<Deployment>(`/deployments/${id}/status`, input);
+    return data;
+  }
+};

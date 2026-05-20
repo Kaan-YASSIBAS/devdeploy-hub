@@ -46,7 +46,7 @@ export function LandingPage() {
             <p className="mt-6 max-w-2xl text-base leading-8 text-slate-300 sm:text-lg">{t("landing.subheadline")}</p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Button asChild className="group" size="lg">
-                <Link to="/dashboard" onClick={() => localStorage.setItem("devdeploy-token", "demo-token")}>
+                <Link to="/dashboard">
                   {t("landing.openDashboard")}
                   <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
                 </Link>
