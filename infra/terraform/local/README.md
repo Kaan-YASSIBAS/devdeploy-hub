@@ -4,7 +4,7 @@
 
 This Terraform layer bootstraps local Kubernetes platform add-ons for DevDeploy Hub on kind or minikube.
 
-Application resources remain in `infra/kubernetes` and are applied with Kustomize now, or with Argo CD in a later GitOps phase.
+Application resources remain in `infra/kubernetes` and are applied with Kustomize directly or synced by Argo CD.
 
 ## Real-World Separation
 
@@ -12,7 +12,7 @@ Terraform manages platform and cluster-level concerns:
 
 - Platform namespaces
 - ingress-nginx
-- Future Argo CD bootstrap
+- Argo CD
 - Future monitoring bootstrap
 
 Kustomize or GitOps manages application concerns:
@@ -64,6 +64,22 @@ kubectl get pods -n ingress-nginx
 kubectl get svc -n ingress-nginx
 ```
 
+## Verify Argo CD
+
+```powershell
+kubectl get pods -n argocd
+kubectl get svc -n argocd
+kubectl port-forward svc/argocd-server -n argocd 8080:443
+```
+
+Open `https://localhost:8080` and sign in as `admin`.
+
+Get the initial password:
+
+```powershell
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+```
+
 ## Deploy App After Platform Bootstrap
 
 From the repository root, build local images for the port-forward first-test path:
@@ -84,6 +100,13 @@ Apply the application manifests:
 
 ```powershell
 kubectl apply -k infra/kubernetes/overlays/dev
+```
+
+Or let Argo CD sync the same Kustomize overlay:
+
+```powershell
+kubectl apply -f infra/argocd/applications/devdeploy-hub-dev.yaml
+kubectl get applications -n argocd
 ```
 
 For minikube, load the images with:
@@ -113,4 +136,5 @@ kubectl delete -k infra/kubernetes/overlays/dev
 - This is local development only.
 - Secrets in the local Kubernetes app manifests are not production-grade.
 - In production, Terraform would manage cloud clusters, IAM, networking, DNS, and platform services.
-- Argo CD will be added in a later phase.
+- Argo CD is installed locally with a ClusterIP service and is intended to be accessed with port-forwarding.
+- Application manifests remain outside Terraform state and are managed from `infra/kubernetes`.
