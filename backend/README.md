@@ -37,6 +37,40 @@ API docs are available at:
 http://localhost:8000/docs
 ```
 
+## Docker Compose
+
+From the repository root, run the full stack:
+
+```powershell
+docker compose up --build
+```
+
+The backend container waits for PostgreSQL, runs Alembic migrations with `alembic upgrade head`, then starts:
+
+```text
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Backend URLs:
+
+```text
+API:    http://localhost:8000
+Docs:   http://localhost:8000/docs
+Health: http://localhost:8000/api/v1/health
+```
+
+Stop the stack:
+
+```powershell
+docker compose down
+```
+
+Reset the database:
+
+```powershell
+docker compose down -v
+```
+
 ## Environment Variables
 
 ```text

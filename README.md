@@ -8,4 +8,39 @@ DevDeploy Hub aims to provide a modern internal developer platform experience wh
 
 ## Current Phase
 
-Phase 0: Premium frontend foundation with English and Turkish language support.
+Phase 1: Full-stack local development foundation with Docker Compose, FastAPI, PostgreSQL, and the premium React frontend.
+
+## Docker Compose
+
+Run the full stack from the repository root:
+
+```powershell
+docker compose up --build
+```
+
+Services:
+
+```text
+Frontend:     http://localhost:5173
+Backend API:  http://localhost:8000
+Swagger Docs: http://localhost:8000/docs
+Health:       http://localhost:8000/api/v1/health
+```
+
+Stop the stack:
+
+```powershell
+docker compose down
+```
+
+Reset the database volume:
+
+```powershell
+docker compose down -v
+```
+
+In development mode, the first registered user becomes `admin`; later users are created as `developer`.
+
+## Local Development
+
+The Docker setup does not replace local workflows. You can still run the backend with `uvicorn app.main:app --reload` from `backend/`, and the frontend with `npm run dev` from `frontend/`.
