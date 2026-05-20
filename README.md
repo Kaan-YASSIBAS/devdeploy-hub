@@ -52,6 +52,7 @@ GitHub Actions workflows live in `.github/workflows`:
 - `frontend-ci.yml` validates the React/Vite frontend with `npm ci`, `npm run lint`, and `npm run build`.
 - `backend-ci.yml` validates the FastAPI backend by installing Python dependencies, compiling modules, running Alembic migrations against PostgreSQL, importing the app, and smoke testing `/api/v1/health`.
 - `docker-ci.yml` validates `docker-compose.yml` and builds the backend and frontend Docker images.
+- `kubernetes-ci.yml` validates Kustomize rendering and Kubernetes manifest schemas for the local dev overlay.
 
 These workflows are CI only. They do not deploy, publish images, or require secrets.
 

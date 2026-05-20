@@ -72,6 +72,8 @@ kubectl apply -k infra/kubernetes/overlays/dev
 
 The base ConfigMap keeps `FRONTEND_ORIGIN=http://devdeploy.local` for ingress. The dev overlay allows both `http://devdeploy.local` and `http://localhost:5173` so the port-forward first-test path works without changing application code.
 
+The backend Deployment uses an initContainer to wait for PostgreSQL before running Alembic migrations and starting Uvicorn. This reduces startup restarts when the database pod is running but not ready yet.
+
 ## Check Resources
 
 ```powershell
@@ -125,6 +127,24 @@ Swagger:  http://devdeploy.local/docs
 3. Create an application.
 4. Create a deployment.
 5. Check the dashboard summary.
+
+## Troubleshooting
+
+```powershell
+kubectl get pods -n devdeploy
+kubectl describe pod -n devdeploy <pod-name>
+kubectl logs -n devdeploy deployment/devdeploy-backend
+kubectl logs -n devdeploy deployment/postgres
+kubectl rollout status deployment/devdeploy-backend -n devdeploy
+kubectl get events -n devdeploy --sort-by=.lastTimestamp
+```
+
+If the backend is slow to become ready, check the initContainer status and Postgres logs first:
+
+```powershell
+kubectl describe pod -n devdeploy -l app.kubernetes.io/component=backend
+kubectl logs -n devdeploy deployment/postgres
+```
 
 ## Cleanup
 
