@@ -35,6 +35,11 @@ jobs:
           if not files:
               raise SystemExit("No Argo CD Application manifests found.")
 
+          expected_paths = {
+              "devdeploy-hub-dev": "infra/kubernetes/overlays/dev",
+              "devdeploy-hub-release": "infra/kubernetes/overlays/release",
+          }
+
           for path in files:
               docs = [doc for doc in yaml.safe_load_all(path.read_text()) if doc]
               if not docs:
@@ -50,11 +55,14 @@ jobs:
                   spec = doc.get("spec") or {}
                   source = spec.get("source") or {}
                   destination = spec.get("destination") or {}
+                  name = metadata.get("name")
 
                   if metadata.get("namespace") != "argocd":
                       raise SystemExit(f"{path}: Application must live in the argocd namespace.")
-                  if source.get("path") != "infra/kubernetes/overlays/dev":
-                      raise SystemExit(f"{path}: source.path must target infra/kubernetes/overlays/dev.")
+                  if name not in expected_paths:
+                      raise SystemExit(f"{path}: unexpected Application name {name!r}.")
+                  if source.get("path") != expected_paths[name]:
+                      raise SystemExit(f"{path}: source.path must target {expected_paths[name]}.")
                   if destination.get("namespace") != "devdeploy":
                       raise SystemExit(f"{path}: destination.namespace must be devdeploy.")
 

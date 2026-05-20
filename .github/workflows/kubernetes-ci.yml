@@ -23,8 +23,14 @@ jobs:
       - name: Render dev overlay
         run: kubectl kustomize infra/kubernetes/overlays/dev
 
-      - name: Write rendered manifests
-        run: kubectl kustomize infra/kubernetes/overlays/dev > /tmp/devdeploy-k8s.yaml
+      - name: Render release overlay
+        run: kubectl kustomize infra/kubernetes/overlays/release
+
+      - name: Write rendered dev manifests
+        run: kubectl kustomize infra/kubernetes/overlays/dev > /tmp/devdeploy-dev-k8s.yaml
+
+      - name: Write rendered release manifests
+        run: kubectl kustomize infra/kubernetes/overlays/release > /tmp/devdeploy-release-k8s.yaml
 
       - name: Install kubeconform
         run: |
@@ -34,4 +40,4 @@ jobs:
           sudo mv /tmp/kubeconform /usr/local/bin/kubeconform
 
       - name: Validate Kubernetes schemas
-        run: kubeconform -strict -summary /tmp/devdeploy-k8s.yaml
+        run: kubeconform -strict -summary /tmp/devdeploy-dev-k8s.yaml /tmp/devdeploy-release-k8s.yaml

@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: devdeploy
+
+resources:
+  - ../../base
+
+labels:
+  - pairs:
+      environment: release
+    includeSelectors: false
+    includeTemplates: true
+
+images:
+  - name: devdeploy-backend
+    newName: ghcr.io/kaan-yassibas/devdeploy-backend
+    newTag: v1.0.0
+  - name: devdeploy-frontend
+    newName: ghcr.io/kaan-yassibas/devdeploy-frontend
+    newTag: v1.0.0
+
+patches:
+  - target:
+      kind: ConfigMap
+      name: devdeploy-config
+    patch: |-
+      - op: replace
+        path: /data/FRONTEND_ORIGIN
+        value: http://devdeploy.local,http://localhost:5173
