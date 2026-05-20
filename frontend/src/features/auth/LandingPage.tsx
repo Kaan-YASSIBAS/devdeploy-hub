@@ -40,7 +40,7 @@ export function LandingPage() {
         <section className="mx-auto grid max-w-7xl gap-10 px-4 pb-16 pt-12 sm:px-6 md:pt-20 lg:grid-cols-[0.9fr_1.1fr] lg:px-8">
           <motion.div animate={{ opacity: 1, y: 0 }} className="flex flex-col justify-center" initial={{ opacity: 0, y: 14 }} transition={{ duration: 0.35 }}>
             <p className="mb-4 text-xs font-medium uppercase text-cyan-200">{t("landing.eyebrow")}</p>
-            <h1 className="max-w-4xl text-4xl font-semibold leading-tight text-gradient sm:text-5xl lg:text-6xl">
+            <h1 className="max-w-4xl whitespace-pre-line pb-2 text-[2.45rem] font-semibold leading-[1.22] text-gradient sm:text-[2.9rem] md:text-[3.2rem] lg:text-[3.45rem] xl:text-[3.9rem]">
               {t("landing.headline")}
             </h1>
             <p className="mt-6 max-w-2xl text-base leading-8 text-slate-300 sm:text-lg">{t("landing.subheadline")}</p>

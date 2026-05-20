@@ -35,7 +35,12 @@ const groups = [
   }
 ];
 
-export function Sidebar({ mobile = false }: { mobile?: boolean }) {
+type SidebarProps = {
+  mobile?: boolean;
+  onNavigate?: () => void;
+};
+
+export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
   const { t } = useTranslation();
 
   return (
@@ -71,6 +76,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
                         isActive && "bg-cyan-300/10 text-cyan-100 ring-1 ring-cyan-300/20"
                       )
                     }
+                    onClick={onNavigate}
                     to={item.path}
                   >
                     <item.icon className="h-4 w-4" />

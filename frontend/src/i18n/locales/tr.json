@@ -103,7 +103,7 @@
   },
   "landing": {
     "eyebrow": "Self-service DevOps platformu",
-    "headline": "Daha hızlı deploy et. Daha akıllı gözlemle. Kubernetes'i güvenle yönet.",
+    "headline": "Daha hızlı deploy et.\nDaha akıllı gözlemle.\nKubernetes'i güvenle yönet.",
     "subheadline": "DevDeploy Hub; uygulama kaydı, Kubernetes deployment tetikleme, pod sağlığı inceleme, log görüntüleme ve kritik metrikleri izleme için ekiplere şık bir kontrol katmanı sunar.",
     "openDashboard": "Dashboard'u Aç",
     "createAccount": "Hesap Oluştur",
