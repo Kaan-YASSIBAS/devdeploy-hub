@@ -77,3 +77,70 @@ resource "helm_release" "argocd" {
     kubernetes_namespace_v1.argocd
   ]
 }
+
+resource "helm_release" "kube_prometheus_stack" {
+  count = var.install_monitoring ? 1 : 0
+
+  name       = "kube-prometheus-stack"
+  repository = "https://prometheus-community.github.io/helm-charts"
+  chart      = "kube-prometheus-stack"
+  version    = var.kube_prometheus_stack_chart_version
+  namespace  = kubernetes_namespace_v1.monitoring.metadata[0].name
+
+  create_namespace = false
+
+  values = [
+    yamlencode({
+      grafana = {
+        enabled       = true
+        adminPassword = "admin"
+        service = {
+          type = "ClusterIP"
+        }
+      }
+
+      prometheus = {
+        enabled = true
+        service = {
+          type = "ClusterIP"
+        }
+        prometheusSpec = {
+          retention = "6h"
+          resources = {
+            requests = {
+              cpu    = "100m"
+              memory = "256Mi"
+            }
+            limits = {
+              cpu    = "500m"
+              memory = "1Gi"
+            }
+          }
+        }
+      }
+
+      alertmanager = {
+        enabled = true
+        service = {
+          type = "ClusterIP"
+        }
+        alertmanagerSpec = {
+          resources = {
+            requests = {
+              cpu    = "50m"
+              memory = "128Mi"
+            }
+            limits = {
+              cpu    = "200m"
+              memory = "256Mi"
+            }
+          }
+        }
+      }
+    })
+  ]
+
+  depends_on = [
+    kubernetes_namespace_v1.monitoring
+  ]
+}

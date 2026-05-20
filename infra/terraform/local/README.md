@@ -13,7 +13,7 @@ Terraform manages platform and cluster-level concerns:
 - Platform namespaces
 - ingress-nginx
 - Argo CD
-- Future monitoring bootstrap
+- kube-prometheus-stack monitoring
 
 Kustomize or GitOps manages application concerns:
 
@@ -79,6 +79,59 @@ Get the initial password:
 ```powershell
 kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
 ```
+
+## Monitoring Stack
+
+Terraform installs `kube-prometheus-stack` into the `monitoring` namespace. The stack includes Prometheus, Grafana, Alertmanager, kube-state-metrics, and node-exporter.
+
+This setup is for local development only. Grafana uses a local placeholder password, and the stack is not exposed publicly.
+
+Apply the platform bootstrap:
+
+```powershell
+cd infra/terraform/local
+terraform init
+terraform plan
+terraform apply
+```
+
+Check monitoring resources:
+
+```powershell
+kubectl get pods -n monitoring
+kubectl get svc -n monitoring
+```
+
+Find service names:
+
+```powershell
+kubectl get svc -n monitoring
+```
+
+Access Grafana:
+
+```powershell
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
+```
+
+Open `http://localhost:3000`.
+
+Grafana login:
+
+```text
+username: admin
+password: admin
+```
+
+Access Prometheus:
+
+```powershell
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
+```
+
+Open `http://localhost:9090`.
+
+For production, use proper secret management, persistence, reviewed dashboards, alert routes, ingress, and TLS.
 
 ## Deploy App After Platform Bootstrap
 
