@@ -55,8 +55,39 @@ GitHub Actions workflows live in `.github/workflows`:
 - `kubernetes-ci.yml` validates Kustomize rendering and Kubernetes manifest schemas for the local dev overlay.
 - `terraform-ci.yml` validates Terraform formatting, initialization, and configuration for the local platform bootstrap layer.
 - `argocd-ci.yml` validates the Argo CD Application manifests used for local GitOps sync.
+- `container-publish.yml` publishes backend and frontend container images to GitHub Container Registry on pushes to `main` or manual dispatch.
 
-These workflows are CI only. They do not deploy, publish images, or require secrets.
+These workflows do not deploy the application. Publishing uses the built-in `GITHUB_TOKEN` and does not require custom repository secrets.
+
+## Container Registry
+
+Backend and frontend images are published to GitHub Container Registry on pushes to `main`.
+
+Images:
+
+```text
+Backend:  ghcr.io/kaan-yassibas/devdeploy-backend
+Frontend: ghcr.io/kaan-yassibas/devdeploy-frontend
+```
+
+Tags:
+
+```text
+latest
+sha-<commit>
+<branch>
+```
+
+The workflow can also be started manually with `workflow_dispatch`.
+
+The local kind and minikube workflow still uses local images:
+
+```text
+devdeploy-backend:local
+devdeploy-frontend:local
+```
+
+The frontend image is currently built with `VITE_API_BASE_URL=http://localhost:8000/api/v1` to preserve the local port-forward workflow. Future phases will add environment-specific overlays, image tags, or Argo CD Image Updater for GitOps deployment.
 
 ## Kubernetes Local Manifests
 
