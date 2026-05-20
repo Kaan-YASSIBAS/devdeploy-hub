@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+patches:
+  - target:
+      kind: ConfigMap
+      name: devdeploy-config
+    patch: |-
+      - op: replace
+        path: /data/FRONTEND_ORIGIN
+        value: http://devdeploy.local,http://localhost:5173
