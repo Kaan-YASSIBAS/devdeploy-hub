@@ -78,7 +78,7 @@ jobs:
 
       # Scans repository files for dependency vulnerabilities, secrets, and IaC misconfigurations.
       - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           scan-type: fs
           scan-ref: .
@@ -99,7 +99,7 @@ jobs:
         run: docker build -t devdeploy-backend:security-scan ./backend
 
       - name: Scan backend image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           scan-type: image
           image-ref: devdeploy-backend:security-scan
@@ -119,7 +119,7 @@ jobs:
         run: docker build --build-arg VITE_API_BASE_URL=http://localhost:8000/api/v1 -t devdeploy-frontend:security-scan ./frontend
 
       - name: Scan frontend image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           scan-type: image
           image-ref: devdeploy-frontend:security-scan
