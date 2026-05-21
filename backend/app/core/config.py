@@ -11,6 +11,16 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = Field(default=60, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
     frontend_origin: str = Field(default="http://localhost:5173", alias="FRONTEND_ORIGIN")
     environment: str = Field(default="development", alias="ENVIRONMENT")
+    kubernetes_in_cluster: bool = Field(default=False, alias="KUBERNETES_IN_CLUSTER")
+    kubeconfig_path: str | None = Field(default=None, alias="KUBECONFIG_PATH")
+    prometheus_base_url: str = Field(
+        default="http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090",
+        alias="PROMETHEUS_BASE_URL",
+    )
+    loki_base_url: str = Field(
+        default="http://loki-gateway.monitoring.svc.cluster.local",
+        alias="LOKI_BASE_URL",
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",
