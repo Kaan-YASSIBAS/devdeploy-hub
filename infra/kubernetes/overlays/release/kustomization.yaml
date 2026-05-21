@@ -14,10 +14,10 @@ labels:
 images:
   - name: devdeploy-backend
     newName: ghcr.io/kaan-yassibas/devdeploy-backend
-    newTag: v1.0.0
+    newTag: v1.2.0
   - name: devdeploy-frontend
     newName: ghcr.io/kaan-yassibas/devdeploy-frontend
-    newTag: v1.0.0
+    newTag: v1.2.0
 
 patches:
   - target:
