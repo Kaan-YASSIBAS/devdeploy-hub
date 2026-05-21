@@ -52,3 +52,33 @@ output "prometheus_service_hint" {
   description = "Port-forward command for local Prometheus access."
   value       = var.install_monitoring ? "kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090" : null
 }
+
+output "loki_release_name" {
+  description = "Helm release name for Loki when installed."
+  value       = try(helm_release.loki[0].name, null)
+}
+
+output "loki_release_status" {
+  description = "Helm release status for Loki when installed."
+  value       = try(helm_release.loki[0].status, null)
+}
+
+output "alloy_release_name" {
+  description = "Helm release name for Grafana Alloy when installed."
+  value       = try(helm_release.alloy[0].name, null)
+}
+
+output "alloy_release_status" {
+  description = "Helm release status for Grafana Alloy when installed."
+  value       = try(helm_release.alloy[0].status, null)
+}
+
+output "loki_service_hint" {
+  description = "Internal Loki gateway URL used by Alloy and Grafana."
+  value       = var.install_logging ? "http://loki-gateway.monitoring.svc.cluster.local" : null
+}
+
+output "grafana_logs_hint" {
+  description = "Grafana Explore hint for querying Loki logs."
+  value       = var.install_monitoring && var.install_logging ? "Grafana Explore -> Loki -> {namespace=\"devdeploy\"}" : null
+}

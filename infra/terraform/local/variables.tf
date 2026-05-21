@@ -45,3 +45,21 @@ variable "install_monitoring" {
   type        = bool
   default     = true
 }
+
+variable "loki_chart_version" {
+  description = "Optional Loki chart version. Null uses the provider's latest resolvable chart version for local development."
+  type        = string
+  default     = null
+}
+
+variable "alloy_chart_version" {
+  description = "Optional Grafana Alloy chart version. Null uses the provider's latest resolvable chart version for local development."
+  type        = string
+  default     = null
+}
+
+variable "install_logging" {
+  description = "Whether to install Loki and Grafana Alloy through Helm."
+  type        = bool
+  default     = true
+}

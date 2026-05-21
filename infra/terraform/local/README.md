@@ -14,6 +14,7 @@ Terraform manages platform and cluster-level concerns:
 - ingress-nginx
 - Argo CD
 - kube-prometheus-stack monitoring
+- Loki and Grafana Alloy logging
 
 Kustomize or GitOps manages application concerns:
 
@@ -132,6 +133,56 @@ kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:909
 Open `http://localhost:9090`.
 
 For production, use proper secret management, persistence, reviewed dashboards, alert routes, ingress, and TLS.
+
+## Logging Stack
+
+Terraform installs Loki and Grafana Alloy into the `monitoring` namespace.
+
+- Loki stores and queries logs.
+- Grafana Alloy collects Kubernetes pod logs and forwards them to Loki.
+- Grafana gets a Loki datasource through a Terraform-managed ConfigMap watched by the kube-prometheus-stack Grafana sidecar.
+
+Loki uses ephemeral local filesystem storage under `/tmp/loki` for development. Persistence remains disabled, and the chart mounts a writable `emptyDir` at that path.
+
+Promtail is intentionally not used because Grafana Alloy is the modern collector path for Kubernetes logs.
+
+Apply the platform bootstrap:
+
+```powershell
+cd infra/terraform/local
+terraform init
+terraform plan
+terraform apply
+```
+
+Check logging resources:
+
+```powershell
+kubectl get pods -n monitoring
+kubectl get svc -n monitoring
+```
+
+Access Grafana:
+
+```powershell
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
+```
+
+Open `http://localhost:3000`, then go to:
+
+```text
+Explore -> Loki
+```
+
+Example LogQL queries:
+
+```logql
+{namespace="devdeploy"}
+{namespace="argocd"}
+{namespace="monitoring"}
+```
+
+This logging setup is local development only. Production logging should add durable object storage, persistence, retention policy, alerting, RBAC review, secret management, and environment-specific Grafana dashboards.
 
 ## Deploy App After Platform Bootstrap
 
