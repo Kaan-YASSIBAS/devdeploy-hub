@@ -80,7 +80,13 @@ JWT_ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=60
 FRONTEND_ORIGIN=http://localhost:5173
 ENVIRONMENT=development
+KUBERNETES_IN_CLUSTER=false
+KUBECONFIG_PATH=
+PROMETHEUS_BASE_URL=http://localhost:9090
+LOKI_BASE_URL=http://localhost:3100
 ```
+
+Observability endpoints return `503` when Kubernetes, Prometheus, or Loki are not reachable from the backend runtime.
 
 When `ENVIRONMENT=development`, the first registered user is created as `admin` for local setup convenience. Later users are `developer`.
 

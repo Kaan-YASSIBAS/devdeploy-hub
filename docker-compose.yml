@@ -31,6 +31,9 @@ services:
       ACCESS_TOKEN_EXPIRE_MINUTES: 60
       FRONTEND_ORIGIN: http://localhost:5173
       ENVIRONMENT: development
+      KUBERNETES_IN_CLUSTER: "false"
+      PROMETHEUS_BASE_URL: http://localhost:9090
+      LOKI_BASE_URL: http://localhost:3100
     command: >
       sh -c "alembic upgrade head &&
       uvicorn app.main:app --host 0.0.0.0 --port 8000"

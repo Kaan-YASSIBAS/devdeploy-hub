@@ -9,4 +9,7 @@ data:
   JWT_ALGORITHM: HS256
   FRONTEND_ORIGIN: http://devdeploy.local
   ENVIRONMENT: development
+  KUBERNETES_IN_CLUSTER: "true"
+  PROMETHEUS_BASE_URL: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+  LOKI_BASE_URL: http://loki-gateway.monitoring.svc.cluster.local
   VITE_API_BASE_URL: http://devdeploy.local/api/v1

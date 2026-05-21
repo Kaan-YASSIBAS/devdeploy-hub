@@ -18,6 +18,7 @@ spec:
         app.kubernetes.io/name: devdeploy-hub
         app.kubernetes.io/component: backend
     spec:
+      serviceAccountName: devdeploy-backend
       securityContext:
         runAsNonRoot: true
         seccompProfile:
@@ -100,6 +101,21 @@ spec:
                 configMapKeyRef:
                   name: devdeploy-config
                   key: ENVIRONMENT
+            - name: KUBERNETES_IN_CLUSTER
+              valueFrom:
+                configMapKeyRef:
+                  name: devdeploy-config
+                  key: KUBERNETES_IN_CLUSTER
+            - name: PROMETHEUS_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: devdeploy-config
+                  key: PROMETHEUS_BASE_URL
+            - name: LOKI_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: devdeploy-config
+                  key: LOKI_BASE_URL
           readinessProbe:
             httpGet:
               path: /api/v1/health

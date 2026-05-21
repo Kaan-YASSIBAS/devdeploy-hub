@@ -8,6 +8,7 @@ resources:
   - postgres-pvc.yaml
   - postgres-deployment.yaml
   - postgres-service.yaml
+  - backend-rbac.yaml
   - backend-deployment.yaml
   - backend-service.yaml
   - frontend-deployment.yaml

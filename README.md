@@ -264,6 +264,30 @@ Example LogQL queries:
 {namespace="monitoring"}
 ```
 
+## Backend Observability API
+
+The backend exposes authenticated, read-only APIs for real cluster and observability data.
+
+Capabilities:
+
+```text
+Kubernetes resource summary, namespaces, pods, deployments, and services
+Prometheus cluster and namespace metrics
+Loki namespace and pod logs
+```
+
+Routes live under:
+
+```text
+/api/v1/observability
+```
+
+The backend pod uses in-cluster Kubernetes config and a read-only `devdeploy-backend` ServiceAccount. RBAC allows only `get`, `list`, and `watch` on namespaces, nodes, pods, services, and deployments. No write permissions are granted.
+
+In Docker Compose, observability integrations may return `503` unless the backend can reach a local Kubernetes API, Prometheus, and Loki. The app still starts normally.
+
+Detailed endpoint examples live in `docs/observability-api.md`.
+
 ## GitOps / Argo CD
 
 Argo CD is installed by Terraform as a local platform add-on. It can sync the dev overlay at `infra/kubernetes/overlays/dev` or the GHCR-backed release overlay at `infra/kubernetes/overlays/release`.

@@ -7,6 +7,8 @@ pydantic
 pydantic-settings
 python-dotenv
 PyJWT==2.12.1
+httpx
+kubernetes
 passlib[bcrypt]
 bcrypt==4.0.1
 email-validator
