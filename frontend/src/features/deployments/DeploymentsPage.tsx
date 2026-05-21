@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { applicationsApi, deploymentsApi } from "@/api/client";
+import { applicationsApi, deploymentsApi, getApiErrorMessage, getApiErrorStatus } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
@@ -45,12 +45,27 @@ export function DeploymentsPage() {
 
   const createMutation = useMutation({
     mutationFn: (input: GitOpsDeploymentCreateInput) => deploymentsApi.createGitOps(input),
-    onSuccess: async () => {
-      toast.success(t("api.success.gitopsRequestCreated"));
+    onSuccess: async (response) => {
+      if (response.workflow_triggered) {
+        toast.success(t("deployments.gitops.result.startedToast"));
+      } else if (response.request.status === "failed") {
+        toast.error(response.request.error_message ?? t("api.errors.gitopsRequestFailed"));
+      } else {
+        toast.error(t("api.errors.deploymentAutomationUnavailable"));
+      }
+
       await queryClient.invalidateQueries({ queryKey: ["deployments"] });
       await queryClient.invalidateQueries({ queryKey: ["user-summary"] });
     },
-    onError: () => toast.error(t("api.errors.gitopsRequestFailed"))
+    onError: (error) => {
+      if (getApiErrorStatus(error) === 503) {
+        toast.error(t("api.errors.deploymentAutomationUnavailable"));
+        return;
+      }
+
+      const message = getApiErrorMessage(error);
+      toast.error(message || t("api.errors.gitopsRequestFailed"));
+    }
   });
 
   const filteredDeployments = useMemo(
@@ -117,14 +132,14 @@ export function DeploymentsPage() {
                 ? t("deployments.gitops.result.workflowTriggered")
                 : gitopsResult.request.status === "failed"
                   ? t("deployments.gitops.result.failed")
-                  : t("deployments.gitops.result.manualRequired")}
+                  : t("api.errors.deploymentAutomationUnavailable")}
             </CardTitle>
             <CardDescription>
               {gitopsResult.workflow_triggered
                 ? t("deployments.gitops.result.workflowTriggeredDescription")
                 : gitopsResult.request.status === "failed"
                   ? t("deployments.gitops.result.failedDescription")
-                  : t("deployments.gitops.result.manualDescription")}
+                  : t("api.errors.deploymentAutomationUnavailable")}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -147,20 +162,11 @@ export function DeploymentsPage() {
               </div>
             </div>
 
-            {!gitopsResult.workflow_triggered ? (
-              <div className="rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.06] p-4">
-                <p className="text-sm font-medium text-cyan-100">{t("deployments.gitops.result.manualStepsTitle")}</p>
-                <p className="mt-2 text-sm leading-6 text-slate-300">{t("deployments.gitops.result.manualSteps")}</p>
-                <div className="mt-4 grid gap-2 text-xs md:grid-cols-2">
-                  {Object.entries(gitopsResult.manual_inputs).map(([key, value]) => (
-                    <div key={key} className="rounded-xl border border-white/10 bg-slate-950/50 px-3 py-2">
-                      <span className="text-slate-500">{key}</span>
-                      <span className="ml-2 font-mono text-slate-200">{value || "-"}</span>
-                    </div>
-                  ))}
-                </div>
+            {gitopsResult.workflow_triggered ? null : (
+              <div className="rounded-2xl border border-amber-300/15 bg-amber-300/[0.06] p-4 text-sm leading-6 text-amber-100">
+                {gitopsResult.request.status === "failed" ? gitopsResult.request.error_message ?? t("api.errors.gitopsRequestFailed") : t("api.errors.deploymentAutomationUnavailable")}
               </div>
-            ) : null}
+            )}
           </CardContent>
         </Card>
       ) : null}

@@ -33,6 +33,11 @@ on:
         description: "Optional ingress host"
         required: false
         type: string
+      auto_merge:
+        description: "Enable auto-merge or direct squash merge after PR creation"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -103,8 +108,10 @@ jobs:
         run: git diff --check
 
       - name: Create workload pull request
+        id: cpr
         uses: peter-evans/create-pull-request@v6
         with:
+          token: ${{ secrets.DEVDEPLOY_BOT_TOKEN || github.token }}
           base: main
           branch: gitops/workload-${{ inputs.app_name }}-${{ inputs.tag }}
           delete-branch: true
@@ -134,3 +141,64 @@ jobs:
             `infra/kubernetes/generated/workloads/apps/${{ inputs.app_name }}`
 
             After merge, Argo CD syncs the release overlay and creates or updates the workload.
+
+      - name: Auto-merge workload pull request
+        id: merge_pr
+        if: steps.cpr.outputs.pull-request-number != ''
+        env:
+          AUTO_MERGE: ${{ inputs.auto_merge }}
+          GH_TOKEN: ${{ secrets.DEVDEPLOY_BOT_TOKEN || github.token }}
+          PR_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
+        shell: bash
+        run: |
+          AUTO_MERGE="${AUTO_MERGE:-true}"
+
+          if [[ "$AUTO_MERGE" != "true" ]]; then
+            echo "merge_result=skipped" >> "$GITHUB_OUTPUT"
+            echo "Auto-merge was not requested."
+            exit 0
+          fi
+
+          set +e
+          gh pr merge "$PR_NUMBER" --auto --squash
+          auto_merge_status=$?
+
+          if [[ $auto_merge_status -eq 0 ]]; then
+            echo "merge_result=auto_merge_enabled" >> "$GITHUB_OUTPUT"
+            echo "GitHub auto-merge was enabled for PR #$PR_NUMBER."
+            exit 0
+          fi
+
+          echo "GitHub auto-merge could not be enabled. Trying a direct squash merge without admin bypass."
+          gh pr merge "$PR_NUMBER" --squash
+          direct_merge_status=$?
+
+          if [[ $direct_merge_status -eq 0 ]]; then
+            echo "merge_result=merged_directly" >> "$GITHUB_OUTPUT"
+            echo "PR #$PR_NUMBER was merged directly with squash."
+            exit 0
+          fi
+
+          echo "::error::Failed to enable auto-merge or directly squash-merge PR #$PR_NUMBER. Check branch protection, required checks, and token permissions."
+          exit 1
+
+      - name: Write workflow summary
+        if: always()
+        env:
+          AUTO_MERGE: ${{ inputs.auto_merge }}
+          MERGE_RESULT: ${{ steps.merge_pr.outputs.merge_result || 'not_attempted' }}
+          PR_OPERATION: ${{ steps.cpr.outputs.pull-request-operation || 'none' }}
+          PR_URL: ${{ steps.cpr.outputs.pull-request-url || 'not created' }}
+        shell: bash
+        run: |
+          AUTO_MERGE="${AUTO_MERGE:-true}"
+
+          {
+            echo "## GitOps workload request"
+            echo ""
+            echo "- PR URL: $PR_URL"
+            echo "- PR operation: $PR_OPERATION"
+            echo "- Auto-merge requested: $AUTO_MERGE"
+            echo "- Merge result: $MERGE_RESULT"
+            echo "- Argo CD will sync the release overlay after the PR is merged."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -3,5 +3,4 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
-  - apps/backend-demo
   - apps/podinfo-demo
