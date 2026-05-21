@@ -120,6 +120,39 @@ kubectl get applications -n argocd
 kubectl describe application devdeploy-hub-release -n argocd
 ```
 
+## GitOps Image Promotion
+
+The release Application syncs `infra/kubernetes/overlays/release`. New release images are promoted by updating that overlay through a pull request, then letting Argo CD apply the merged Git state.
+
+Manual promotion flow:
+
+```powershell
+git tag v1.1.0
+git push origin v1.1.0
+```
+
+After `container-publish.yml` finishes, run the `GitOps Promotion` workflow manually with:
+
+```text
+image_tag = v1.1.0
+```
+
+The workflow opens a PR that updates:
+
+```text
+ghcr.io/kaan-yassibas/devdeploy-backend:v1.1.0
+ghcr.io/kaan-yassibas/devdeploy-frontend:v1.1.0
+```
+
+After the PR is merged, check Argo CD:
+
+```powershell
+kubectl get applications -n argocd
+kubectl describe application devdeploy-hub-release -n argocd
+```
+
+This keeps the workflow GitOps-compliant: CI changes Git and opens a PR; Argo CD performs the cluster sync from the merged manifest state.
+
 Check DevDeploy Hub resources:
 
 ```powershell
@@ -149,6 +182,6 @@ Swagger:        http://localhost:8000/docs
 - This is a local GitOps bootstrap.
 - The dev Application uses local kind or minikube images.
 - The release Application uses GHCR release images.
-- Later phases can add automated image promotion or Argo CD Image Updater.
+- Later phases can add Argo CD Image Updater or environment-specific promotion policies.
 - Secret values are local placeholders.
 - Production should use external secret management, stricter RBAC, and a reviewed Argo CD project model.

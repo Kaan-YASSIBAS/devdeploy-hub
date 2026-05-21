@@ -56,9 +56,10 @@ GitHub Actions workflows live in `.github/workflows`:
 - `terraform-ci.yml` validates Terraform formatting, initialization, and configuration for the local platform bootstrap layer.
 - `argocd-ci.yml` validates the Argo CD Application manifests used for local GitOps sync.
 - `container-publish.yml` publishes backend and frontend container images to GitHub Container Registry on pushes to `main` or manual dispatch.
+- `gitops-promotion.yml` updates the release Kustomize overlay image tags and opens a promotion pull request.
 - `security-ci.yml` scans backend dependencies, frontend dependencies, repository files, IaC, and Docker images.
 
-These workflows do not deploy the application. Publishing uses the built-in `GITHUB_TOKEN` and does not require custom repository secrets.
+These workflows do not deploy the application directly. Publishing and promotion use the built-in `GITHUB_TOKEN` and do not require custom repository secrets.
 
 ## DevSecOps / Security
 
@@ -127,7 +128,8 @@ Release checklist:
 - Push the tag.
 - Verify the `Container Publish` workflow.
 - Verify the GHCR backend and frontend packages.
-- Later, update the GitOps manifest or overlay to the release tag.
+- Run the `GitOps Promotion` workflow for the same tag.
+- Review and merge the generated promotion pull request.
 
 The local kind and minikube workflow still uses local images:
 
@@ -139,6 +141,46 @@ devdeploy-frontend:local
 The frontend image is currently built with `VITE_API_BASE_URL=http://localhost:8000/api/v1` to preserve the local port-forward workflow. Future phases will add environment-specific overlays, image tags, or Argo CD Image Updater for GitOps deployment.
 
 The registry-based release overlay lives at `infra/kubernetes/overlays/release`. It uses GHCR images tagged `v1.0.0` and is intended for registry-based GitOps testing.
+
+## GitOps Image Promotion
+
+Release image promotion is PR-based. CI does not deploy directly to Kubernetes.
+
+Promotion flow:
+
+```powershell
+git tag v1.1.0
+git push origin v1.1.0
+```
+
+After `container-publish.yml` publishes both GHCR images, run:
+
+```text
+Actions -> GitOps Promotion -> Run workflow -> image_tag = v1.1.0
+```
+
+The workflow updates:
+
+```text
+infra/kubernetes/overlays/release/kustomization.yaml
+```
+
+It opens a pull request named:
+
+```text
+chore: promote release images to v1.1.0
+```
+
+After the PR checks pass and the PR is merged, Argo CD syncs the release overlay and deploys the promoted image tag.
+
+The workflow uses `GITHUB_TOKEN` by default. If your repository policy requires workflows to run from bot-created promotion PRs, configure an optional `GITOPS_PROMOTION_TOKEN` secret with the same repository write scope.
+
+Local script validation:
+
+```powershell
+python scripts/promote-release-images.py v1.1.0
+kubectl kustomize infra/kubernetes/overlays/release
+```
 
 ## Kubernetes Local Manifests
 
