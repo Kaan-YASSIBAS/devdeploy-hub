@@ -48,6 +48,7 @@
     "pod": "Pod",
     "replicas": "Replica",
     "repository": "Repository",
+    "refresh": "Yenile",
     "restarts": "Restart",
     "required": "Zorunlu",
     "role": "Rol",
@@ -59,6 +60,7 @@
     "submit": "Gönder",
     "user": "Kullanıcı",
     "view": "Görüntüle",
+    "unavailable": "Kullanılamıyor",
     "version": "Version",
     "viewDetails": "Detayları görüntüle",
     "zone": "Zone"
@@ -358,18 +360,45 @@
       "cpuUsage": "CPU Kullanımı",
       "memoryUsage": "Memory Kullanımı"
     },
+    "realData": "Canlı Kubernetes API verisi",
+    "readyNodes": "Ready / toplam node",
+    "namespaceStatus": "Seçili namespace",
+    "pods": "Podlar",
+    "deployments": "Deploymentlar",
+    "services": "Servisler",
     "nodes": "Node tablosu",
     "namespaces": "Namespace'ler",
     "workloadHealth": "Workload sağlığı",
+    "tableDescription": "{{namespace}} namespace'inden canlı kaynaklar.",
+    "unavailableTitle": "Observability verisi kullanılamıyor",
+    "emptyDescription": "Seçili namespace için Kubernetes kaynağı dönmedi.",
+    "emptyPods": "Pod bulunamadı",
+    "emptyDeployments": "Deployment bulunamadı",
+    "emptyServices": "Servis bulunamadı",
     "table": {
       "node": "Node",
       "status": "Durum",
       "cpu": "CPU",
       "memory": "Memory",
       "pods": "Podlar",
+      "phase": "Faz",
+      "containersReady": "Hazır container",
+      "availableReplicas": "Available replica",
+      "updatedReplicas": "Updated replica",
+      "type": "Tip",
+      "clusterIp": "Cluster IP",
+      "ports": "Portlar",
       "version": "Version",
       "zone": "Zone"
     }
+  },
+  "observability": {
+    "available": "Erişilebilir",
+    "connected": "Bağlı",
+    "notReachable": "Erişilemiyor",
+    "kubernetes": "Kubernetes",
+    "prometheus": "Prometheus",
+    "loki": "Loki"
   },
   "logs": {
     "title": "Loglar",
@@ -384,12 +413,17 @@
       "app": "Uygulama",
       "pod": "Pod",
       "level": "Seviye",
+      "limit": "Limit",
       "search": "Loglarda ara"
     },
     "autoScroll": "Auto-scroll",
     "copyLogs": "Logları kopyala",
     "copied": "Loglar panoya kopyalandı.",
     "terminalTitle": "Runtime akışı",
+    "emptyTitle": "Log bulunamadı",
+    "emptyDescription": "Seçili filtrelerle eşleşen Loki log satırı yok.",
+    "loadingDescription": "Loglar Loki'den yükleniyor.",
+    "unavailableTitle": "Loglar kullanılamıyor",
     "messages": {
       "deploymentStarted": "{{deployment}} deployment'ı {{image}} image'ı için başladı.",
       "readinessProbe": "{{pod}} için readiness probe başarılı oldu.",
@@ -417,7 +451,18 @@
       "requests": "Request rate",
       "errors": "Error rate",
       "restarts": "Pod restartları"
-    }
+    },
+    "metrics": {
+      "clusterScope": "Cluster geneli",
+      "cpuCores": "CPU core",
+      "memoryWorkingSet": "Memory working set",
+      "podCount": "Pod sayısı",
+      "restartCount": "Restart sayısı",
+      "availableReplicas": "Available replica"
+    },
+    "previewTitle": "Önizleme time-series grafikleri",
+    "previewDescription": "Backend range query bağlantısı eklenene kadar grafikler demo veride kalır.",
+    "unavailableTitle": "Monitoring verisi kullanılamıyor"
   },
   "settings": {
     "title": "Ayarlar",
@@ -480,6 +525,10 @@
       "applicationDeleteFailed": "Uygulama silinemedi.",
       "deploymentsLoadFailed": "Deploymentlar yüklenemedi.",
       "deploymentCreateFailed": "Deployment oluşturulamadı.",
+      "logsLoadFailed": "Loglar yüklenemedi.",
+      "observabilityLoadFailed": "Observability verisi yüklenemedi.",
+      "observabilityPermissionDenied": "Observability verisini görüntüleme yetkin yok.",
+      "observabilityUnavailable": "Observability backend'i kullanılamıyor.",
       "generic": "Bir şeyler ters gitti. Lütfen tekrar dene."
     },
     "success": {

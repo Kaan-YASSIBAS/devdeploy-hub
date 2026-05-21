@@ -1,6 +1,6 @@
 import type {
-  LogEntry,
   MetricPoint,
+  MockLogEntry,
   MockApplication,
   MockDeployment,
   MockDeploymentEvent,
@@ -340,7 +340,7 @@ export const metrics: MetricPoint[] = [
   { time: "15:00", cpu: 52, memory: 61, requests: 2100, errors: 9, restarts: 0, deployments: 6 }
 ];
 
-export const logs: LogEntry[] = [
+export const logs: MockLogEntry[] = [
   {
     id: "log-1",
     timestamp: "2026-05-20T14:24:03Z",

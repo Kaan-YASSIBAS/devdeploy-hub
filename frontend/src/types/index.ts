@@ -160,7 +160,7 @@ export type MetricPoint = {
   deployments: number;
 };
 
-export type LogEntry = {
+export type MockLogEntry = {
   id: string;
   timestamp: string;
   level: LogLevel;
@@ -168,4 +168,83 @@ export type LogEntry = {
   pod: string;
   messageKey: string;
   values?: Record<string, string | number>;
+};
+
+export type ObservabilityComponentHealth = {
+  available: boolean;
+  detail?: string | null;
+};
+
+export type ObservabilityHealth = {
+  kubernetes: ObservabilityComponentHealth;
+  prometheus: ObservabilityComponentHealth;
+  loki: ObservabilityComponentHealth;
+};
+
+export type ClusterSummary = {
+  current_context: string | null;
+  namespaces_count: number;
+  pods_count: number;
+  deployments_count: number;
+  services_count: number;
+  nodes_count: number;
+  ready_nodes_count: number;
+};
+
+export type KubernetesNamespace = {
+  name: string;
+  status: string | null;
+  created_at: string | null;
+  labels: Record<string, string>;
+};
+
+export type KubernetesPod = {
+  namespace: string;
+  name: string;
+  phase: string | null;
+  node_name: string | null;
+  restart_count: number;
+  containers_ready: string;
+  created_at: string | null;
+  labels: Record<string, string>;
+};
+
+export type KubernetesDeployment = {
+  namespace: string;
+  name: string;
+  replicas: number;
+  ready_replicas: number;
+  available_replicas: number;
+  updated_replicas: number;
+  labels: Record<string, string>;
+};
+
+export type KubernetesServicePort = {
+  name: string | null;
+  port: number;
+  target_port: string | number | null;
+  protocol: string | null;
+};
+
+export type KubernetesService = {
+  namespace: string;
+  name: string;
+  type: string | null;
+  cluster_ip: string | null;
+  ports: KubernetesServicePort[];
+  labels: Record<string, string>;
+};
+
+export type ClusterMetrics = {
+  cpu_usage_cores: number;
+  memory_working_set_bytes: number;
+  pod_count: number;
+  restart_count: number;
+  deployment_available_replicas: number;
+};
+
+export type LogEntry = {
+  timestamp: string;
+  line: string;
+  labels: Record<string, string>;
 };
