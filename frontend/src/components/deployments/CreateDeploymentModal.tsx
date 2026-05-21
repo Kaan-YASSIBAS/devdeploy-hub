@@ -18,11 +18,7 @@ type CreateDeploymentModalProps = {
 const defaultNamespace = "devdeploy-workloads";
 
 function toImageRepository(application: Application | undefined) {
-  if (!application) {
-    return "";
-  }
-
-  return application.image_name.startsWith("ghcr.io/") ? application.image_name : `ghcr.io/kaan-yassibas/${application.slug}`;
+  return application?.image_name ?? "";
 }
 
 export function CreateDeploymentModal({

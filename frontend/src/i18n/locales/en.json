@@ -355,6 +355,7 @@
       "result": {
         "workflowTriggered": "GitOps workflow triggered",
         "workflowTriggeredDescription": "GitHub Actions will generate manifests and open a pull request.",
+        "startedToast": "GitOps deployment started. A PR will be created and applied by Argo CD after checks pass.",
         "manualRequired": "Manual workflow trigger required",
         "manualDescription": "The request was stored, but automatic GitHub dispatch is not configured for this backend.",
         "failed": "GitOps dispatch failed",
@@ -566,6 +567,7 @@
       "applicationDeleteFailed": "Could not delete application.",
       "deploymentsLoadFailed": "Could not load deployments.",
       "deploymentCreateFailed": "Could not create deployment.",
+      "deploymentAutomationUnavailable": "Deployment automation is not configured. Contact the platform administrator.",
       "gitopsRequestFailed": "Could not create GitOps deployment request.",
       "logsLoadFailed": "Could not load logs.",
       "observabilityLoadFailed": "Could not load observability data.",

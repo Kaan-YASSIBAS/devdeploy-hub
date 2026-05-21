@@ -355,6 +355,7 @@
       "result": {
         "workflowTriggered": "GitOps workflow tetiklendi",
         "workflowTriggeredDescription": "GitHub Actions manifestleri üretecek ve pull request açacak.",
+        "startedToast": "GitOps deployment başladı. Kontroller geçtikten sonra PR oluşturulacak ve Argo CD tarafından uygulanacak.",
         "manualRequired": "Manuel workflow tetikleme gerekli",
         "manualDescription": "İstek kaydedildi, ancak bu backend için otomatik GitHub dispatch yapılandırılmamış.",
         "failed": "GitOps dispatch başarısız",
@@ -566,6 +567,7 @@
       "applicationDeleteFailed": "Uygulama silinemedi.",
       "deploymentsLoadFailed": "Deploymentlar yüklenemedi.",
       "deploymentCreateFailed": "Deployment oluşturulamadı.",
+      "deploymentAutomationUnavailable": "Deployment otomasyonu yapılandırılmamış. Platform yöneticisiyle iletişime geç.",
       "gitopsRequestFailed": "GitOps deployment isteği oluşturulamadı.",
       "logsLoadFailed": "Loglar yüklenemedi.",
       "observabilityLoadFailed": "Observability verisi yüklenemedi.",
