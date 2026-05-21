@@ -7,7 +7,6 @@ metadata:
     app.kubernetes.io/name: devdeploy-hub
 data:
   JWT_ALGORITHM: HS256
-  ACCESS_TOKEN_EXPIRE_MINUTES: "60"
   FRONTEND_ORIGIN: http://devdeploy.local
   ENVIRONMENT: development
   VITE_API_BASE_URL: http://devdeploy.local/api/v1

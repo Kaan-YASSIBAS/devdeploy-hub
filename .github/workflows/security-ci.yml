@@ -1,0 +1,128 @@
+name: Security CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-scan-backend:
+    name: Backend dependency scan
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Install pip-audit
+        run: python -m pip install pip-audit
+
+      # Dependency vulnerability scanning for Python backend requirements.
+      - name: Run pip-audit
+        run: pip-audit -r requirements.txt --ignore-vuln PYSEC-2025-183
+
+  dependency-scan-frontend:
+    name: Frontend dependency scan
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # Dependency vulnerability scanning for npm packages. This does not run npm audit fix.
+      - name: Run npm audit
+        run: npm audit --audit-level=moderate
+
+  trivy-filesystem-scan:
+    name: Trivy filesystem scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Scans repository files for dependency vulnerabilities, secrets, and IaC misconfigurations.
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          format: table
+          exit-code: "1"
+
+  trivy-image-scan-backend:
+    name: Trivy backend image scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: docker build -t devdeploy-backend:security-scan ./backend
+
+      - name: Scan backend image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: image
+          image-ref: devdeploy-backend:security-scan
+          severity: HIGH,CRITICAL
+          format: table
+          exit-code: "1"
+
+  trivy-image-scan-frontend:
+    name: Trivy frontend image scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build frontend image
+        run: docker build --build-arg VITE_API_BASE_URL=http://localhost:8000/api/v1 -t devdeploy-frontend:security-scan ./frontend
+
+      - name: Scan frontend image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: image
+          image-ref: devdeploy-frontend:security-scan
+          severity: HIGH,CRITICAL
+          format: table
+          exit-code: "1"
