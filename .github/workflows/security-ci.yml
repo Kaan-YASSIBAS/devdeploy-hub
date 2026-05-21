@@ -78,7 +78,7 @@ jobs:
 
       # Scans repository files for dependency vulnerabilities, secrets, and IaC misconfigurations.
       - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           scan-type: fs
           scan-ref: .
