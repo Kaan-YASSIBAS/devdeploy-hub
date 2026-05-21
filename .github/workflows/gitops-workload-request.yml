@@ -1,0 +1,136 @@
+name: GitOps Workload Request
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: "DNS-safe workload name, for example demo-api"
+        required: true
+        type: string
+      image:
+        description: "Image repository, for example ghcr.io/kaan-yassibas/demo-api"
+        required: true
+        type: string
+      tag:
+        description: "Image tag, for example v1.0.0"
+        required: true
+        type: string
+      namespace:
+        description: "Target workload namespace"
+        required: false
+        default: devdeploy-workloads
+        type: string
+      container_port:
+        description: "Container port, 1024-65535"
+        required: true
+        type: string
+      replicas:
+        description: "Replica count, 1-5"
+        required: false
+        default: "1"
+        type: string
+      ingress_host:
+        description: "Optional ingress host"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  create-workload-pr:
+    name: Generate workload manifests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate inputs
+        shell: bash
+        run: |
+          if [[ ! "${{ inputs.app_name }}" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]]; then
+            echo "app_name must be a DNS-safe slug"
+            exit 1
+          fi
+          if [[ ! "${{ inputs.image }}" =~ ^ghcr\.io/ ]]; then
+            echo "image must start with ghcr.io/"
+            exit 1
+          fi
+          if [[ "${{ inputs.tag }}" == "latest" ]]; then
+            echo "tag cannot be latest"
+            exit 1
+          fi
+
+      - name: Generate workload manifests
+        env:
+          APP_NAME: ${{ inputs.app_name }}
+          IMAGE: ${{ inputs.image }}
+          TAG: ${{ inputs.tag }}
+          NAMESPACE: ${{ inputs.namespace }}
+          CONTAINER_PORT: ${{ inputs.container_port }}
+          REPLICAS: ${{ inputs.replicas }}
+          INGRESS_HOST: ${{ inputs.ingress_host }}
+        shell: bash
+        run: |
+          args=(
+            python scripts/create-gitops-workload.py
+            --app-name "$APP_NAME"
+            --image "$IMAGE"
+            --tag "$TAG"
+            --namespace "$NAMESPACE"
+            --container-port "$CONTAINER_PORT"
+            --replicas "$REPLICAS"
+          )
+          if [[ -n "$INGRESS_HOST" ]]; then
+            args+=(--ingress-host "$INGRESS_HOST")
+          fi
+          "${args[@]}"
+
+      - name: Render release overlay
+        run: kubectl kustomize infra/kubernetes/overlays/release
+
+      - name: Check whitespace
+        run: git diff --check
+
+      - name: Create workload pull request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          base: main
+          branch: gitops/workload-${{ inputs.app_name }}-${{ inputs.tag }}
+          delete-branch: true
+          add-paths: |
+            infra/kubernetes/generated/workloads
+          commit-message: "chore: deploy ${{ inputs.app_name }} ${{ inputs.tag }}"
+          title: "chore: deploy ${{ inputs.app_name }} ${{ inputs.tag }}"
+          body: |
+            Create or update a GitOps-managed workload.
+
+            App name:
+            `${{ inputs.app_name }}`
+
+            Image:
+            `${{ inputs.image }}:${{ inputs.tag }}`
+
+            Namespace:
+            `${{ inputs.namespace }}`
+
+            Replicas:
+            `${{ inputs.replicas }}`
+
+            Container port:
+            `${{ inputs.container_port }}`
+
+            Generated manifest path:
+            `infra/kubernetes/generated/workloads/apps/${{ inputs.app_name }}`
+
+            After merge, Argo CD syncs the release overlay and creates or updates the workload.

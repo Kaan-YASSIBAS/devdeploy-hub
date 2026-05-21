@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: devdeploy-workloads
+  labels:
+    app.kubernetes.io/name: devdeploy-workloads
+    app.kubernetes.io/managed-by: devdeploy-hub
+    devdeploy.io/component: generated-workloads

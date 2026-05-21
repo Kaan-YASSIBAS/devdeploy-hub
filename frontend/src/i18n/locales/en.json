@@ -322,6 +322,47 @@
       "submit": "Start deployment",
       "success": "Deployment request created."
     },
+    "gitops": {
+      "title": "Create GitOps deployment request",
+      "description": "Generate a reviewed manifest change through GitHub Actions. The backend never applies Kubernetes resources directly.",
+      "application": "Application",
+      "manualApplication": "Manual workload",
+      "appName": "App name",
+      "image": "Image repository",
+      "imagePlaceholder": "ghcr.io/kaan-yassibas/demo-api",
+      "tag": "Image tag",
+      "tagPlaceholder": "v1.0.0",
+      "namespace": "Namespace",
+      "containerPort": "Container port",
+      "replicas": "Replicas",
+      "ingressHost": "Ingress host",
+      "ingressPlaceholder": "demo.devdeploy.local",
+      "submit": "Create GitOps request",
+      "validation": {
+        "required": "App name, image, tag, namespace, port, and replicas are required.",
+        "latest": "Image tag cannot be latest.",
+        "registry": "Image repository must start with ghcr.io/.",
+        "port": "Container port must be between 1024 and 65535.",
+        "replicas": "Replicas must be between 1 and 5."
+      },
+      "status": {
+        "pending": "Pending",
+        "pending_manual_trigger": "Manual trigger required",
+        "workflow_triggered": "Workflow triggered",
+        "pr_opened": "Pull request opened",
+        "failed": "Failed"
+      },
+      "result": {
+        "workflowTriggered": "GitOps workflow triggered",
+        "workflowTriggeredDescription": "GitHub Actions will generate manifests and open a pull request.",
+        "manualRequired": "Manual workflow trigger required",
+        "manualDescription": "The request was stored, but automatic GitHub dispatch is not configured for this backend.",
+        "failed": "GitOps dispatch failed",
+        "failedDescription": "The request was stored, but GitHub did not accept the workflow dispatch.",
+        "manualStepsTitle": "Manual fallback",
+        "manualSteps": "Actions -> GitOps Workload Request -> Run workflow, then use the inputs below."
+      }
+    },
     "detail": {
       "subtitle": "Deployment execution timeline, metadata, and logs preview.",
       "metadata": "Deployment metadata",
@@ -525,6 +566,7 @@
       "applicationDeleteFailed": "Could not delete application.",
       "deploymentsLoadFailed": "Could not load deployments.",
       "deploymentCreateFailed": "Could not create deployment.",
+      "gitopsRequestFailed": "Could not create GitOps deployment request.",
       "logsLoadFailed": "Could not load logs.",
       "observabilityLoadFailed": "Could not load observability data.",
       "observabilityPermissionDenied": "You do not have permission to view observability data.",
@@ -534,7 +576,8 @@
     "success": {
       "applicationCreated": "Application created.",
       "applicationDeleted": "Application deleted.",
-      "deploymentCreated": "Deployment request created."
+      "deploymentCreated": "Deployment request created.",
+      "gitopsRequestCreated": "GitOps deployment request created."
     }
   }
 }

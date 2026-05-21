@@ -322,6 +322,47 @@
       "submit": "Deployment başlat",
       "success": "Deployment isteği oluşturuldu."
     },
+    "gitops": {
+      "title": "GitOps deployment isteği oluştur",
+      "description": "GitHub Actions üzerinden review edilen manifest değişikliği üret. Backend Kubernetes kaynaklarını doğrudan uygulamaz.",
+      "application": "Uygulama",
+      "manualApplication": "Manuel workload",
+      "appName": "Uygulama adı",
+      "image": "Image repository",
+      "imagePlaceholder": "ghcr.io/kaan-yassibas/demo-api",
+      "tag": "Image tag",
+      "tagPlaceholder": "v1.0.0",
+      "namespace": "Namespace",
+      "containerPort": "Container port",
+      "replicas": "Replica",
+      "ingressHost": "Ingress host",
+      "ingressPlaceholder": "demo.devdeploy.local",
+      "submit": "GitOps isteği oluştur",
+      "validation": {
+        "required": "Uygulama adı, image, tag, namespace, port ve replica zorunlu.",
+        "latest": "Image tag latest olamaz.",
+        "registry": "Image repository ghcr.io/ ile başlamalı.",
+        "port": "Container port 1024 ile 65535 arasında olmalı.",
+        "replicas": "Replica sayısı 1 ile 5 arasında olmalı."
+      },
+      "status": {
+        "pending": "Beklemede",
+        "pending_manual_trigger": "Manuel tetikleme gerekli",
+        "workflow_triggered": "Workflow tetiklendi",
+        "pr_opened": "Pull request açıldı",
+        "failed": "Başarısız"
+      },
+      "result": {
+        "workflowTriggered": "GitOps workflow tetiklendi",
+        "workflowTriggeredDescription": "GitHub Actions manifestleri üretecek ve pull request açacak.",
+        "manualRequired": "Manuel workflow tetikleme gerekli",
+        "manualDescription": "İstek kaydedildi, ancak bu backend için otomatik GitHub dispatch yapılandırılmamış.",
+        "failed": "GitOps dispatch başarısız",
+        "failedDescription": "İstek kaydedildi, ancak GitHub workflow dispatch isteğini kabul etmedi.",
+        "manualStepsTitle": "Manuel fallback",
+        "manualSteps": "Actions -> GitOps Workload Request -> Run workflow adımlarını izle ve aşağıdaki inputları kullan."
+      }
+    },
     "detail": {
       "subtitle": "Deployment yürütme timeline'ı, metadata ve log önizlemesi.",
       "metadata": "Deployment metadata",
@@ -525,6 +566,7 @@
       "applicationDeleteFailed": "Uygulama silinemedi.",
       "deploymentsLoadFailed": "Deploymentlar yüklenemedi.",
       "deploymentCreateFailed": "Deployment oluşturulamadı.",
+      "gitopsRequestFailed": "GitOps deployment isteği oluşturulamadı.",
       "logsLoadFailed": "Loglar yüklenemedi.",
       "observabilityLoadFailed": "Observability verisi yüklenemedi.",
       "observabilityPermissionDenied": "Observability verisini görüntüleme yetkin yok.",
@@ -534,7 +576,8 @@
     "success": {
       "applicationCreated": "Uygulama oluşturuldu.",
       "applicationDeleted": "Uygulama silindi.",
-      "deploymentCreated": "Deployment isteği oluşturuldu."
+      "deploymentCreated": "Deployment isteği oluşturuldu.",
+      "gitopsRequestCreated": "GitOps deployment isteği oluşturuldu."
     }
   }
 }

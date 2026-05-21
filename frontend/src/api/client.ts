@@ -8,6 +8,8 @@ import type {
   Deployment,
   DeploymentCreateInput,
   DeploymentStatusUpdateInput,
+  GitOpsDeploymentCreateInput,
+  GitOpsDeploymentResponse,
   KubernetesDeployment,
   KubernetesNamespace,
   KubernetesPod,
@@ -159,6 +161,10 @@ export const deploymentsApi = {
   },
   async create(input: DeploymentCreateInput) {
     const { data } = await apiClient.post<Deployment>("/deployments", input);
+    return data;
+  },
+  async createGitOps(input: GitOpsDeploymentCreateInput) {
+    const { data } = await apiClient.post<GitOpsDeploymentResponse>("/deployments/gitops", input);
     return data;
   },
   async updateStatus(id: number, input: DeploymentStatusUpdateInput) {

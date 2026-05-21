@@ -2,7 +2,7 @@
 
 This overlay deploys DevDeploy Hub with GHCR release images instead of local kind or minikube images.
 
-It references the shared base manifests and replaces:
+It references the shared base manifests, includes generated workloads from `infra/kubernetes/generated/workloads`, and replaces:
 
 ```text
 devdeploy-backend:local  -> ghcr.io/kaan-yassibas/devdeploy-backend:v1.0.0
@@ -10,6 +10,14 @@ devdeploy-frontend:local -> ghcr.io/kaan-yassibas/devdeploy-frontend:v1.0.0
 ```
 
 Use this overlay after the `v1.0.0` backend and frontend images have been published to GitHub Container Registry.
+
+Generated application workloads are kept separate from the DevDeploy Hub platform resources:
+
+```text
+Platform namespace:  devdeploy
+Workload namespace:  devdeploy-workloads
+Generated path:      infra/kubernetes/generated/workloads/apps/<app-name>
+```
 
 ## GitOps Image Promotion
 

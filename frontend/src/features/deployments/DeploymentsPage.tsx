@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { applicationsApi, deploymentsApi } from "@/api/client";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { CreateDeploymentModal } from "@/components/deployments/CreateDeploymentModal";
@@ -15,7 +15,7 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { EnvironmentBadge } from "@/components/shared/EnvironmentBadge";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { useAuth } from "@/features/auth/useAuth";
-import type { Deployment, DeploymentCreateInput, DeploymentStatus, Environment } from "@/types";
+import type { Deployment, GitOpsDeploymentCreateInput, GitOpsDeploymentResponse, DeploymentStatus, Environment } from "@/types";
 
 const environments: Environment[] = ["dev", "staging", "prod"];
 
@@ -36,6 +36,7 @@ export function DeploymentsPage() {
   const [status, setStatus] = useState<DeploymentStatus | "all">("all");
   const [application, setApplication] = useState("all");
   const [modalOpen, setModalOpen] = useState(false);
+  const [gitopsResult, setGitopsResult] = useState<GitOpsDeploymentResponse | null>(null);
   const deploymentsQuery = useQuery({ queryKey: ["deployments"], queryFn: deploymentsApi.list });
   const applicationsQuery = useQuery({ queryKey: ["applications"], queryFn: applicationsApi.list });
   const deployments = useMemo(() => deploymentsQuery.data ?? [], [deploymentsQuery.data]);
@@ -43,13 +44,13 @@ export function DeploymentsPage() {
   const applicationNameById = useMemo(() => new Map(applications.map((item) => [item.id, item.name])), [applications]);
 
   const createMutation = useMutation({
-    mutationFn: (input: DeploymentCreateInput) => deploymentsApi.create(input),
+    mutationFn: (input: GitOpsDeploymentCreateInput) => deploymentsApi.createGitOps(input),
     onSuccess: async () => {
-      toast.success(t("api.success.deploymentCreated"));
+      toast.success(t("api.success.gitopsRequestCreated"));
       await queryClient.invalidateQueries({ queryKey: ["deployments"] });
       await queryClient.invalidateQueries({ queryKey: ["user-summary"] });
     },
-    onError: () => toast.error(t("api.errors.deploymentCreateFailed"))
+    onError: () => toast.error(t("api.errors.gitopsRequestFailed"))
   });
 
   const filteredDeployments = useMemo(
@@ -108,6 +109,62 @@ export function DeploymentsPage() {
         title={t("deployments.title")}
       />
 
+      {gitopsResult ? (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>
+              {gitopsResult.workflow_triggered
+                ? t("deployments.gitops.result.workflowTriggered")
+                : gitopsResult.request.status === "failed"
+                  ? t("deployments.gitops.result.failed")
+                  : t("deployments.gitops.result.manualRequired")}
+            </CardTitle>
+            <CardDescription>
+              {gitopsResult.workflow_triggered
+                ? t("deployments.gitops.result.workflowTriggeredDescription")
+                : gitopsResult.request.status === "failed"
+                  ? t("deployments.gitops.result.failedDescription")
+                  : t("deployments.gitops.result.manualDescription")}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+                <p className="text-xs uppercase text-slate-500">{t("deployments.gitops.appName")}</p>
+                <p className="mt-2 font-medium text-white">{gitopsResult.request.app_name}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+                <p className="text-xs uppercase text-slate-500">{t("deployments.gitops.image")}</p>
+                <p className="mt-2 break-all font-mono text-xs text-cyan-200">{`${gitopsResult.request.image}:${gitopsResult.request.tag}`}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+                <p className="text-xs uppercase text-slate-500">{t("deployments.gitops.namespace")}</p>
+                <p className="mt-2 font-medium text-white">{gitopsResult.request.namespace}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+                <p className="text-xs uppercase text-slate-500">{t("common.status")}</p>
+                <p className="mt-2 font-medium text-white">{t(`deployments.gitops.status.${gitopsResult.request.status}`)}</p>
+              </div>
+            </div>
+
+            {!gitopsResult.workflow_triggered ? (
+              <div className="rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.06] p-4">
+                <p className="text-sm font-medium text-cyan-100">{t("deployments.gitops.result.manualStepsTitle")}</p>
+                <p className="mt-2 text-sm leading-6 text-slate-300">{t("deployments.gitops.result.manualSteps")}</p>
+                <div className="mt-4 grid gap-2 text-xs md:grid-cols-2">
+                  {Object.entries(gitopsResult.manual_inputs).map(([key, value]) => (
+                    <div key={key} className="rounded-xl border border-white/10 bg-slate-950/50 px-3 py-2">
+                      <span className="text-slate-500">{key}</span>
+                      <span className="ml-2 font-mono text-slate-200">{value || "-"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card>
         <CardContent className="space-y-5 pt-5">
           <div className="grid gap-3 lg:grid-cols-3">
@@ -132,8 +189,8 @@ export function DeploymentsPage() {
               value={status}
               onChange={(event) => setStatus(event.target.value as DeploymentStatus | "all")}
             />
-              <Select
-                aria-label={t("deployments.filters.application")}
+            <Select
+              aria-label={t("deployments.filters.application")}
               options={[{ value: "all", label: t("common.all") }, ...applications.map((item) => ({ value: String(item.id), label: item.name }))]}
               value={application}
               onChange={(event) => setApplication(event.target.value)}
@@ -160,7 +217,8 @@ export function DeploymentsPage() {
         isSubmitting={createMutation.isPending}
         open={modalOpen}
         onCreate={async (deployment) => {
-          await createMutation.mutateAsync(deployment);
+          const response = await createMutation.mutateAsync(deployment);
+          setGitopsResult(response);
         }}
         onOpenChange={setModalOpen}
       />
