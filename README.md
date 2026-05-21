@@ -174,6 +174,36 @@ kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:909
 
 Grafana uses `admin` / `admin` for local development. This is cluster-level monitoring; application-level FastAPI metrics will be added later.
 
+## Logging
+
+Cluster-level log aggregation is installed by Terraform from `infra/terraform/local`.
+
+It uses:
+
+```text
+Loki
+Grafana Alloy
+Grafana Explore
+```
+
+Loki stores and queries logs. Grafana Alloy runs as the collector and forwards Kubernetes pod logs to Loki. Promtail is intentionally avoided because Alloy is the modern collector path.
+
+View logs through Grafana:
+
+```powershell
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
+```
+
+Open `http://localhost:3000`, then use `Explore -> Loki`.
+
+Example LogQL queries:
+
+```logql
+{namespace="devdeploy"}
+{namespace="argocd"}
+{namespace="monitoring"}
+```
+
 ## GitOps / Argo CD
 
 Argo CD is installed by Terraform as a local platform add-on. It can sync the dev overlay at `infra/kubernetes/overlays/dev` or the GHCR-backed release overlay at `infra/kubernetes/overlays/release`.
