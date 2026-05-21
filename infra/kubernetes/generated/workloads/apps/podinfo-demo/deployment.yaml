@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podinfo-demo
+  namespace: devdeploy-workloads
+  labels:
+    app.kubernetes.io/name: podinfo-demo
+    app.kubernetes.io/managed-by: devdeploy-hub
+    devdeploy.io/application: podinfo-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: podinfo-demo
+      devdeploy.io/application: podinfo-demo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: podinfo-demo
+        app.kubernetes.io/managed-by: devdeploy-hub
+        devdeploy.io/application: podinfo-demo
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: podinfo-demo
+          image: ghcr.io/stefanprodan/podinfo:6.7.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 9898
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
