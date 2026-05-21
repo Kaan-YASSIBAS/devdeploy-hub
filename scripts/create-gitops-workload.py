@@ -136,6 +136,8 @@ spec:
                 - ALL
             readOnlyRootFilesystem: true
             runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
           resources:
             requests:
               cpu: 50m
