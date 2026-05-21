@@ -81,6 +81,40 @@ export type DeploymentCreateInput = {
   strategy: DeploymentStrategy;
 };
 
+export type GitOpsDeploymentStatus = "pending" | "pending_manual_trigger" | "workflow_triggered" | "pr_opened" | "failed";
+
+export type GitOpsDeploymentCreateInput = {
+  application_id?: number | null;
+  app_name: string;
+  image: string;
+  tag: string;
+  namespace: string;
+  container_port: number;
+  replicas: number;
+  ingress_host?: string | null;
+};
+
+export type GitOpsDeploymentRequest = GitOpsDeploymentCreateInput & {
+  id: number;
+  application_id: number | null;
+  ingress_host: string | null;
+  status: GitOpsDeploymentStatus;
+  workflow_run_url: string | null;
+  pull_request_url: string | null;
+  error_message: string | null;
+  created_by_id: number;
+  created_at: string;
+  updated_at: string | null;
+};
+
+export type GitOpsDeploymentResponse = {
+  request: GitOpsDeploymentRequest;
+  workflow_triggered: boolean;
+  message: string;
+  manual_workflow: string | null;
+  manual_inputs: Record<string, string>;
+};
+
 export type DeploymentStatusUpdateInput = {
   status: DeploymentStatus;
   message: string;

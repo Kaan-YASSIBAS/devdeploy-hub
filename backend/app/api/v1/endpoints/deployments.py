@@ -5,7 +5,9 @@ from app.core.deps import get_current_user, get_db, require_admin
 from app.models.deployment import Deployment
 from app.models.user import User
 from app.schemas.deployment import DeploymentCreate, DeploymentRead, DeploymentStatusUpdate
+from app.schemas.gitops_deployment import GitOpsDeploymentCreate, GitOpsDeploymentResponse
 from app.services.deployment_service import DeploymentService
+from app.services.gitops_deployment_service import GitOpsDeploymentService
 
 
 router = APIRouter(prefix="/deployments", tags=["deployments"])
@@ -26,6 +28,15 @@ def list_deployments(
     current_user: User = Depends(get_current_user),
 ) -> list[Deployment]:
     return DeploymentService(db).list_for_user(current_user)
+
+
+@router.post("/gitops", response_model=GitOpsDeploymentResponse, status_code=status.HTTP_201_CREATED)
+def create_gitops_deployment(
+    payload: GitOpsDeploymentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GitOpsDeploymentResponse:
+    return GitOpsDeploymentService(db).create(payload, current_user)
 
 
 @router.get("/{deployment_id}", response_model=DeploymentRead)

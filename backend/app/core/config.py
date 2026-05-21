@@ -21,6 +21,12 @@ class Settings(BaseSettings):
         default="http://loki-gateway.monitoring.svc.cluster.local",
         alias="LOKI_BASE_URL",
     )
+    gitops_enabled: bool = Field(default=False, alias="GITOPS_ENABLED")
+    github_owner: str = Field(default="Kaan-YASSIBAS", alias="GITHUB_OWNER")
+    github_repo: str = Field(default="devdeploy-hub", alias="GITHUB_REPO")
+    gitops_workflow_file: str = Field(default="gitops-workload-request.yml", alias="GITOPS_WORKFLOW_FILE")
+    github_workflow_token: str | None = Field(default=None, alias="GITHUB_WORKFLOW_TOKEN")
+    gitops_target_ref: str = Field(default="main", alias="GITOPS_TARGET_REF")
 
     model_config = SettingsConfigDict(
         env_file=".env",

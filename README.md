@@ -57,6 +57,7 @@ GitHub Actions workflows live in `.github/workflows`:
 - `argocd-ci.yml` validates the Argo CD Application manifests used for local GitOps sync.
 - `container-publish.yml` publishes backend and frontend container images to GitHub Container Registry on pushes to `main` or manual dispatch.
 - `gitops-promotion.yml` updates the release Kustomize overlay image tags and opens a promotion pull request.
+- `gitops-workload-request.yml` generates workload manifests and opens a GitOps deployment pull request.
 - `security-ci.yml` scans backend dependencies, frontend dependencies, repository files, IaC, and Docker images.
 
 These workflows do not deploy the application directly. Publishing and promotion use the built-in `GITHUB_TOKEN` and do not require custom repository secrets.
@@ -317,3 +318,32 @@ kubectl get applications -n argocd
 ```
 
 Kustomize remains the source of application manifests; Terraform manages the platform bootstrap, and Argo CD performs the app sync. Use either the dev or release Application in the `devdeploy` namespace at a time unless you are intentionally testing overlap.
+
+## GitOps Deployment Request Engine
+
+DevDeploy Hub can now create deployment requests that generate Kubernetes workload manifests through GitHub Actions and pull requests.
+
+The backend does not deploy directly to Kubernetes and does not run `kubectl apply`. It stores the request, optionally dispatches `.github/workflows/gitops-workload-request.yml`, and returns manual workflow inputs when GitHub dispatch is not configured.
+
+Generated workload manifests live under:
+
+```text
+infra/kubernetes/generated/workloads/apps/<app-name>
+```
+
+The release overlay includes `infra/kubernetes/generated/workloads`, so after a generated workload PR is merged, Argo CD can sync the workload from Git.
+
+Automatic dispatch is controlled with:
+
+```text
+GITOPS_ENABLED=true
+GITHUB_WORKFLOW_TOKEN=<token>
+```
+
+Local development can leave `GITOPS_ENABLED=false` and run the workflow manually:
+
+```text
+Actions -> GitOps Workload Request -> Run workflow
+```
+
+Detailed architecture and local examples live in `docs/gitops-deployment-engine.md`.
