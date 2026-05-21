@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12-alpine
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -9,7 +9,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+RUN addgroup -g 10001 -S app \
+    && adduser -u 10001 -S -D -G app -h /app -s /sbin/nologin app
+
+COPY --chown=app:app . .
+
+USER 10001:10001
 
 EXPOSE 8000
 

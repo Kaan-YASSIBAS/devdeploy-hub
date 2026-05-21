@@ -75,7 +75,7 @@ docker compose down -v
 
 ```text
 DATABASE_URL=postgresql://devdeploy:devdeploy@localhost:5432/devdeploy
-JWT_SECRET_KEY=change-me-in-production
+JWT_SECRET_KEY=change-me-in-production-use-at-least-32-chars
 JWT_ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=60
 FRONTEND_ORIGIN=http://localhost:5173

@@ -26,7 +26,7 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql://devdeploy:devdeploy@postgres:5432/devdeploy
-      JWT_SECRET_KEY: change-me-in-production
+      JWT_SECRET_KEY: change-me-in-production-use-at-least-32-chars
       JWT_ALGORITHM: HS256
       ACCESS_TOKEN_EXPIRE_MINUTES: 60
       FRONTEND_ORIGIN: http://localhost:5173
@@ -55,7 +55,7 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "5173:80"
+      - "5173:8080"
 
 volumes:
   devdeploy_postgres_data:

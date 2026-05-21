@@ -56,8 +56,26 @@ GitHub Actions workflows live in `.github/workflows`:
 - `terraform-ci.yml` validates Terraform formatting, initialization, and configuration for the local platform bootstrap layer.
 - `argocd-ci.yml` validates the Argo CD Application manifests used for local GitOps sync.
 - `container-publish.yml` publishes backend and frontend container images to GitHub Container Registry on pushes to `main` or manual dispatch.
+- `security-ci.yml` scans backend dependencies, frontend dependencies, repository files, IaC, and Docker images.
 
 These workflows do not deploy the application. Publishing uses the built-in `GITHUB_TOKEN` and does not require custom repository secrets.
+
+## DevSecOps / Security
+
+Security scanning runs through `.github/workflows/security-ci.yml`.
+
+It includes:
+
+```text
+Python dependency scanning with pip-audit
+npm dependency scanning with npm audit
+Trivy filesystem, secret, and IaC scanning
+Trivy backend and frontend image scanning
+```
+
+High and critical Trivy findings fail CI. Frontend dependency advisories at moderate severity or higher fail CI. The workflow does not push images, deploy workloads, or run automatic fixes.
+
+Detailed local commands and scope notes live in `docs/security.md`.
 
 ## Container Registry
 

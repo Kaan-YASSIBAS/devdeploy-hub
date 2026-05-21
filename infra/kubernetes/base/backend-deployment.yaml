@@ -18,10 +18,23 @@ spec:
         app.kubernetes.io/name: devdeploy-hub
         app.kubernetes.io/component: backend
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
         - name: wait-for-postgres
           image: postgres:16-alpine
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 70
+            runAsGroup: 70
           command:
             - sh
             - -c
@@ -36,10 +49,22 @@ spec:
                 secretKeyRef:
                   name: devdeploy-secret
                   key: POSTGRES_USER
+          volumeMounts:
+            - name: backend-tmp
+              mountPath: /tmp
       containers:
         - name: backend
           image: devdeploy-backend:local
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
           command:
             - sh
             - -c
@@ -62,8 +87,8 @@ spec:
                   key: JWT_ALGORITHM
             - name: ACCESS_TOKEN_EXPIRE_MINUTES
               valueFrom:
-                configMapKeyRef:
-                  name: devdeploy-config
+                secretKeyRef:
+                  name: devdeploy-secret
                   key: ACCESS_TOKEN_EXPIRE_MINUTES
             - name: FRONTEND_ORIGIN
               valueFrom:
@@ -104,3 +129,9 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+          volumeMounts:
+            - name: backend-tmp
+              mountPath: /tmp
+      volumes:
+        - name: backend-tmp
+          emptyDir: {}
