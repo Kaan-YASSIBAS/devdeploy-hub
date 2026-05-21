@@ -3,9 +3,17 @@ import type {
   Application,
   ApplicationCreateInput,
   ApplicationUpdateInput,
+  ClusterMetrics,
+  ClusterSummary,
   Deployment,
   DeploymentCreateInput,
   DeploymentStatusUpdateInput,
+  KubernetesDeployment,
+  KubernetesNamespace,
+  KubernetesPod,
+  KubernetesService,
+  LogEntry,
+  ObservabilityHealth,
   User,
   UserSummary
 } from "@/types";
@@ -92,6 +100,10 @@ export function getApiErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unknown error";
 }
 
+export function getApiErrorStatus(error: unknown) {
+  return axios.isAxiosError(error) ? error.response?.status : undefined;
+}
+
 export const authApi = {
   async login(input: LoginInput) {
     const { data } = await apiClient.post<TokenResponse>("/auth/login", input);
@@ -151,6 +163,51 @@ export const deploymentsApi = {
   },
   async updateStatus(id: number, input: DeploymentStatusUpdateInput) {
     const { data } = await apiClient.patch<Deployment>(`/deployments/${id}/status`, input);
+    return data;
+  }
+};
+
+export const observabilityApi = {
+  async health() {
+    const { data } = await apiClient.get<ObservabilityHealth>("/observability/health");
+    return data;
+  },
+  async clusterSummary() {
+    const { data } = await apiClient.get<ClusterSummary>("/observability/cluster/summary");
+    return data;
+  },
+  async namespaces() {
+    const { data } = await apiClient.get<KubernetesNamespace[]>("/observability/kubernetes/namespaces");
+    return data;
+  },
+  async pods(namespace?: string) {
+    const { data } = await apiClient.get<KubernetesPod[]>("/observability/kubernetes/pods", {
+      params: { namespace }
+    });
+    return data;
+  },
+  async kubernetesDeployments(namespace?: string) {
+    const { data } = await apiClient.get<KubernetesDeployment[]>("/observability/kubernetes/deployments", {
+      params: { namespace }
+    });
+    return data;
+  },
+  async services(namespace?: string) {
+    const { data } = await apiClient.get<KubernetesService[]>("/observability/kubernetes/services", {
+      params: { namespace }
+    });
+    return data;
+  },
+  async clusterMetrics() {
+    const { data } = await apiClient.get<ClusterMetrics>("/observability/metrics/cluster");
+    return data;
+  },
+  async namespaceMetrics(namespace: string) {
+    const { data } = await apiClient.get<ClusterMetrics>(`/observability/metrics/namespaces/${namespace}`);
+    return data;
+  },
+  async logs(params: { namespace?: string; pod?: string; limit?: number }) {
+    const { data } = await apiClient.get<LogEntry[]>("/observability/logs", { params });
     return data;
   }
 };

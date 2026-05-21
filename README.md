@@ -284,6 +284,8 @@ Routes live under:
 
 The backend pod uses in-cluster Kubernetes config and a read-only `devdeploy-backend` ServiceAccount. RBAC allows only `get`, `list`, and `watch` on namespaces, nodes, pods, services, and deployments. No write permissions are granted.
 
+The frontend Cluster, Monitoring, and Logs pages now consume these authenticated endpoints. In Kubernetes, those pages show live Kubernetes resources, Prometheus summary metrics, and Loki log lines; the monitoring time-series charts remain preview/demo data until range-query charts are connected.
+
 In Docker Compose, observability integrations may return `503` unless the backend can reach a local Kubernetes API, Prometheus, and Loki. The app still starts normally.
 
 Detailed endpoint examples live in `docs/observability-api.md`.

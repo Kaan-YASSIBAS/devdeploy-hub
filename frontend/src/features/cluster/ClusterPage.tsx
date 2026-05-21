@@ -1,97 +1,258 @@
-import { Boxes, Cpu, Database, Layers, MemoryStick, Network, Server, ShipWheel } from "lucide-react";
+import { Boxes, Database, Layers, Network, RefreshCw, Server, ShipWheel } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { observabilityApi, getApiErrorStatus } from "@/api/client";
+import { Badge, type BadgeProps } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select } from "@/components/ui/select";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
-import { EnvironmentBadge } from "@/components/shared/EnvironmentBadge";
+import { EmptyState } from "@/components/shared/EmptyState";
 import { StatCard } from "@/components/shared/StatCard";
-import { StatusBadge } from "@/components/shared/StatusBadge";
-import { applications, deployments, namespaces, nodes, pods } from "@/lib/mock-data";
-import type { Node } from "@/types";
+import type { KubernetesDeployment, KubernetesPod, KubernetesService } from "@/types";
+
+const DEFAULT_NAMESPACE = "devdeploy";
+
+function phaseVariant(phase: string | null): BadgeProps["variant"] {
+  switch (phase?.toLowerCase()) {
+    case "running":
+    case "succeeded":
+      return "success";
+    case "pending":
+      return "warning";
+    case "failed":
+      return "danger";
+    default:
+      return "muted";
+  }
+}
+
+function formatPorts(service: KubernetesService) {
+  if (!service.ports.length) {
+    return "-";
+  }
+
+  return service.ports
+    .map((port) => {
+      const target = port.target_port === null || port.target_port === undefined ? "" : `:${port.target_port}`;
+      const protocol = port.protocol ? `/${port.protocol}` : "";
+      return `${port.port}${target}${protocol}`;
+    })
+    .join(", ");
+}
+
+function getErrorKey(status?: number) {
+  if (status === 403) {
+    return "api.errors.observabilityPermissionDenied";
+  }
+
+  if (status === 503) {
+    return "api.errors.observabilityUnavailable";
+  }
+
+  return "api.errors.observabilityLoadFailed";
+}
 
 export function ClusterPage() {
   const { t } = useTranslation();
-  const avgCpu = Math.round(nodes.reduce((sum, node) => sum + node.cpu, 0) / nodes.length);
-  const avgMemory = Math.round(nodes.reduce((sum, node) => sum + node.memory, 0) / nodes.length);
+  const [namespace, setNamespace] = useState(DEFAULT_NAMESPACE);
 
-  const columns: Column<Node>[] = [
+  const summaryQuery = useQuery({ queryKey: ["observability", "cluster-summary"], queryFn: observabilityApi.clusterSummary });
+  const namespacesQuery = useQuery({ queryKey: ["observability", "namespaces"], queryFn: observabilityApi.namespaces });
+  const podsQuery = useQuery({ queryKey: ["observability", "pods", namespace], queryFn: () => observabilityApi.pods(namespace) });
+  const deploymentsQuery = useQuery({
+    queryKey: ["observability", "kubernetes-deployments", namespace],
+    queryFn: () => observabilityApi.kubernetesDeployments(namespace)
+  });
+  const servicesQuery = useQuery({ queryKey: ["observability", "services", namespace], queryFn: () => observabilityApi.services(namespace) });
+
+  const namespaces = useMemo(() => namespacesQuery.data ?? [], [namespacesQuery.data]);
+  const pods = podsQuery.data ?? [];
+  const deployments = deploymentsQuery.data ?? [];
+  const services = servicesQuery.data ?? [];
+  const selectedNamespace = namespaces.find((item) => item.name === namespace);
+  const namespaceOptions = useMemo(() => {
+    const options = namespaces.map((item) => ({ value: item.name, label: item.name }));
+    return options.some((item) => item.value === namespace) ? options : [{ value: namespace, label: namespace }, ...options];
+  }, [namespace, namespaces]);
+
+  const isLoading = summaryQuery.isLoading || podsQuery.isLoading || deploymentsQuery.isLoading || servicesQuery.isLoading;
+  const firstError = summaryQuery.error ?? podsQuery.error ?? deploymentsQuery.error ?? servicesQuery.error ?? namespacesQuery.error;
+  const errorDescription = firstError ? t(getErrorKey(getApiErrorStatus(firstError))) : t("cluster.emptyDescription");
+  const unavailableValue = summaryQuery.isLoading ? "..." : t("common.unavailable");
+
+  const podColumns: Column<KubernetesPod>[] = [
     {
-      key: "node",
-      header: t("cluster.table.node"),
-      render: (node) => (
+      key: "name",
+      header: t("common.name"),
+      render: (pod) => (
         <div>
-          <p className="font-medium text-white">{node.name}</p>
-          <p className="text-xs text-slate-500">{node.zone}</p>
+          <p className="font-medium text-white">{pod.name}</p>
+          <p className="text-xs text-slate-500">{pod.created_at ? new Date(pod.created_at).toLocaleString() : t("common.unavailable")}</p>
         </div>
       )
     },
-    { key: "status", header: t("cluster.table.status"), render: (node) => <StatusBadge status={node.status} type="health" /> },
-    { key: "cpu", header: t("cluster.table.cpu"), render: (node) => `${node.cpu}%` },
-    { key: "memory", header: t("cluster.table.memory"), render: (node) => `${node.memory}%` },
-    { key: "pods", header: t("cluster.table.pods"), render: (node) => node.pods },
-    { key: "version", header: t("cluster.table.version"), render: (node) => node.version },
-    { key: "zone", header: t("cluster.table.zone"), render: (node) => node.zone }
+    { key: "namespace", header: t("common.namespace"), render: (pod) => pod.namespace },
+    {
+      key: "phase",
+      header: t("cluster.table.phase"),
+      render: (pod) => <Badge variant={phaseVariant(pod.phase)}>{pod.phase ?? t("common.unavailable")}</Badge>
+    },
+    { key: "node", header: t("common.node"), render: (pod) => pod.node_name ?? "-" },
+    { key: "restarts", header: t("common.restarts"), render: (pod) => pod.restart_count },
+    { key: "containers", header: t("cluster.table.containersReady"), render: (pod) => pod.containers_ready }
   ];
+
+  const deploymentColumns: Column<KubernetesDeployment>[] = [
+    {
+      key: "name",
+      header: t("common.name"),
+      render: (deployment) => <span className="font-medium text-white">{deployment.name}</span>
+    },
+    { key: "namespace", header: t("common.namespace"), render: (deployment) => deployment.namespace },
+    {
+      key: "replicas",
+      header: t("common.replicas"),
+      render: (deployment) => `${deployment.ready_replicas}/${deployment.replicas}`
+    },
+    { key: "available", header: t("cluster.table.availableReplicas"), render: (deployment) => deployment.available_replicas },
+    { key: "updated", header: t("cluster.table.updatedReplicas"), render: (deployment) => deployment.updated_replicas }
+  ];
+
+  const serviceColumns: Column<KubernetesService>[] = [
+    {
+      key: "name",
+      header: t("common.name"),
+      render: (service) => <span className="font-medium text-white">{service.name}</span>
+    },
+    { key: "type", header: t("cluster.table.type"), render: (service) => service.type ?? "-" },
+    { key: "clusterIp", header: t("cluster.table.clusterIp"), render: (service) => service.cluster_ip ?? "-" },
+    { key: "ports", header: t("cluster.table.ports"), render: (service) => <span className="font-mono text-xs">{formatPorts(service)}</span> }
+  ];
+
+  const refresh = () => {
+    void summaryQuery.refetch();
+    void namespacesQuery.refetch();
+    void podsQuery.refetch();
+    void deploymentsQuery.refetch();
+    void servicesQuery.refetch();
+  };
 
   return (
     <div>
-      <PageHeader description={t("cluster.description")} title={t("cluster.title")} />
+      <PageHeader
+        actions={
+          <div className="grid gap-3 sm:grid-cols-[190px_auto]">
+            <Select
+              aria-label={t("common.namespace")}
+              options={namespaceOptions}
+              value={namespace}
+              onChange={(event) => setNamespace(event.target.value)}
+            />
+            <Button variant="outline" onClick={refresh}>
+              <RefreshCw className="h-4 w-4" />
+              {t("common.refresh")}
+            </Button>
+          </div>
+        }
+        description={t("cluster.description")}
+        title={t("cluster.title")}
+      />
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
-        <StatCard detail={t("dashboard.stats.details.clusterHealth")} icon={<Server className="h-5 w-5" />} label={t("cluster.overview.nodes")} value={String(nodes.length)} />
-        <StatCard detail={t("common.active")} icon={<Layers className="h-5 w-5" />} label={t("cluster.overview.namespaces")} tone="violet" value={String(namespaces.length)} />
-        <StatCard detail={t("dashboard.stats.details.healthyPods")} icon={<Boxes className="h-5 w-5" />} label={t("cluster.overview.pods")} tone="emerald" value={String(pods.length)} />
-        <StatCard detail={t("common.active")} icon={<Network className="h-5 w-5" />} label={t("cluster.overview.services")} tone="cyan" value="18" />
-        <StatCard detail={t("common.active")} icon={<ShipWheel className="h-5 w-5" />} label={t("cluster.overview.deployments")} tone="amber" value={String(deployments.length)} />
-        <StatCard detail={t("common.cpu")} icon={<Cpu className="h-5 w-5" />} label={t("cluster.overview.cpuUsage")} tone="red" value={`${avgCpu}%`} />
-        <StatCard detail={t("common.memory")} icon={<MemoryStick className="h-5 w-5" />} label={t("cluster.overview.memoryUsage")} tone="violet" value={`${avgMemory}%`} />
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+        <StatCard
+          detail={summaryQuery.data?.current_context ?? t("cluster.realData")}
+          icon={<Layers className="h-5 w-5" />}
+          label={t("cluster.overview.namespaces")}
+          tone="violet"
+          value={summaryQuery.data ? String(summaryQuery.data.namespaces_count) : unavailableValue}
+        />
+        <StatCard
+          detail={t("cluster.realData")}
+          icon={<Boxes className="h-5 w-5" />}
+          label={t("cluster.overview.pods")}
+          tone="emerald"
+          value={summaryQuery.data ? String(summaryQuery.data.pods_count) : unavailableValue}
+        />
+        <StatCard
+          detail={t("cluster.realData")}
+          icon={<ShipWheel className="h-5 w-5" />}
+          label={t("cluster.overview.deployments")}
+          tone="amber"
+          value={summaryQuery.data ? String(summaryQuery.data.deployments_count) : unavailableValue}
+        />
+        <StatCard
+          detail={t("cluster.realData")}
+          icon={<Network className="h-5 w-5" />}
+          label={t("cluster.overview.services")}
+          value={summaryQuery.data ? String(summaryQuery.data.services_count) : unavailableValue}
+        />
+        <StatCard
+          detail={t("cluster.readyNodes")}
+          icon={<Server className="h-5 w-5" />}
+          label={t("cluster.overview.nodes")}
+          tone="cyan"
+          value={summaryQuery.data ? `${summaryQuery.data.ready_nodes_count}/${summaryQuery.data.nodes_count}` : unavailableValue}
+        />
+        <StatCard
+          detail={selectedNamespace?.status ?? t("cluster.namespaceStatus")}
+          icon={<Database className="h-5 w-5" />}
+          label={t("common.namespace")}
+          tone="violet"
+          value={namespace}
+        />
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.25fr_0.75fr]">
+      {firstError ? (
+        <EmptyState className="mt-6" description={errorDescription} title={t("cluster.unavailableTitle")} />
+      ) : null}
+
+      <div className="mt-6 grid gap-6 xl:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>{t("cluster.nodes")}</CardTitle>
+            <CardTitle>{t("cluster.pods")}</CardTitle>
+            <CardDescription>{t("cluster.tableDescription", { namespace })}</CardDescription>
           </CardHeader>
           <CardContent>
-            <DataTable columns={columns} data={nodes} getRowKey={(node) => node.id} />
+            <DataTable
+              columns={podColumns}
+              data={pods}
+              emptyState={<EmptyState description={errorDescription} title={isLoading ? t("common.loading") : t("cluster.emptyPods")} />}
+              getRowKey={(pod) => `${pod.namespace}/${pod.name}`}
+            />
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>{t("cluster.namespaces")}</CardTitle>
+            <CardTitle>{t("cluster.deployments")}</CardTitle>
+            <CardDescription>{t("cluster.tableDescription", { namespace })}</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
-            {namespaces.map((namespace) => (
-              <div key={namespace} className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-                <div className="flex items-center gap-3">
-                  <Database className="h-4 w-4 text-cyan-200" />
-                  <span className="text-sm font-medium text-white">{namespace}</span>
-                </div>
-                <span className="text-xs text-slate-500">{pods.filter((pod) => pod.namespace === namespace).length}</span>
-              </div>
-            ))}
+          <CardContent>
+            <DataTable
+              columns={deploymentColumns}
+              data={deployments}
+              emptyState={<EmptyState description={errorDescription} title={isLoading ? t("common.loading") : t("cluster.emptyDeployments")} />}
+              getRowKey={(deployment) => `${deployment.namespace}/${deployment.name}`}
+            />
           </CardContent>
         </Card>
       </div>
 
       <Card className="mt-6">
         <CardHeader>
-          <CardTitle>{t("cluster.workloadHealth")}</CardTitle>
+          <CardTitle>{t("cluster.services")}</CardTitle>
+          <CardDescription>{t("cluster.tableDescription", { namespace })}</CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {applications.map((application) => (
-            <div key={application.id} className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-              <div className="flex items-center justify-between gap-3">
-                <p className="font-medium text-white">{application.name}</p>
-                <StatusBadge status={application.health} type="health" />
-              </div>
-              <div className="mt-4 flex items-center justify-between gap-3">
-                <EnvironmentBadge environment={application.environment} />
-                <span className="text-sm text-slate-400">{application.healthScore}%</span>
-              </div>
-            </div>
-          ))}
+        <CardContent>
+          <DataTable
+            columns={serviceColumns}
+            data={services}
+            emptyState={<EmptyState description={errorDescription} title={isLoading ? t("common.loading") : t("cluster.emptyServices")} />}
+            getRowKey={(service) => `${service.namespace}/${service.name}`}
+          />
         </CardContent>
       </Card>
     </div>

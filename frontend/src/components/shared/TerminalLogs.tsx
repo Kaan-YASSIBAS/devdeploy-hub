@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { StatusBadge } from "@/components/shared/StatusBadge";
-import type { LogEntry } from "@/types";
+import type { MockLogEntry } from "@/types";
 import { cn } from "@/lib/utils";
 
 type TerminalLogsProps = {
-  logs: LogEntry[];
+  logs: MockLogEntry[];
   compact?: boolean;
   autoScroll?: boolean;
 };

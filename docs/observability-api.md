@@ -6,6 +6,8 @@ The backend exposes authenticated, read-only observability endpoints for Kuberne
 
 These endpoints are intended to replace frontend mock cluster, monitoring, and log data incrementally. They do not deploy workloads or mutate Kubernetes resources.
 
+The frontend Cluster, Monitoring, and Logs pages use these endpoints when the app is running against the backend API. If Kubernetes, Prometheus, or Loki are unavailable, the UI shows friendly unavailable states instead of falling back to raw errors.
+
 ## Runtime Configuration
 
 Backend settings:

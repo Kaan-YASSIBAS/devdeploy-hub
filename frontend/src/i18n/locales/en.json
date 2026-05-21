@@ -48,6 +48,7 @@
     "pod": "Pod",
     "replicas": "Replicas",
     "repository": "Repository",
+    "refresh": "Refresh",
     "restarts": "Restarts",
     "required": "Required",
     "role": "Role",
@@ -59,6 +60,7 @@
     "submit": "Submit",
     "user": "User",
     "view": "View",
+    "unavailable": "Unavailable",
     "version": "Version",
     "viewDetails": "View details",
     "zone": "Zone"
@@ -358,18 +360,45 @@
       "cpuUsage": "CPU Usage",
       "memoryUsage": "Memory Usage"
     },
+    "realData": "Live Kubernetes API data",
+    "readyNodes": "Ready / total nodes",
+    "namespaceStatus": "Selected namespace",
+    "pods": "Pods",
+    "deployments": "Deployments",
+    "services": "Services",
     "nodes": "Node table",
     "namespaces": "Namespaces",
     "workloadHealth": "Workload health",
+    "tableDescription": "Live resources from the {{namespace}} namespace.",
+    "unavailableTitle": "Observability data unavailable",
+    "emptyDescription": "No Kubernetes resources were returned for the selected namespace.",
+    "emptyPods": "No pods found",
+    "emptyDeployments": "No deployments found",
+    "emptyServices": "No services found",
     "table": {
       "node": "Node",
       "status": "Status",
       "cpu": "CPU",
       "memory": "Memory",
       "pods": "Pods",
+      "phase": "Phase",
+      "containersReady": "Containers ready",
+      "availableReplicas": "Available replicas",
+      "updatedReplicas": "Updated replicas",
+      "type": "Type",
+      "clusterIp": "Cluster IP",
+      "ports": "Ports",
       "version": "Version",
       "zone": "Zone"
     }
+  },
+  "observability": {
+    "available": "Available",
+    "connected": "Connected",
+    "notReachable": "Not reachable",
+    "kubernetes": "Kubernetes",
+    "prometheus": "Prometheus",
+    "loki": "Loki"
   },
   "logs": {
     "title": "Logs",
@@ -384,12 +413,17 @@
       "app": "App",
       "pod": "Pod",
       "level": "Level",
+      "limit": "Limit",
       "search": "Search logs"
     },
     "autoScroll": "Auto-scroll",
     "copyLogs": "Copy logs",
     "copied": "Logs copied to clipboard.",
     "terminalTitle": "Runtime stream",
+    "emptyTitle": "No logs found",
+    "emptyDescription": "No Loki log lines matched the selected filters.",
+    "loadingDescription": "Loading logs from Loki.",
+    "unavailableTitle": "Logs unavailable",
     "messages": {
       "deploymentStarted": "Deployment {{deployment}} started for image {{image}}.",
       "readinessProbe": "Readiness probe passed for {{pod}}.",
@@ -417,7 +451,18 @@
       "requests": "Request rate",
       "errors": "Error rate",
       "restarts": "Pod restarts"
-    }
+    },
+    "metrics": {
+      "clusterScope": "Cluster-wide",
+      "cpuCores": "CPU cores",
+      "memoryWorkingSet": "Memory working set",
+      "podCount": "Pod count",
+      "restartCount": "Restart count",
+      "availableReplicas": "Available replicas"
+    },
+    "previewTitle": "Preview time-series charts",
+    "previewDescription": "Charts stay on demo data until backend range queries are connected.",
+    "unavailableTitle": "Monitoring data unavailable"
   },
   "settings": {
     "title": "Settings",
@@ -480,6 +525,10 @@
       "applicationDeleteFailed": "Could not delete application.",
       "deploymentsLoadFailed": "Could not load deployments.",
       "deploymentCreateFailed": "Could not create deployment.",
+      "logsLoadFailed": "Could not load logs.",
+      "observabilityLoadFailed": "Could not load observability data.",
+      "observabilityPermissionDenied": "You do not have permission to view observability data.",
+      "observabilityUnavailable": "Observability backend is unavailable.",
       "generic": "Something went wrong. Please try again."
     },
     "success": {
