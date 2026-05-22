@@ -7,6 +7,7 @@ import type {
   ClusterSummary,
   Deployment,
   DeploymentCreateInput,
+  DeploymentListItem,
   DeploymentStatusUpdateInput,
   GitOpsDeploymentCreateInput,
   GitOpsDeploymentResponse,
@@ -155,8 +156,16 @@ export const deploymentsApi = {
     const { data } = await apiClient.get<Deployment[]>("/deployments");
     return data;
   },
+  async listGitOps() {
+    const { data } = await apiClient.get<DeploymentListItem[]>("/deployments/gitops");
+    return data;
+  },
   async get(id: number) {
     const { data } = await apiClient.get<Deployment>(`/deployments/${id}`);
+    return data;
+  },
+  async getGitOps(namespace: string, name: string) {
+    const { data } = await apiClient.get<DeploymentListItem>(`/deployments/gitops/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`);
     return data;
   },
   async create(input: DeploymentCreateInput) {

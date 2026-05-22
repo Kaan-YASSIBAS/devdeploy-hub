@@ -1,0 +1,140 @@
+import { RotateCcw } from "lucide-react";
+import { useParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import { useQuery } from "@tanstack/react-query";
+import { deploymentsApi, getApiErrorStatus } from "@/api/client";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { EmptyState } from "@/components/shared/EmptyState";
+import { StatusBadge } from "@/components/shared/StatusBadge";
+import type { DeploymentListSource } from "@/types";
+
+function formatDate(value: string | null) {
+  if (!value) {
+    return "-";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
+function sourceVariant(source: DeploymentListSource) {
+  if (source === "gitops") {
+    return "success";
+  }
+  if (source === "cluster") {
+    return "info";
+  }
+  return "muted";
+}
+
+function getErrorKey(status?: number) {
+  if (status === 403) {
+    return "api.errors.observabilityPermissionDenied";
+  }
+  if (status === 503) {
+    return "api.errors.observabilityUnavailable";
+  }
+  return "api.errors.deploymentsLoadFailed";
+}
+
+export function GitOpsDeploymentDetailPage() {
+  const { namespace = "", name = "" } = useParams();
+  const { t } = useTranslation();
+
+  const deploymentQuery = useQuery({
+    queryKey: ["deployments", "gitops", namespace, name],
+    queryFn: () => deploymentsApi.getGitOps(namespace, name),
+    enabled: Boolean(namespace && name)
+  });
+  const deployment = deploymentQuery.data;
+
+  if (deploymentQuery.isLoading) {
+    return <EmptyState description={t("deployments.detail.loadingDescription")} title={t("common.loading")} />;
+  }
+
+  if (!deployment) {
+    return (
+      <EmptyState
+        description={deploymentQuery.isError ? t(getErrorKey(getApiErrorStatus(deploymentQuery.error))) : t("deployments.detail.notFoundDescription")}
+        title={t("deployments.detail.notFoundTitle")}
+      />
+    );
+  }
+
+  const image = deployment.image ? `${deployment.image}${deployment.tag ? `:${deployment.tag}` : ""}` : "-";
+
+  return (
+    <div>
+      <PageHeader
+        actions={
+          <Button disabled variant="outline">
+            <RotateCcw className="h-4 w-4" />
+            {t("deployments.detail.rollback")}
+          </Button>
+        }
+        description={t("deployments.detail.liveSubtitle")}
+        title={deployment.name}
+      />
+
+      <div className="mb-6 flex flex-wrap items-center gap-3">
+        <StatusBadge status={deployment.status} type="deployment" />
+        <Badge variant={sourceVariant(deployment.source)}>{t(`deployments.source.${deployment.source}`)}</Badge>
+        <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-slate-400">
+          {deployment.namespace}
+        </span>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+        <Card>
+          <CardHeader>
+            <CardTitle>{t("deployments.detail.liveStatus")}</CardTitle>
+            <CardDescription>{t("deployments.detail.liveStatusDescription")}</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3 sm:grid-cols-2">
+            {[
+              [t("common.status"), t(`status.${deployment.status}`)],
+              [t("common.replicas"), `${deployment.available_replicas}/${deployment.replicas}`],
+              [t("deployments.table.updatedReplicas"), String(deployment.updated_replicas)],
+              [t("deployments.table.source"), t(`deployments.source.${deployment.source}`)]
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+                <p className="text-xs uppercase text-slate-500">{label}</p>
+                <p className="mt-2 break-all text-sm text-white">{value}</p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>{t("deployments.detail.metadata")}</CardTitle>
+            <CardDescription>{deployment.app_name}</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3 sm:grid-cols-2">
+            {[
+              [t("deployments.gitops.appName"), deployment.app_name],
+              [t("common.namespace"), deployment.namespace],
+              [t("deployments.gitops.image"), image],
+              [t("deployments.gitops.tag"), deployment.tag ?? "-"],
+              [t("common.environment"), t(`environment.${deployment.environment}`, { defaultValue: deployment.environment })],
+              [t("common.created"), formatDate(deployment.created_at)],
+              [t("deployments.table.updated"), formatDate(deployment.updated_at)],
+              [t("deployments.table.requestId"), deployment.gitops_request_id ? String(deployment.gitops_request_id) : "-"]
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+                <p className="text-xs uppercase text-slate-500">{label}</p>
+                <p className="mt-2 break-all text-sm text-white">{value}</p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
