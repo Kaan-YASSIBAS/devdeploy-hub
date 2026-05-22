@@ -333,14 +333,43 @@ infra/kubernetes/generated/workloads/apps/<app-name>
 
 The release overlay includes `infra/kubernetes/generated/workloads`, so after a generated workload PR is merged, Argo CD can sync the workload from Git.
 
-Automatic dispatch is controlled with:
+Automatic dispatch is controlled with non-secret settings from the Kubernetes ConfigMap:
 
 ```text
 GITOPS_ENABLED=true
-GITHUB_WORKFLOW_TOKEN=<token>
+GITHUB_OWNER=Kaan-YASSIBAS
+GITHUB_REPO=devdeploy-hub
+GITOPS_WORKFLOW_FILE=gitops-workload-request.yml
+GITOPS_TARGET_REF=main
 ```
 
-Local development can leave `GITOPS_ENABLED=false` and run the workflow manually:
+`devdeploy-secret` is managed by Argo CD and contains normal app, database, and JWT secrets. Do not put a real GitHub token in that Git-managed secret.
+
+Automatic GitHub workflow dispatch uses a separate cluster-local secret that is not committed to Git:
+
+```powershell
+$githubToken = "PASTE_TOKEN_HERE"
+
+kubectl create secret generic devdeploy-gitops-secret `
+  -n devdeploy `
+  --from-literal=GITHUB_WORKFLOW_TOKEN="$githubToken" `
+  --dry-run=client -o yaml | kubectl apply -f -
+
+Remove-Variable githubToken
+```
+
+The same command in bash:
+
+```bash
+kubectl create secret generic devdeploy-gitops-secret \
+  -n devdeploy \
+  --from-literal=GITHUB_WORKFLOW_TOKEN="<token>" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Do not commit the token, write it to a file, or print it in logs. If `devdeploy-gitops-secret` is missing, the backend still starts and deployment automation returns a configuration error.
+
+Local non-Kubernetes development can leave `GITOPS_ENABLED=false` and run the workflow manually:
 
 ```text
 Actions -> GitOps Workload Request -> Run workflow
