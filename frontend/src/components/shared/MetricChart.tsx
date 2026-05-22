@@ -11,13 +11,16 @@ import {
 } from "recharts";
 import { useId } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import type { MetricPoint } from "@/types";
+
+type ChartDatum = {
+  time: string;
+} & Record<string, string | number>;
 
 type MetricChartProps = {
   title: string;
   description?: string;
-  data: MetricPoint[];
-  dataKey: keyof MetricPoint;
+  data: ChartDatum[];
+  dataKey: string;
   label: string;
   color?: string;
   type?: "area" | "bar";
@@ -57,12 +60,12 @@ export function MetricChart({
                     color: "#e2e8f0"
                   }}
                 />
-                <Bar dataKey={dataKey as string} name={label} fill={color} radius={[8, 8, 2, 2]} />
+                <Bar dataKey={dataKey} name={label} fill={color} radius={[8, 8, 2, 2]} />
               </BarChart>
             ) : (
               <AreaChart data={data}>
                 <defs>
-                  <linearGradient id={`${String(dataKey)}Gradient${gradientId}`} x1="0" x2="0" y1="0" y2="1">
+                  <linearGradient id={`${dataKey}Gradient${gradientId}`} x1="0" x2="0" y1="0" y2="1">
                     <stop offset="5%" stopColor={color} stopOpacity={0.42} />
                     <stop offset="95%" stopColor={color} stopOpacity={0.02} />
                   </linearGradient>
@@ -80,11 +83,11 @@ export function MetricChart({
                 />
                 <Area
                   type="monotone"
-                  dataKey={dataKey as string}
+                  dataKey={dataKey}
                   name={label}
                   stroke={color}
                   strokeWidth={2}
-                  fill={`url(#${String(dataKey)}Gradient${gradientId})`}
+                  fill={`url(#${dataKey}Gradient${gradientId})`}
                 />
               </AreaChart>
             )}

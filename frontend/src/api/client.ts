@@ -20,6 +20,7 @@ import type {
   KubernetesPod,
   KubernetesService,
   LogEntry,
+  MetricsTimeSeries,
   ObservabilityHealth,
   IntegrationStatusItem,
   ProfileSettings,
@@ -235,6 +236,10 @@ export const observabilityApi = {
   },
   async namespaceMetrics(namespace: string) {
     const { data } = await apiClient.get<ClusterMetrics>(`/observability/metrics/namespaces/${namespace}`);
+    return data;
+  },
+  async metricsTimeseries(params: { namespace?: string; range?: string; step?: string; metric?: string }) {
+    const { data } = await apiClient.get<MetricsTimeSeries>("/observability/metrics/timeseries", { params });
     return data;
   },
   async logs(params: { namespace?: string; pod?: string; limit?: number }) {

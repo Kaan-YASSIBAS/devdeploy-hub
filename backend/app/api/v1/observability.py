@@ -11,6 +11,7 @@ from app.schemas.observability import (
     DeploymentSummary,
     LogEntry,
     MetricsSummary,
+    MetricsTimeSeriesResponse,
     NamespaceSummary,
     ObservabilityComponentHealth,
     ObservabilityHealth,
@@ -20,7 +21,7 @@ from app.schemas.observability import (
 from app.services.kubernetes_service import KubernetesService
 from app.services.loki_service import LokiService
 from app.services.observability_errors import ObservabilityUnavailableError
-from app.services.prometheus_service import PrometheusService
+from app.services.prometheus_service import PrometheusQueryError, PrometheusService
 
 
 router = APIRouter(prefix="/observability", tags=["observability"])
@@ -112,6 +113,28 @@ def get_cluster_metrics(current_user: User = Depends(get_current_user)) -> dict:
 def get_namespace_metrics(namespace: str, current_user: User = Depends(get_current_user)) -> dict:
     _ = current_user
     return _call_observability(lambda: PrometheusService().get_namespace_metrics(namespace))
+
+
+@router.get("/metrics/timeseries", response_model=MetricsTimeSeriesResponse)
+def get_metrics_timeseries(
+    namespace: str = Query(default="devdeploy"),
+    range_value: str = Query(default="15m", alias="range"),
+    step: str | None = Query(default=None),
+    metric: str | None = Query(default=None),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    _ = current_user
+    try:
+        return PrometheusService().get_metrics_timeseries(
+            namespace=namespace,
+            range_value=range_value,
+            step=step,
+            metric=metric,
+        )
+    except PrometheusQueryError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except ObservabilityUnavailableError as exc:
+        raise _unavailable(str(exc)) from exc
 
 
 @router.get("/logs", response_model=list[LogEntry])
