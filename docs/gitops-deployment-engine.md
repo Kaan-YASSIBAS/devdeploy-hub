@@ -55,15 +55,48 @@ GITOPS_ENABLED=true
 GITHUB_OWNER=Kaan-YASSIBAS
 GITHUB_REPO=devdeploy-hub
 GITOPS_WORKFLOW_FILE=gitops-workload-request.yml
-GITHUB_WORKFLOW_TOKEN=<token with workflow dispatch access>
 GITOPS_TARGET_REF=main
 ```
 
-The token is never returned by the API and should not be logged.
+In Kubernetes, these non-secret values come from `devdeploy-config`.
+
+The GitHub workflow token must not be stored in Git. `devdeploy-secret` is managed by Argo CD and contains normal app, database, and JWT secrets only. If a real token is added there manually, Argo CD will remove it during reconciliation.
+
+Automatic dispatch reads `GITHUB_WORKFLOW_TOKEN` from a separate cluster-local secret:
+
+```text
+devdeploy-gitops-secret
+```
+
+Create it manually, or later through an external secret manager:
+
+```powershell
+$githubToken = "PASTE_TOKEN_HERE"
+
+kubectl create secret generic devdeploy-gitops-secret `
+  -n devdeploy `
+  --from-literal=GITHUB_WORKFLOW_TOKEN="$githubToken" `
+  --dry-run=client -o yaml | kubectl apply -f -
+
+Remove-Variable githubToken
+```
+
+Bash:
+
+```bash
+kubectl create secret generic devdeploy-gitops-secret \
+  -n devdeploy \
+  --from-literal=GITHUB_WORKFLOW_TOKEN="<token>" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+The backend Deployment references this secret with `optional: true`, so the platform still starts if the token is missing. In that case, GitOps deployment creation fails gracefully with a configuration error and asks the user to contact the platform administrator.
+
+The token is never returned by the API, should not be logged, and should not be printed while checking the cluster.
 
 ## Manual Fallback
 
-If `GITOPS_ENABLED=false` or `GITHUB_WORKFLOW_TOKEN` is missing, the backend stores the request as `pending_manual_trigger` and returns the exact workflow inputs.
+If `GITOPS_ENABLED=false` or `GITHUB_WORKFLOW_TOKEN` is missing, the backend stores the request as `pending_manual_trigger`. The frontend presents this as deployment automation being unavailable for normal users.
 
 Run manually:
 

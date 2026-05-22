@@ -50,6 +50,12 @@ spec:
                 secretKeyRef:
                   name: devdeploy-secret
                   key: POSTGRES_USER
+            - name: GITHUB_WORKFLOW_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: devdeploy-gitops-secret
+                  key: GITHUB_WORKFLOW_TOKEN
+                  optional: true
           volumeMounts:
             - name: backend-tmp
               mountPath: /tmp
@@ -116,6 +122,37 @@ spec:
                 configMapKeyRef:
                   name: devdeploy-config
                   key: LOKI_BASE_URL
+            - name: GITOPS_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: devdeploy-config
+                  key: GITOPS_ENABLED
+            - name: GITHUB_OWNER
+              valueFrom:
+                configMapKeyRef:
+                  name: devdeploy-config
+                  key: GITHUB_OWNER
+            - name: GITHUB_REPO
+              valueFrom:
+                configMapKeyRef:
+                  name: devdeploy-config
+                  key: GITHUB_REPO
+            - name: GITOPS_WORKFLOW_FILE
+              valueFrom:
+                configMapKeyRef:
+                  name: devdeploy-config
+                  key: GITOPS_WORKFLOW_FILE
+            - name: GITOPS_TARGET_REF
+              valueFrom:
+                configMapKeyRef:
+                  name: devdeploy-config
+                  key: GITOPS_TARGET_REF
+            - name: GITHUB_WORKFLOW_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: devdeploy-gitops-secret
+                  key: GITHUB_WORKFLOW_TOKEN
+                  optional: true
           readinessProbe:
             httpGet:
               path: /api/v1/health
