@@ -237,7 +237,7 @@ kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
 kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
 ```
 
-Grafana uses `admin` / `admin` for local development. This is cluster-level monitoring; application-level FastAPI metrics will be added later.
+Grafana uses `admin` / `admin` for local development. The backend also exposes Prometheus-compatible FastAPI HTTP metrics at `/metrics`. Prometheus scrapes those metrics through a `ServiceMonitor` for `devdeploy-backend`.
 
 ## Logging
 
@@ -290,6 +290,8 @@ Routes live under:
 The backend pod uses in-cluster Kubernetes config and a read-only `devdeploy-backend` ServiceAccount. RBAC allows only `get`, `list`, and `watch` on namespaces, nodes, pods, services, and deployments. No write permissions are granted.
 
 The frontend Cluster, Monitoring, and Logs pages now consume these authenticated endpoints. In Kubernetes, those pages show live Kubernetes resources, Prometheus summary and time-series metrics, and Loki log lines. If a Prometheus metric is missing, the UI shows an empty/unavailable state instead of simulated chart data.
+
+The Monitoring page request and error rate charts use backend HTTP counters scraped from `/metrics`. Request traffic is queried from `http_requests_total` when available. Error rate requires 5xx responses, so that chart can stay empty until real server errors occur.
 
 In Docker Compose, observability integrations may return `503` unless the backend can reach a local Kubernetes API, Prometheus, and Loki. The app still starts normally.
 

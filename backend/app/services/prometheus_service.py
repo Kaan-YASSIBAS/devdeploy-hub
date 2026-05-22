@@ -153,11 +153,12 @@ class PrometheusService:
                     "points": points,
                 }
 
-        detail = (
-            "Request metrics are not exposed by the application yet."
-            if key in {"request_rate", "error_rate"}
-            else last_error or "No data returned for this metric."
-        )
+        if key == "request_rate":
+            detail = "No request rate samples returned for this time range."
+        elif key == "error_rate":
+            detail = "No 5xx request samples returned for this time range."
+        else:
+            detail = last_error or "No data returned for this metric."
         status = "unavailable" if last_error else "empty"
         return {
             "key": key,
@@ -192,7 +193,10 @@ class PrometheusService:
     @staticmethod
     def _timeseries_definitions(namespace: str) -> dict[str, dict[str, str]]:
         namespace_selector = f'namespace="{namespace}"'
+        backend_service_selector = 'service="devdeploy-backend"'
+        backend_job_selector = 'job=~".*devdeploy-backend.*"'
         ingress_namespace_selector = f'exported_namespace="{namespace}"'
+        error_status_selector = 'status=~"5..|5xx"'
         return {
             "cpu_usage": {
                 "name": "CPU usage",
@@ -219,6 +223,12 @@ class PrometheusService:
                 "queries": "\n".join(
                     [
                         f"sum(rate(http_requests_total{{{namespace_selector}}}[5m]))",
+                        f"sum(rate(http_requests_total{{{backend_service_selector}}}[5m]))",
+                        f"sum(rate(http_requests_total{{{backend_job_selector}}}[5m]))",
+                        "sum(rate(http_requests_total[5m]))",
+                        f"sum(rate(http_request_duration_seconds_count{{{namespace_selector}}}[5m]))",
+                        f"sum(rate(http_request_duration_seconds_count{{{backend_service_selector}}}[5m]))",
+                        f"sum(rate(http_request_duration_seconds_count{{{backend_job_selector}}}[5m]))",
                         f"sum(rate(nginx_ingress_controller_requests{{{ingress_namespace_selector}}}[5m]))",
                     ]
                 ),
@@ -228,8 +238,14 @@ class PrometheusService:
                 "unit": "errors/s",
                 "queries": "\n".join(
                     [
-                        f'sum(rate(http_requests_total{{{namespace_selector},status=~"5.."}}[5m]))',
-                        f'sum(rate(nginx_ingress_controller_requests{{{ingress_namespace_selector},status=~"5.."}}[5m]))',
+                        f"sum(rate(http_requests_total{{{namespace_selector},{error_status_selector}}}[5m]))",
+                        f"sum(rate(http_requests_total{{{backend_service_selector},{error_status_selector}}}[5m]))",
+                        f"sum(rate(http_requests_total{{{backend_job_selector},{error_status_selector}}}[5m]))",
+                        f"sum(rate(http_requests_total{{{error_status_selector}}}[5m]))",
+                        f"sum(rate(http_request_duration_seconds_count{{{namespace_selector},{error_status_selector}}}[5m]))",
+                        f"sum(rate(http_request_duration_seconds_count{{{backend_service_selector},{error_status_selector}}}[5m]))",
+                        f"sum(rate(http_request_duration_seconds_count{{{backend_job_selector},{error_status_selector}}}[5m]))",
+                        f"sum(rate(nginx_ingress_controller_requests{{{ingress_namespace_selector},{error_status_selector}}}[5m]))",
                     ]
                 ),
             },
