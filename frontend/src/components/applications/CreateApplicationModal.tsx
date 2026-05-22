@@ -1,4 +1,4 @@
-import { FormEvent } from "react";
+import { FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogFooter } from "@/components/ui/dialog";
@@ -18,17 +18,46 @@ const environments: Environment[] = ["dev", "staging", "prod"];
 
 export function CreateApplicationModal({ open, onOpenChange, onCreate, isSubmitting = false }: CreateApplicationModalProps) {
   const { t } = useTranslation();
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(form);
+    const name = String(formData.get("name") ?? "").trim();
+    const imageName = String(formData.get("image_name") ?? "").trim();
+    const repositoryUrl = String(formData.get("repository_url") ?? "").trim();
+    const port = Number(formData.get("container_port"));
+
+    if (!name || !imageName) {
+      setError(t("applications.modal.validation.required"));
+      return;
+    }
+
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      setError(t("applications.modal.validation.port"));
+      return;
+    }
+
+    if (repositoryUrl) {
+      try {
+        const parsedUrl = new URL(repositoryUrl);
+        if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+          setError(t("applications.modal.validation.repositoryUrl"));
+          return;
+        }
+      } catch {
+        setError(t("applications.modal.validation.repositoryUrl"));
+        return;
+      }
+    }
+
     const application: ApplicationCreateInput = {
-      name: String(formData.get("name")),
+      name,
       description: String(formData.get("description") ?? "") || null,
-      repository_url: String(formData.get("repository_url") ?? "") || null,
-      image_name: String(formData.get("image_name")),
-      container_port: Number(formData.get("container_port")),
+      repository_url: repositoryUrl || null,
+      image_name: imageName,
+      container_port: port,
       default_environment: formData.get("default_environment") as Environment
     };
 
@@ -36,6 +65,7 @@ export function CreateApplicationModal({ open, onOpenChange, onCreate, isSubmitt
       await onCreate(application);
       onOpenChange(false);
       form.reset();
+      setError(null);
     } catch {
       // Parent mutation owns translated error toast.
     }
@@ -57,7 +87,7 @@ export function CreateApplicationModal({ open, onOpenChange, onCreate, isSubmitt
           </div>
           <div className="space-y-2">
             <Label htmlFor="app-port">{t("applications.modal.containerPort")}</Label>
-            <Input id="app-port" min={1} name="container_port" required type="number" defaultValue={8000} />
+            <Input id="app-port" max={65535} min={1} name="container_port" required type="number" defaultValue={8000} />
           </div>
         </div>
         <div className="space-y-2">
@@ -66,7 +96,7 @@ export function CreateApplicationModal({ open, onOpenChange, onCreate, isSubmitt
         </div>
         <div className="space-y-2">
           <Label htmlFor="app-repository">{t("common.repository")}</Label>
-          <Input id="app-repository" name="repository_url" placeholder={t("applications.modal.repositoryPlaceholder")} />
+          <Input id="app-repository" name="repository_url" placeholder={t("applications.modal.repositoryPlaceholder")} type="url" />
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
@@ -85,6 +115,7 @@ export function CreateApplicationModal({ open, onOpenChange, onCreate, isSubmitt
             />
           </div>
         </div>
+        {error ? <p className="rounded-xl border border-red-300/20 bg-red-500/10 px-3 py-2 text-sm text-red-200">{error}</p> : null}
         <DialogFooter>
           <Button disabled={isSubmitting} variant="ghost" onClick={() => onOpenChange(false)}>
             {t("common.cancel")}

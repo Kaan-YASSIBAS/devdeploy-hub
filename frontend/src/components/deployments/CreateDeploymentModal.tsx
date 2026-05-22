@@ -13,6 +13,7 @@ type CreateDeploymentModalProps = {
   applications: Application[];
   onCreate: (deployment: GitOpsDeploymentCreateInput) => Promise<void> | void;
   isSubmitting?: boolean;
+  initialApplicationId?: number | null;
 };
 
 const defaultNamespace = "devdeploy-workloads";
@@ -23,6 +24,7 @@ function toImageRepository(application: Application | undefined) {
 
 export function CreateDeploymentModal({
   applications,
+  initialApplicationId = null,
   open,
   onOpenChange,
   onCreate,
@@ -30,7 +32,7 @@ export function CreateDeploymentModal({
 }: CreateDeploymentModalProps) {
   const { t } = useTranslation();
   const firstApplication = applications[0];
-  const [applicationId, setApplicationId] = useState(firstApplication ? String(firstApplication.id) : "");
+  const [applicationId, setApplicationId] = useState("");
   const selectedApplication = useMemo(
     () => applications.find((application) => String(application.id) === applicationId),
     [applicationId, applications]
@@ -43,6 +45,20 @@ export function CreateDeploymentModal({
   const [replicas, setReplicas] = useState("1");
   const [ingressHost, setIngressHost] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const nextApplicationId = initialApplicationId ? String(initialApplicationId) : firstApplication ? String(firstApplication.id) : "";
+    setApplicationId(nextApplicationId);
+    setNamespace(defaultNamespace);
+    setReplicas("1");
+    setTag("");
+    setIngressHost("");
+    setError(null);
+  }, [firstApplication, initialApplicationId, open]);
 
   useEffect(() => {
     if (!open) {

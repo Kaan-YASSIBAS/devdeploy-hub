@@ -2,9 +2,12 @@ import re
 import unicodedata
 
 from fastapi import HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.application import Application
+from app.models.deployment import Deployment
+from app.models.gitops_deployment_request import GitOpsDeploymentRequest
 from app.models.user import User
 from app.repositories.application_repository import ApplicationRepository
 from app.schemas.application import ApplicationCreate, ApplicationUpdate
@@ -67,5 +70,22 @@ class ApplicationService:
 
     def delete(self, application_id: int, user: User) -> None:
         application = self.get(application_id, user)
+        legacy_deployment_count = (
+            self.db.query(func.count(Deployment.id))
+            .filter(Deployment.application_id == application.id)
+            .scalar()
+            or 0
+        )
+        gitops_request_count = (
+            self.db.query(func.count(GitOpsDeploymentRequest.id))
+            .filter(GitOpsDeploymentRequest.application_id == application.id)
+            .scalar()
+            or 0
+        )
+        if legacy_deployment_count or gitops_request_count:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Application has deployment history and cannot be deleted.",
+            )
         self.applications.delete(application)
         self.db.commit()

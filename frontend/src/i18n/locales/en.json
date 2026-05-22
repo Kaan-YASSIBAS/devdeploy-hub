@@ -297,17 +297,27 @@
   },
   "applications": {
     "title": "Applications",
-    "description": "Register services, track ownership, and inspect deployment health across environments.",
-    "newApplication": "New Application",
-    "searchPlaceholder": "Search by name, image, owner, or namespace...",
+    "description": "Manage the service catalog and define default image/deployment settings.",
+    "newApplication": "New application",
+    "searchPlaceholder": "Search by name, image repository, owner, or repository...",
     "statusFilter": "Health filter",
-    "emptyTitle": "No applications match your filters",
-    "emptyDescription": "Clear the filters or register a new application to populate this workspace.",
+    "emptyTitle": "No applications registered yet.",
+    "emptyDescription": "Register a service definition to make deployments faster and more consistent.",
+    "emptyNoResultsTitle": "No applications match your search",
+    "emptyNoResultsDescription": "Clear the search or register a new application.",
     "table": {
+      "application": "Application",
       "name": "Name",
       "image": "Image",
+      "imageRepository": "Image repository",
       "environment": "Environment",
+      "defaultEnvironment": "Default environment",
       "owner": "Owner",
+      "defaultPort": "Default port",
+      "repository": "Repository",
+      "updatedCreated": "Updated / Created",
+      "updatedAt": "Updated {{date}}",
+      "createdAt": "Created {{date}}",
       "lastDeployment": "Last Deployment",
       "health": "Health",
       "actions": "Actions"
@@ -317,8 +327,8 @@
       "description": "Create an application record in the platform catalog.",
       "name": "Application name",
       "image": "Container image",
-      "imageName": "Image name",
-      "imagePlaceholder": "kaanyassibas/notes-api",
+      "imageName": "Image repository",
+      "imagePlaceholder": "ghcr.io/kaan-yassibas/notes-api",
       "environment": "Environment",
       "defaultEnvironment": "Default environment",
       "owner": "Owner",
@@ -328,13 +338,20 @@
       "repositoryPlaceholder": "https://github.com/example/notes-api",
       "replicas": "Replica count",
       "submit": "Create application",
-      "success": "Application created."
+      "success": "Application created.",
+      "validation": {
+        "required": "Application name and image repository are required.",
+        "port": "Container port must be between 1 and 65535.",
+        "repositoryUrl": "Repository URL must be a valid http or https URL."
+      }
     },
     "actions": {
-      "delete": "Delete application"
+      "deploy": "Deploy",
+      "delete": "Delete application",
+      "deleteConfirm": "Delete {{name}} from the service catalog? This does not delete Kubernetes workloads."
     },
     "detail": {
-      "subtitle": "Application runtime, release history, pod health, logs, metrics, and settings.",
+      "subtitle": "Catalog metadata, default runtime settings, and related GitOps deployments.",
       "currentImage": "Current Image",
       "lastDeploy": "Last Deploy",
       "healthScore": "Health Score",
@@ -342,11 +359,19 @@
       "relatedPods": "Related pods",
       "runtimeMetrics": "Runtime metrics",
       "settingsTitle": "Application settings",
-      "settingsDescription": "Ownership, repository, and deployment defaults for this service.",
+      "settingsDescription": "Catalog ownership, repository, and deployment defaults for this service.",
       "loadingDescription": "Loading application data from the backend.",
       "previewHealth": "Derived until runtime health is connected",
       "notFoundTitle": "Application not found",
-      "notFoundDescription": "The application does not exist in the platform catalog."
+      "notFoundDescription": "The application does not exist in the platform catalog.",
+      "catalogMetadata": "Catalog metadata",
+      "catalogMetadataDescription": "These values describe the service definition. Runtime health lives in Deployments and Cluster.",
+      "defaultEnvironmentDetail": "Used when creating deployment requests",
+      "defaultPortDetail": "Prefills GitOps workload manifests",
+      "noDescription": "No description provided.",
+      "noRepository": "No repository configured.",
+      "deploymentsEmptyTitle": "No related deployments yet",
+      "deploymentsEmptyDescription": "Use the deploy shortcut to create a GitOps deployment request for this application."
     },
     "tabs": {
       "overview": "Overview",
@@ -715,6 +740,7 @@
       "applicationsLoadFailed": "Could not load applications.",
       "applicationCreateFailed": "Could not create application.",
       "applicationDeleteFailed": "Could not delete application.",
+      "applicationDeleteBlocked": "Application has deployment history and cannot be deleted.",
       "deploymentsLoadFailed": "Could not load deployments.",
       "deploymentCreateFailed": "Could not create deployment.",
       "deploymentAutomationUnavailable": "Deployment automation is not configured. Contact the platform administrator.",
