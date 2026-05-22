@@ -1,0 +1,22 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: devdeploy-backend
+  namespace: devdeploy
+  labels:
+    app.kubernetes.io/name: devdeploy-hub
+    app.kubernetes.io/component: backend
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - devdeploy
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: devdeploy-hub
+      app.kubernetes.io/component: backend
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s

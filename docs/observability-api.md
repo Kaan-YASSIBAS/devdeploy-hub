@@ -31,6 +31,14 @@ Example:
 curl -H "Authorization: Bearer <token>" http://localhost:8000/api/v1/observability/health
 ```
 
+The Prometheus scrape endpoint is different:
+
+```text
+GET /metrics
+```
+
+`/metrics` is intentionally unauthenticated so Prometheus can scrape it. It exposes aggregate HTTP instrumentation only and does not include tokens or application secrets.
+
 ## Endpoints
 
 ```text
@@ -71,7 +79,11 @@ When `step` is omitted, the backend chooses a Prometheus step from the selected 
 7d  -> 1h
 ```
 
-If Prometheus is unreachable, the endpoint returns `503`. If Prometheus is reachable but a metric has no samples, that series is returned with `status: "empty"` and an empty `points` list. Request and error rate charts may be empty until application or ingress HTTP counters are exposed.
+If Prometheus is unreachable, the endpoint returns `503`. If Prometheus is reachable but a metric has no samples, that series is returned with `status: "empty"` and an empty `points` list.
+
+The request and error rate series use backend HTTP metrics from `/metrics` when Prometheus has scraped them. The main counter is `http_requests_total`; `http_request_duration_seconds_count` and ingress request counters are used as fallbacks. The error rate queries filter 5xx status labels, so the chart can remain empty until real 5xx responses happen.
+
+When the Terraform monitoring stack is installed, Prometheus discovers backend HTTP metrics through the `devdeploy-backend` `ServiceMonitor`, which selects the backend Service on port `http` and scrapes `/metrics` every 15 seconds.
 
 ## Kubernetes RBAC
 
