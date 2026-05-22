@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { PageHeader } from "@/components/layout/PageHeader";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { StatusBadge } from "@/components/shared/StatusBadge";
-import type { DeploymentListSource } from "@/types";
+import type { DeploymentListItem } from "@/types";
 
 function formatDate(value: string | null) {
   if (!value) {
@@ -23,14 +23,39 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
-function sourceVariant(source: DeploymentListSource) {
-  if (source === "gitops") {
+function sourceVariant(deployment: DeploymentListItem) {
+  if (deployment.source === "gitops" && deployment.status === "stale") {
+    return "muted";
+  }
+  if (deployment.source === "gitops" && deployment.status === "failed" && !deployment.is_live) {
+    return "danger";
+  }
+  if (deployment.source === "gitops" && !deployment.is_live) {
+    return "warning";
+  }
+  if (deployment.source === "gitops") {
     return "success";
   }
-  if (source === "cluster") {
+  if (deployment.source === "cluster") {
     return "info";
   }
   return "muted";
+}
+
+function sourceLabelKey(deployment: DeploymentListItem) {
+  if (deployment.source === "gitops" && deployment.is_live) {
+    return "deployments.source.gitopsLive";
+  }
+  if (deployment.source === "gitops" && deployment.status === "stale") {
+    return "deployments.source.staleRequest";
+  }
+  if (deployment.source === "gitops" && deployment.status === "failed" && !deployment.is_live) {
+    return "deployments.source.failedRequest";
+  }
+  if (deployment.source === "gitops" && !deployment.is_live) {
+    return "deployments.source.pendingRequest";
+  }
+  return `deployments.source.${deployment.source}`;
 }
 
 function getErrorKey(status?: number) {
@@ -84,7 +109,7 @@ export function GitOpsDeploymentDetailPage() {
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
         <StatusBadge status={deployment.status} type="deployment" />
-        <Badge variant={sourceVariant(deployment.source)}>{t(`deployments.source.${deployment.source}`)}</Badge>
+        <Badge variant={sourceVariant(deployment)}>{t(sourceLabelKey(deployment))}</Badge>
         <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-slate-400">
           {deployment.namespace}
         </span>
@@ -101,7 +126,7 @@ export function GitOpsDeploymentDetailPage() {
               [t("common.status"), t(`status.${deployment.status}`)],
               [t("common.replicas"), `${deployment.available_replicas}/${deployment.replicas}`],
               [t("deployments.table.updatedReplicas"), String(deployment.updated_replicas)],
-              [t("deployments.table.source"), t(`deployments.source.${deployment.source}`)]
+              [t("deployments.table.source"), t(sourceLabelKey(deployment))]
             ].map(([label, value]) => (
               <div key={label} className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
                 <p className="text-xs uppercase text-slate-500">{label}</p>

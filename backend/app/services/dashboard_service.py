@@ -32,7 +32,7 @@ class DashboardService:
         application_count = self.applications.count(
             owner_id=None if current_user.role == "admin" else current_user.id
         )
-        deployments = self._list_deployments(current_user)
+        deployments = self._dashboard_deployments(self._list_deployments(current_user))
 
         return DashboardSummaryResponse(
             application_count=application_count,
@@ -62,6 +62,22 @@ class DashboardService:
         )
         items = [service._from_legacy_deployment(deployment) for deployment in legacy_deployments]
         return sorted(items, key=service._sort_timestamp, reverse=True)
+
+    @staticmethod
+    def _dashboard_deployments(deployments: list[DeploymentListItem]) -> list[DeploymentListItem]:
+        return [
+            deployment
+            for deployment in deployments
+            if DashboardService._is_dashboard_deployment(deployment)
+        ]
+
+    @staticmethod
+    def _is_dashboard_deployment(deployment: DeploymentListItem) -> bool:
+        if deployment.status == "stale":
+            return False
+        if deployment.source == "gitops" and not deployment.is_live and deployment.status == "failed":
+            return False
+        return True
 
     @staticmethod
     def _count_status(deployments: list[DeploymentListItem], statuses: set[str]) -> int:

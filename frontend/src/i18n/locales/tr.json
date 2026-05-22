@@ -91,6 +91,7 @@
     "running": "Çalışıyor",
     "success": "Başarılı",
     "failed": "Başarısız",
+    "stale": "Güncel değil",
     "unknown": "Bilinmiyor"
   },
   "health": {
@@ -383,6 +384,10 @@
     },
     "source": {
       "gitops": "GitOps",
+      "gitopsLive": "Canlı GitOps",
+      "pendingRequest": "Bekleyen istek",
+      "failedRequest": "Başarısız istek",
+      "staleRequest": "Güncel olmayan istek",
       "cluster": "Canlı cluster",
       "legacy": "Legacy"
     },
@@ -426,7 +431,8 @@
         "pending_manual_trigger": "Manuel tetikleme gerekli",
         "workflow_triggered": "Workflow tetiklendi",
         "pr_opened": "Pull request açıldı",
-        "failed": "Başarısız"
+        "failed": "Başarısız",
+        "stale": "Güncel değil"
       },
       "result": {
         "workflowTriggered": "GitOps workflow tetiklendi",

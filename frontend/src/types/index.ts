@@ -2,7 +2,7 @@ export type PlatformEnvironment = "production" | "staging" | "development";
 
 export type Environment = "dev" | "staging" | "prod";
 
-export type DeploymentStatus = "pending" | "running" | "progressing" | "success" | "failed" | "unknown";
+export type DeploymentStatus = "pending" | "running" | "progressing" | "success" | "failed" | "stale" | "unknown";
 
 export type DeploymentStrategy = "rolling" | "recreate";
 
@@ -82,7 +82,7 @@ export type DeploymentCreateInput = {
   strategy: DeploymentStrategy;
 };
 
-export type GitOpsDeploymentStatus = "pending" | "pending_manual_trigger" | "workflow_triggered" | "pr_opened" | "failed";
+export type GitOpsDeploymentStatus = "pending" | "pending_manual_trigger" | "workflow_triggered" | "pr_opened" | "failed" | "stale";
 
 export type GitOpsDeploymentCreateInput = {
   application_id?: number | null;
@@ -134,6 +134,7 @@ export type DeploymentListItem = {
   updated_replicas: number;
   status: DeploymentStatus;
   source: DeploymentListSource;
+  is_live: boolean;
   created_at: string | null;
   updated_at: string | null;
 };

@@ -91,6 +91,7 @@
     "progressing": "Progressing",
     "success": "Success",
     "failed": "Failed",
+    "stale": "Stale",
     "unknown": "Unknown"
   },
   "health": {
@@ -383,6 +384,10 @@
     },
     "source": {
       "gitops": "GitOps",
+      "gitopsLive": "Live GitOps",
+      "pendingRequest": "Pending request",
+      "failedRequest": "Failed request",
+      "staleRequest": "Stale request",
       "cluster": "Live cluster",
       "legacy": "Legacy"
     },
@@ -426,7 +431,8 @@
         "pending_manual_trigger": "Manual trigger required",
         "workflow_triggered": "Workflow triggered",
         "pr_opened": "Pull request opened",
-        "failed": "Failed"
+        "failed": "Failed",
+        "stale": "Stale"
       },
       "result": {
         "workflowTriggered": "GitOps workflow triggered",

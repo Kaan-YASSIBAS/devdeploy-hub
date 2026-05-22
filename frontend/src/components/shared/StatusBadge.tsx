@@ -13,6 +13,7 @@ const variantMap = {
   progressing: "warning",
   success: "success",
   failed: "danger",
+  stale: "muted",
   unknown: "muted",
   healthy: "success",
   degraded: "warning",
