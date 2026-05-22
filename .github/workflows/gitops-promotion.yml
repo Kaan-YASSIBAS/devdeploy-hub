@@ -1,12 +1,28 @@
 name: GitOps Promotion
 
 on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: "Release image tag to promote, for example v1.1.0"
+        required: true
+        type: string
+      auto_merge:
+        description: "Try to enable GitHub auto-merge, or directly squash merge when allowed"
+        required: false
+        default: true
+        type: boolean
   workflow_dispatch:
     inputs:
       image_tag:
         description: "Release image tag to promote, for example v1.1.0"
         required: true
         type: string
+      auto_merge:
+        description: "Try to enable GitHub auto-merge, or directly squash merge when allowed"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -16,12 +32,14 @@ jobs:
   promote-release-images:
     name: Promote release image tags
     runs-on: ubuntu-latest
-    env:
-      IMAGE_TAG: ${{ inputs.image_tag }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.DEVDEPLOY_BOT_TOKEN || secrets.GITOPS_PROMOTION_TOKEN || github.token }}
 
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
@@ -31,41 +49,141 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Validate release image tag
+      - name: Resolve promotion inputs
+        id: promotion
         shell: bash
         run: |
+          set -euo pipefail
+
+          IMAGE_TAG="${{ inputs.image_tag }}"
+          AUTO_MERGE="${{ inputs.auto_merge }}"
+
           if [[ ! "$IMAGE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "image_tag must match vMAJOR.MINOR.PATCH, for example v1.1.0"
             exit 1
           fi
 
+          if [[ "$AUTO_MERGE" != "true" && "$AUTO_MERGE" != "false" ]]; then
+            echo "auto_merge must be true or false"
+            exit 1
+          fi
+
+          echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          echo "auto_merge=$AUTO_MERGE" >> "$GITHUB_OUTPUT"
+
       - name: Update release overlay images
-        run: python scripts/promote-release-images.py "$IMAGE_TAG"
+        run: python scripts/promote-release-images.py "${{ steps.promotion.outputs.image_tag }}"
 
       - name: Render release overlay
         run: kubectl kustomize infra/kubernetes/overlays/release
 
+      - name: Check for promotion changes
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git diff --check
+
+          if git diff --quiet -- infra/kubernetes/overlays/release/kustomization.yaml; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Release overlay already uses ${{ steps.promotion.outputs.image_tag }}. No PR is needed."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create promotion pull request
+        id: cpr
+        if: steps.changes.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
-          token: ${{ secrets.GITOPS_PROMOTION_TOKEN || github.token }}
+          token: ${{ secrets.DEVDEPLOY_BOT_TOKEN || secrets.GITOPS_PROMOTION_TOKEN || github.token }}
           base: main
-          branch: gitops/promote-${{ inputs.image_tag }}
+          branch: gitops/promote-${{ steps.promotion.outputs.image_tag }}
           delete-branch: true
           add-paths: |
             infra/kubernetes/overlays/release/kustomization.yaml
-          commit-message: "chore: promote release images to ${{ inputs.image_tag }}"
-          title: "chore: promote release images to ${{ inputs.image_tag }}"
+          commit-message: "chore: promote release images to ${{ steps.promotion.outputs.image_tag }}"
+          title: "chore: promote release images to ${{ steps.promotion.outputs.image_tag }}"
           body: |
-            Promote DevDeploy Hub release images to `${{ inputs.image_tag }}`.
+            Promote DevDeploy Hub release images to `${{ steps.promotion.outputs.image_tag }}`.
 
             Backend image:
-            `ghcr.io/kaan-yassibas/devdeploy-backend:${{ inputs.image_tag }}`
+            `ghcr.io/kaan-yassibas/devdeploy-backend:${{ steps.promotion.outputs.image_tag }}`
 
             Frontend image:
-            `ghcr.io/kaan-yassibas/devdeploy-frontend:${{ inputs.image_tag }}`
+            `ghcr.io/kaan-yassibas/devdeploy-frontend:${{ steps.promotion.outputs.image_tag }}`
 
             Release overlay path:
             `infra/kubernetes/overlays/release`
 
             After this PR is merged, Argo CD syncs the release overlay.
+
+      - name: Enable or complete auto-merge
+        id: merge
+        if: steps.changes.outputs.changed == 'true' && steps.cpr.outputs.pull-request-number != '' && steps.promotion.outputs.auto_merge == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.DEVDEPLOY_BOT_TOKEN || secrets.GITOPS_PROMOTION_TOKEN || github.token }}
+          PR_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          set +e
+          auto_output="$(gh pr merge "$PR_NUMBER" --auto --squash --delete-branch 2>&1)"
+          auto_status=$?
+          set -e
+
+          if [[ "$auto_status" -eq 0 ]]; then
+            echo "result=auto-merge enabled" >> "$GITHUB_OUTPUT"
+            echo "$auto_output"
+            exit 0
+          fi
+
+          echo "$auto_output"
+          echo "Auto-merge could not be enabled. Trying direct squash merge without admin bypass."
+
+          set +e
+          direct_output="$(gh pr merge "$PR_NUMBER" --squash --delete-branch 2>&1)"
+          direct_status=$?
+          set -e
+
+          if [[ "$direct_status" -eq 0 ]]; then
+            echo "result=merged directly" >> "$GITHUB_OUTPUT"
+            echo "$direct_output"
+            exit 0
+          fi
+
+          echo "$direct_output"
+          echo "::error::Unable to enable auto-merge or directly merge the promotion PR. Review branch protection and repository auto-merge settings."
+          exit 1
+
+      - name: Write workflow summary
+        if: always()
+        env:
+          IMAGE_TAG: ${{ steps.promotion.outputs.image_tag }}
+          AUTO_MERGE: ${{ steps.promotion.outputs.auto_merge }}
+          CHANGED: ${{ steps.changes.outputs.changed }}
+          PR_URL: ${{ steps.cpr.outputs.pull-request-url }}
+          PR_OPERATION: ${{ steps.cpr.outputs.pull-request-operation }}
+          MERGE_RESULT: ${{ steps.merge.outputs.result }}
+        shell: bash
+        run: |
+          {
+            echo "## GitOps Promotion"
+            echo ""
+            echo "- Source tag: \`${IMAGE_TAG:-unknown}\`"
+            echo "- Backend image: \`ghcr.io/kaan-yassibas/devdeploy-backend:${IMAGE_TAG:-unknown}\`"
+            echo "- Frontend image: \`ghcr.io/kaan-yassibas/devdeploy-frontend:${IMAGE_TAG:-unknown}\`"
+            echo "- Release overlay: \`infra/kubernetes/overlays/release\`"
+            echo "- Auto-merge requested: \`${AUTO_MERGE:-false}\`"
+
+            if [[ "$CHANGED" == "true" ]]; then
+              echo "- PR URL: ${PR_URL:-not available}"
+              echo "- PR operation: \`${PR_OPERATION:-unknown}\`"
+              echo "- Merge result: \`${MERGE_RESULT:-not attempted}\`"
+              echo "- Argo CD syncs the release overlay after the PR is merged."
+            else
+              echo "- Result: release overlay already uses this tag; no PR was opened."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

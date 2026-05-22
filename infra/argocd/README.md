@@ -124,18 +124,14 @@ kubectl describe application devdeploy-hub-release -n argocd
 
 The release Application syncs `infra/kubernetes/overlays/release`. New release images are promoted by updating that overlay through a pull request, then letting Argo CD apply the merged Git state.
 
-Manual promotion flow:
+Automatic promotion flow:
 
 ```powershell
 git tag v1.1.0
 git push origin v1.1.0
 ```
 
-After `container-publish.yml` finishes, run the `GitOps Promotion` workflow manually with:
-
-```text
-image_tag = v1.1.0
-```
+After `container-publish.yml` publishes the backend and frontend images, it calls the `GitOps Promotion` workflow with the same tag.
 
 The workflow opens a PR that updates:
 
@@ -143,6 +139,8 @@ The workflow opens a PR that updates:
 ghcr.io/kaan-yassibas/devdeploy-backend:v1.1.0
 ghcr.io/kaan-yassibas/devdeploy-frontend:v1.1.0
 ```
+
+If auto-merge is enabled, the workflow attempts GitHub auto-merge or a direct squash merge fallback without admin bypass. Manual fallback is still available from `Actions -> GitOps Promotion -> Run workflow`.
 
 After the PR is merged, check Argo CD:
 

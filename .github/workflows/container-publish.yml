@@ -96,3 +96,18 @@ jobs:
           labels: ${{ steps.frontend-meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  promote-release-overlay:
+    name: Promote release overlay
+    needs:
+      - build-and-push-backend
+      - build-and-push-frontend
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/gitops-promotion.yml
+    permissions:
+      contents: write
+      pull-requests: write
+    with:
+      image_tag: ${{ github.ref_name }}
+      auto_merge: true
+    secrets: inherit

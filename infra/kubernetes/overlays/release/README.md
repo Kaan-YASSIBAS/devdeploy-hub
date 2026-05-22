@@ -23,27 +23,29 @@ Generated path:      infra/kubernetes/generated/workloads/apps/<app-name>
 
 Release image tags are promoted by updating this overlay and merging the change through a pull request. CI does not deploy directly to the cluster.
 
-Recommended flow:
+Automatic flow:
 
 ```powershell
 git tag v1.1.0
 git push origin v1.1.0
 ```
 
-Wait for the `Container Publish` workflow to publish:
+The `Container Publish` workflow publishes:
 
 ```text
 ghcr.io/kaan-yassibas/devdeploy-backend:v1.1.0
 ghcr.io/kaan-yassibas/devdeploy-frontend:v1.1.0
 ```
 
-Then run:
+After both images are published, `Container Publish` calls `GitOps Promotion` with the same tag. The promotion workflow updates this overlay and opens a PR. If auto-merge is enabled, it attempts GitHub auto-merge first and then a direct squash merge fallback without admin bypass.
+
+Manual fallback:
 
 ```text
 Actions -> GitOps Promotion -> Run workflow -> image_tag = v1.1.0
 ```
 
-The workflow updates this overlay and opens a PR. After merge, the `devdeploy-hub-release` Argo CD Application syncs the new image tags.
+After merge, the `devdeploy-hub-release` Argo CD Application syncs the new image tags.
 
 Local validation for the promotion script:
 

@@ -151,3 +151,34 @@ Remove the generated demo workload after local testing unless it is intentionall
 - Generated workload containers drop Linux capabilities and disallow privilege escalation.
 
 Observability RBAC remains read-only and separate from deployment request handling.
+
+## Automatic Release Promotion
+
+Release image promotion is also GitOps-based. CI never applies manifests directly to the cluster.
+
+1. Create and push a semantic version tag:
+
+```powershell
+git tag v1.3.0
+git push origin v1.3.0
+```
+
+2. `container-publish.yml` builds and pushes:
+
+```text
+ghcr.io/kaan-yassibas/devdeploy-backend:v1.3.0
+ghcr.io/kaan-yassibas/devdeploy-frontend:v1.3.0
+```
+
+3. After both image builds succeed, `container-publish.yml` calls `gitops-promotion.yml` with the same tag.
+4. `gitops-promotion.yml` runs `scripts/promote-release-images.py`, updates `infra/kubernetes/overlays/release/kustomization.yaml`, and opens a pull request.
+5. If `auto_merge=true`, the workflow tries `gh pr merge --auto --squash`. If auto-merge cannot be enabled and the PR is immediately mergeable, it tries a direct squash merge without `--admin`.
+6. After merge, Argo CD syncs the release overlay and deploys the new image tags.
+
+Manual fallback remains available:
+
+```text
+Actions -> GitOps Promotion -> Run workflow -> image_tag = v1.3.0
+```
+
+This preserves the GitOps contract: CI writes Git and opens or merges a reviewed PR; Argo CD is the only component that applies the merged desired state to Kubernetes.
