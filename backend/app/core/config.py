@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     github_owner: str = Field(default="Kaan-YASSIBAS", alias="GITHUB_OWNER")
     github_repo: str = Field(default="devdeploy-hub", alias="GITHUB_REPO")
     gitops_workflow_file: str = Field(default="gitops-workload-request.yml", alias="GITOPS_WORKFLOW_FILE")
+    gitops_delete_workflow_file: str = Field(default="gitops-workload-delete.yml", alias="GITOPS_DELETE_WORKFLOW_FILE")
     github_workflow_token: str | None = Field(default=None, alias="GITHUB_WORKFLOW_TOKEN")
     gitops_target_ref: str = Field(default="main", alias="GITOPS_TARGET_REF")
 

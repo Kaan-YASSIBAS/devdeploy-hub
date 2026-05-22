@@ -8,7 +8,7 @@ The backend never deploys directly to Kubernetes. It stores the request and, whe
 
 ## Concepts
 
-An Application is the platform catalog record owned by a developer or team.
+A Service is the platform catalog record owned by a developer or team. The backend still uses application model/API names internally, but the product UI presents these records as the Services catalog.
 
 A Deployment Request is an intent to run a container image as a Kubernetes workload. It includes the app name, image repository, image tag, namespace, port, replica count, and optional ingress host.
 
@@ -39,6 +39,20 @@ devdeploy
 5. The workflow renders `infra/kubernetes/overlays/release` and opens a PR.
 6. Branch protection and CI validate the PR.
 7. After merge, Argo CD syncs the release overlay.
+
+## GitOps Deletion Flow
+
+Deployments are deleted through Git, not through direct Kubernetes API writes.
+
+1. A user requests deletion from the Deployments page.
+2. The backend validates the workload name/namespace and stores the request state.
+3. If GitHub dispatch is configured, the backend calls `workflow_dispatch` for `gitops-workload-delete.yml`.
+4. GitHub Actions runs `scripts/delete-gitops-workload.py`.
+5. The workflow removes `infra/kubernetes/generated/workloads/apps/<app-name>` and removes the app entry from `infra/kubernetes/generated/workloads/kustomization.yaml`.
+6. The workflow renders `infra/kubernetes/overlays/release`, opens a pull request, and can attempt non-admin auto-merge.
+7. After merge, Argo CD syncs the release overlay and removes the Kubernetes Deployment, Service, and optional Ingress.
+
+Service catalog deletion is intentionally conservative. If a service has legacy deployment records, GitOps requests, or a matching live generated workload, the backend returns `409 Conflict` and asks the user to delete related deployments through GitOps first.
 
 ## Backend Configuration
 
@@ -117,6 +131,20 @@ replicas
 ingress_host
 ```
 
+To delete a generated workload manually:
+
+```text
+Actions -> GitOps Workload Delete -> Run workflow
+```
+
+Then enter:
+
+```text
+app_name
+namespace
+auto_merge
+```
+
 ## Generator
 
 Local example:
@@ -142,6 +170,7 @@ Remove the generated demo workload after local testing unless it is intentionall
 ## Security Constraints
 
 - The backend does not run `kubectl apply`.
+- The backend does not delete Kubernetes resources directly.
 - The backend does not need Kubernetes write RBAC.
 - Generated workloads are reviewed through pull requests.
 - Branch protection checks run before merge.

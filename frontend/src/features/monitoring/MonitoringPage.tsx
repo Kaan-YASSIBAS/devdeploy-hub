@@ -127,7 +127,10 @@ function seriesEmptyDescriptionKey(series: MetricSeries | undefined) {
   if (series.status === "unavailable") {
     return "monitoring.empty.metricUnavailable";
   }
-  if (series.key === "request_rate" || series.key === "error_rate") {
+  if (series.key === "error_rate") {
+    return "monitoring.empty.errorMetrics";
+  }
+  if (series.key === "request_rate") {
     return "monitoring.empty.requestMetrics";
   }
   return "monitoring.empty.noData";

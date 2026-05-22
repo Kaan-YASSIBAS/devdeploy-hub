@@ -2,7 +2,7 @@ export type PlatformEnvironment = "production" | "staging" | "development";
 
 export type Environment = "dev" | "staging" | "prod";
 
-export type DeploymentStatus = "pending" | "running" | "progressing" | "success" | "failed" | "stale" | "unknown";
+export type DeploymentStatus = "pending" | "running" | "progressing" | "success" | "failed" | "stale" | "deletion_requested" | "deleted" | "unknown";
 
 export type DeploymentStrategy = "rolling" | "recreate";
 
@@ -82,7 +82,7 @@ export type DeploymentCreateInput = {
   strategy: DeploymentStrategy;
 };
 
-export type GitOpsDeploymentStatus = "pending" | "pending_manual_trigger" | "workflow_triggered" | "pr_opened" | "failed" | "stale";
+export type GitOpsDeploymentStatus = "pending" | "pending_manual_trigger" | "workflow_triggered" | "pr_opened" | "failed" | "stale" | "deletion_requested" | "deleted";
 
 export type GitOpsDeploymentCreateInput = {
   application_id?: number | null;
@@ -115,6 +115,8 @@ export type GitOpsDeploymentResponse = {
   manual_workflow: string | null;
   manual_inputs: Record<string, string>;
 };
+
+export type GitOpsDeploymentDeleteResponse = GitOpsDeploymentResponse;
 
 export type DeploymentListSource = "gitops" | "cluster" | "legacy";
 

@@ -73,13 +73,23 @@ def create_api_token(
     return ApiTokenCreateResponse(token=raw_token, item=token)
 
 
-@router.delete("/api-tokens/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/api-tokens/{token_id}/revoke", status_code=status.HTTP_204_NO_CONTENT)
 def revoke_api_token(
     token_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Response:
     SettingsService(db).revoke_api_token(token_id, current_user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete("/api-tokens/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_api_token(
+    token_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    SettingsService(db).delete_api_token(token_id, current_user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

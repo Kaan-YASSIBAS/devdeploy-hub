@@ -5,8 +5,27 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-GitOpsDeploymentStatus = Literal["pending", "pending_manual_trigger", "workflow_triggered", "pr_opened", "failed", "stale"]
-DeploymentListStatus = Literal["pending", "running", "progressing", "success", "failed", "stale", "unknown"]
+GitOpsDeploymentStatus = Literal[
+    "pending",
+    "pending_manual_trigger",
+    "workflow_triggered",
+    "pr_opened",
+    "failed",
+    "stale",
+    "deletion_requested",
+    "deleted",
+]
+DeploymentListStatus = Literal[
+    "pending",
+    "running",
+    "progressing",
+    "success",
+    "failed",
+    "stale",
+    "deletion_requested",
+    "deleted",
+    "unknown",
+]
 DeploymentListSource = Literal["gitops", "cluster", "legacy"]
 TAG_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 INGRESS_HOST_PATTERN = re.compile(r"^[a-z0-9]([-.a-z0-9]*[a-z0-9])?$")
@@ -73,6 +92,14 @@ class GitOpsDeploymentRequestRead(BaseModel):
 
 class GitOpsDeploymentResponse(BaseModel):
     request: GitOpsDeploymentRequestRead
+    workflow_triggered: bool
+    message: str
+    manual_workflow: str | None = None
+    manual_inputs: dict[str, str] = Field(default_factory=dict)
+
+
+class GitOpsDeploymentDeleteResponse(BaseModel):
+    request: GitOpsDeploymentRequestRead | None = None
     workflow_triggered: bool
     message: str
     manual_workflow: str | None = None

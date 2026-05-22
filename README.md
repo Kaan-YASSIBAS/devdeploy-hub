@@ -58,6 +58,7 @@ GitHub Actions workflows live in `.github/workflows`:
 - `container-publish.yml` publishes backend and frontend container images to GitHub Container Registry on pushes to `main`, semantic release tags, or manual dispatch. Semantic tag builds call release promotion after both images are published.
 - `gitops-promotion.yml` updates the release Kustomize overlay image tags, opens a promotion pull request, and can attempt non-admin auto-merge.
 - `gitops-workload-request.yml` generates workload manifests and opens a GitOps deployment pull request.
+- `gitops-workload-delete.yml` removes generated workload manifests through a pull request so Argo CD deletes the cluster resources after merge.
 - `security-ci.yml` scans backend dependencies, frontend dependencies, repository files, IaC, and Docker images.
 
 These workflows do not deploy the application directly. Publishing and promotion use the built-in `GITHUB_TOKEN` and do not require custom repository secrets.
@@ -320,7 +321,7 @@ User-owned API tokens
 GitHub, Argo CD, Kubernetes, and Grafana integration status
 ```
 
-API tokens are generated with high entropy and shown only once. The backend stores only a SHA-256 token hash plus display metadata such as prefix, last four characters, and revocation time. Real GitHub workflow tokens are never returned by the API.
+API tokens are platform API credentials for scripts and external automation. They can be used as `Authorization: Bearer ddh_live_...` credentials against authenticated API routes. Tokens are generated with high entropy and shown only once. The backend stores only a SHA-256 token hash plus display metadata such as prefix, last four characters, last-used time, and revocation time. Active tokens can be revoked for audit history, and token records can also be deleted from Settings. Real GitHub workflow tokens are never returned by the API.
 
 Integration cards do not fake connected states. They show `connected`, `not_configured`, or `error` based on backend checks. Some integrations depend on Kubernetes environment variables, cluster-local secrets, and read-only RBAC.
 
@@ -356,7 +357,7 @@ Kustomize remains the source of application manifests; Terraform manages the pla
 
 DevDeploy Hub can now create deployment requests that generate Kubernetes workload manifests through GitHub Actions and pull requests.
 
-The backend does not deploy directly to Kubernetes and does not run `kubectl apply`. It stores the request, optionally dispatches `.github/workflows/gitops-workload-request.yml`, and returns manual workflow inputs when GitHub dispatch is not configured.
+The backend does not deploy directly to Kubernetes and does not run `kubectl apply`. It stores the request, optionally dispatches `.github/workflows/gitops-workload-request.yml`, and returns manual workflow inputs when GitHub dispatch is not configured. Deletions follow the same GitOps contract through `.github/workflows/gitops-workload-delete.yml`: the workflow removes generated manifests, opens or merges a PR, and Argo CD removes the Kubernetes resources after the desired state changes in Git.
 
 Generated workload manifests live under:
 
@@ -407,6 +408,12 @@ Local non-Kubernetes development can leave `GITOPS_ENABLED=false` and run the wo
 
 ```text
 Actions -> GitOps Workload Request -> Run workflow
+```
+
+To remove a generated workload manually, run:
+
+```text
+Actions -> GitOps Workload Delete -> Run workflow
 ```
 
 Detailed architecture and local examples live in `docs/gitops-deployment-engine.md`.

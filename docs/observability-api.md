@@ -55,6 +55,14 @@ GET /api/v1/observability/logs?namespace=devdeploy&limit=100
 GET /api/v1/observability/logs?namespace=devdeploy&pod=<pod-name>&limit=100
 ```
 
+Development-only metrics test endpoint:
+
+```text
+GET /api/v1/debug/error
+```
+
+This endpoint is enabled only when `ENVIRONMENT=development`. It intentionally returns HTTP 500 so local Prometheus scraping can be used to verify 5xx error-rate charts. Outside development it returns `404` and should not be used for production testing.
+
 ## Prometheus Time-Series
 
 `GET /api/v1/observability/metrics/timeseries` returns real Prometheus range-query data for CPU, memory, pod restarts, request rate, and error rate.
@@ -81,7 +89,30 @@ When `step` is omitted, the backend chooses a Prometheus step from the selected 
 
 If Prometheus is unreachable, the endpoint returns `503`. If Prometheus is reachable but a metric has no samples, that series is returned with `status: "empty"` and an empty `points` list.
 
-The request and error rate series use backend HTTP metrics from `/metrics` when Prometheus has scraped them. The main counter is `http_requests_total`; `http_request_duration_seconds_count` and ingress request counters are used as fallbacks. The error rate queries filter 5xx status labels, so the chart can remain empty until real 5xx responses happen.
+The request and error rate series use backend HTTP metrics from `/metrics` when Prometheus has scraped them. The main counter is `http_requests_total`; `http_request_duration_seconds_count` and ingress request counters are used as fallbacks.
+
+Request-rate queries try:
+
+```text
+sum(rate(http_requests_total{namespace="<namespace>"}[5m]))
+sum(rate(http_requests_total{service="devdeploy-backend"}[5m]))
+sum(rate(http_requests_total{job=~".*devdeploy-backend.*"}[5m]))
+sum(rate(http_requests_total[5m]))
+sum(rate(http_request_duration_seconds_count{...}[5m]))
+sum(rate(nginx_ingress_controller_requests{exported_namespace="<namespace>"}[5m]))
+```
+
+Error-rate queries try both `status` and `status_code` labels:
+
+```text
+sum(rate(http_requests_total{status=~"5..|5xx"}[5m]))
+sum(rate(http_requests_total{status_code=~"5..|5xx"}[5m]))
+sum(rate(http_request_duration_seconds_count{status=~"5..|5xx"}[5m]))
+sum(rate(http_request_duration_seconds_count{status_code=~"5..|5xx"}[5m]))
+sum(rate(nginx_ingress_controller_requests{status=~"5.."}[5m]))
+```
+
+The error-rate chart can remain empty until real 5xx responses happen or until the application exposes a compatible 5xx metric label.
 
 When the Terraform monitoring stack is installed, Prometheus discovers backend HTTP metrics through the `devdeploy-backend` `ServiceMonitor`, which selects the backend Service on port `http` and scrapes `/metrics` every 15 seconds.
 
