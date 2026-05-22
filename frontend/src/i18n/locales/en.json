@@ -91,6 +91,7 @@
     "progressing": "Progressing",
     "success": "Success",
     "failed": "Failed",
+    "stale": "Stale",
     "unknown": "Unknown"
   },
   "health": {
@@ -104,7 +105,8 @@
     "production": "Production",
     "staging": "Staging",
     "development": "Development",
-    "release": "Release"
+    "release": "Release",
+    "cluster": "Cluster"
   },
   "strategy": {
     "rolling": "Rolling update",
@@ -209,13 +211,75 @@
     },
     "charts": {
       "deploymentActivity": "Deployment activity",
-      "deploymentActivityDescription": "Successful and failed rollout volume across the last deploy windows.",
+      "deploymentActivityDescription": "Deployment volume from recent real deployment records.",
       "environmentDistribution": "Environment distribution",
-      "environmentDistributionDescription": "Current application spread by target environment."
+      "environmentDistributionDescription": "Current deployment spread by real environment/source labels.",
+      "deploymentActivityEmptyTitle": "No deployment activity data yet",
+      "deploymentActivityEmptyDescription": "Create GitOps deployments or legacy deployment requests to populate this chart.",
+      "environmentDistributionEmptyTitle": "No environment distribution yet",
+      "environmentDistributionEmptyDescription": "Deployment environments will appear once real deployments are available."
     },
     "recentDeployments": "Recent deployments",
     "timeline": "Deployment timeline",
     "clusterStatus": "Cluster status",
+    "timelineEmptyTitle": "No deployment events yet",
+    "timelineEmptyDescription": "Real deployment events will appear after GitOps requests or live Kubernetes updates are observed.",
+    "clusterHealthEmptyTitle": "Cluster health unavailable",
+    "clusterHealthEmptyDescription": "No cluster health checks were returned by the backend.",
+    "refresh": {
+      "success": "Dashboard refreshed.",
+      "lastRefreshed": "Last refreshed {{time}}"
+    },
+    "timelineEvents": {
+      "request_created": {
+        "title": "{{deployment}} request created",
+        "description": "A GitOps deployment request was recorded for {{namespace}}."
+      },
+      "deployment_created": {
+        "title": "{{deployment}} observed",
+        "description": "A live Kubernetes deployment was observed in {{namespace}}."
+      },
+      "deployment_updated": {
+        "title": "{{deployment}} updated",
+        "description": "Kubernetes reported a deployment status update in {{namespace}}."
+      },
+      "deployment_healthy": {
+        "title": "{{deployment}} healthy",
+        "description": "The deployment has the requested available replicas."
+      }
+    },
+    "clusterHealthStatus": {
+      "healthy": "Healthy",
+      "degraded": "Degraded",
+      "unavailable": "Unavailable",
+      "not_configured": "Not configured"
+    },
+    "clusterHealthDetails": {
+      "kubernetes": {
+        "healthy": "Kubernetes API is reachable.",
+        "degraded": "Kubernetes API is partially available.",
+        "unavailable": "Kubernetes API could not be reached.",
+        "not_configured": "Kubernetes client configuration is not available."
+      },
+      "argocd": {
+        "healthy": "The release Application is visible.",
+        "degraded": "Argo CD is present but the release Application is missing.",
+        "unavailable": "Argo CD Application status could not be read.",
+        "not_configured": "Argo CD is not configured in this cluster."
+      },
+      "prometheus": {
+        "healthy": "Prometheus API is reachable.",
+        "degraded": "Prometheus is responding with degraded status.",
+        "unavailable": "Prometheus API could not be reached.",
+        "not_configured": "Prometheus is not configured for this backend."
+      },
+      "loki": {
+        "healthy": "Loki API is reachable.",
+        "degraded": "Loki is responding with degraded status.",
+        "unavailable": "Loki API could not be reached.",
+        "not_configured": "Loki is not configured for this backend."
+      }
+    },
     "quickActions": "Quick actions",
     "quickActionsDescription": "Common platform tasks for the current environment.",
     "actions": {
@@ -320,6 +384,10 @@
     },
     "source": {
       "gitops": "GitOps",
+      "gitopsLive": "Live GitOps",
+      "pendingRequest": "Pending request",
+      "failedRequest": "Failed request",
+      "staleRequest": "Stale request",
       "cluster": "Live cluster",
       "legacy": "Legacy"
     },
@@ -363,7 +431,8 @@
         "pending_manual_trigger": "Manual trigger required",
         "workflow_triggered": "Workflow triggered",
         "pr_opened": "Pull request opened",
-        "failed": "Failed"
+        "failed": "Failed",
+        "stale": "Stale"
       },
       "result": {
         "workflowTriggered": "GitOps workflow triggered",

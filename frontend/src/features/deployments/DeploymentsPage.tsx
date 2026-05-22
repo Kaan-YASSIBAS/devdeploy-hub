@@ -14,9 +14,9 @@ import { CreateDeploymentModal } from "@/components/deployments/CreateDeployment
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { StatusBadge } from "@/components/shared/StatusBadge";
-import type { DeploymentListItem, DeploymentListSource, GitOpsDeploymentCreateInput, GitOpsDeploymentResponse, DeploymentStatus } from "@/types";
+import type { DeploymentListItem, GitOpsDeploymentCreateInput, GitOpsDeploymentResponse, DeploymentStatus } from "@/types";
 
-const statuses: DeploymentStatus[] = ["pending", "running", "progressing", "success", "failed", "unknown"];
+const statuses: DeploymentStatus[] = ["pending", "running", "progressing", "success", "failed", "stale", "unknown"];
 
 function formatDate(value: string | null) {
   if (!value) {
@@ -44,14 +44,39 @@ function imageLabel(deployment: DeploymentListItem) {
   return deployment.tag ? `${deployment.image}:${deployment.tag}` : deployment.image;
 }
 
-function sourceVariant(source: DeploymentListSource) {
-  if (source === "gitops") {
+function sourceVariant(deployment: DeploymentListItem) {
+  if (deployment.source === "gitops" && deployment.status === "stale") {
+    return "muted";
+  }
+  if (deployment.source === "gitops" && deployment.status === "failed" && !deployment.is_live) {
+    return "danger";
+  }
+  if (deployment.source === "gitops" && !deployment.is_live) {
+    return "warning";
+  }
+  if (deployment.source === "gitops") {
     return "success";
   }
-  if (source === "cluster") {
+  if (deployment.source === "cluster") {
     return "info";
   }
   return "muted";
+}
+
+function sourceLabelKey(deployment: DeploymentListItem) {
+  if (deployment.source === "gitops" && deployment.is_live) {
+    return "deployments.source.gitopsLive";
+  }
+  if (deployment.source === "gitops" && deployment.status === "stale") {
+    return "deployments.source.staleRequest";
+  }
+  if (deployment.source === "gitops" && deployment.status === "failed" && !deployment.is_live) {
+    return "deployments.source.failedRequest";
+  }
+  if (deployment.source === "gitops" && !deployment.is_live) {
+    return "deployments.source.pendingRequest";
+  }
+  return `deployments.source.${deployment.source}`;
 }
 
 export function DeploymentsPage() {
@@ -146,7 +171,7 @@ export function DeploymentsPage() {
     {
       key: "source",
       header: t("deployments.table.source"),
-      render: (deployment) => <Badge variant={sourceVariant(deployment.source)}>{t(`deployments.source.${deployment.source}`)}</Badge>
+      render: (deployment) => <Badge variant={sourceVariant(deployment)}>{t(sourceLabelKey(deployment))}</Badge>
     },
     {
       key: "replicas",

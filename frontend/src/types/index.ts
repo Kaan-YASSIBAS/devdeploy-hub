@@ -2,7 +2,7 @@ export type PlatformEnvironment = "production" | "staging" | "development";
 
 export type Environment = "dev" | "staging" | "prod";
 
-export type DeploymentStatus = "pending" | "running" | "progressing" | "success" | "failed" | "unknown";
+export type DeploymentStatus = "pending" | "running" | "progressing" | "success" | "failed" | "stale" | "unknown";
 
 export type DeploymentStrategy = "rolling" | "recreate";
 
@@ -82,7 +82,7 @@ export type DeploymentCreateInput = {
   strategy: DeploymentStrategy;
 };
 
-export type GitOpsDeploymentStatus = "pending" | "pending_manual_trigger" | "workflow_triggered" | "pr_opened" | "failed";
+export type GitOpsDeploymentStatus = "pending" | "pending_manual_trigger" | "workflow_triggered" | "pr_opened" | "failed" | "stale";
 
 export type GitOpsDeploymentCreateInput = {
   application_id?: number | null;
@@ -134,6 +134,7 @@ export type DeploymentListItem = {
   updated_replicas: number;
   status: DeploymentStatus;
   source: DeploymentListSource;
+  is_live: boolean;
   created_at: string | null;
   updated_at: string | null;
 };
@@ -361,4 +362,43 @@ export type IntegrationStatusItem = {
   name: string;
   status: IntegrationStatus;
   detail: string | null;
+};
+
+export type DashboardEnvironmentDistributionItem = {
+  environment: string;
+  count: number;
+};
+
+export type DashboardTimelineEventStatus = "complete" | "current" | "pending" | "failed";
+
+export type DashboardTimelineEvent = {
+  id: string;
+  deployment_name: string;
+  namespace: string;
+  event_type: string;
+  message: string;
+  status: DashboardTimelineEventStatus;
+  timestamp: string;
+};
+
+export type DashboardClusterHealthStatus = "healthy" | "degraded" | "unavailable" | "not_configured";
+
+export type DashboardClusterHealthItem = {
+  key: "kubernetes" | "argocd" | "prometheus" | "loki";
+  name: string;
+  status: DashboardClusterHealthStatus;
+  detail: string | null;
+};
+
+export type DashboardSummary = {
+  application_count: number;
+  deployment_count: number;
+  pending_deployment_count: number;
+  running_deployment_count: number;
+  successful_deployment_count: number;
+  failed_deployment_count: number;
+  environment_distribution: DashboardEnvironmentDistributionItem[];
+  recent_deployments: DeploymentListItem[];
+  deployment_timeline: DashboardTimelineEvent[];
+  cluster_health: DashboardClusterHealthItem[];
 };

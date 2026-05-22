@@ -1,8 +1,10 @@
-from datetime import datetime, timezone
+from collections.abc import Iterable
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
 from fastapi import HTTPException, status
+from kubernetes.client import ApiException
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -18,6 +20,11 @@ from app.services.observability_errors import ObservabilityUnavailableError
 
 
 DEFAULT_WORKLOAD_NAMESPACE = "devdeploy-workloads"
+ACTIVE_GITOPS_REQUEST_STATUSES = {"pending", "pending_manual_trigger", "workflow_triggered", "pr_opened"}
+STALE_GITOPS_REQUEST_AFTER = timedelta(hours=1)
+STALE_GITOPS_REQUEST_MESSAGE = (
+    "No matching Kubernetes deployment was observed within the expected GitOps reconciliation window."
+)
 
 
 class GitOpsDeploymentService:
@@ -33,13 +40,20 @@ class GitOpsDeploymentService:
             (request.namespace, request.app_name): request
             for request in gitops_requests
         }
+        workload_namespaces = {DEFAULT_WORKLOAD_NAMESPACE}
+        workload_namespaces.update(request.namespace for request in gitops_requests)
 
-        for live_deployment in self._list_live_deployments(DEFAULT_WORKLOAD_NAMESPACE):
-            request = requests_by_workload.pop(
-                (live_deployment["namespace"], live_deployment["name"]),
-                None,
-            )
-            items.append(self._from_live_deployment(live_deployment, request))
+        live_deployments = self._list_live_deployments(workload_namespaces)
+        if live_deployments is not None:
+            for live_deployment in live_deployments:
+                request = requests_by_workload.pop(
+                    (live_deployment["namespace"], live_deployment["name"]),
+                    None,
+                )
+                items.append(self._from_live_deployment(live_deployment, request))
+
+            if self._mark_stale_requests(requests_by_workload.values()):
+                self.db.commit()
 
         for request in requests_by_workload.values():
             items.append(self._from_gitops_request(request))
@@ -143,11 +157,46 @@ class GitOpsDeploymentService:
         return query.all()
 
     @staticmethod
-    def _list_live_deployments(namespace: str) -> list[dict[str, Any]]:
+    def _list_live_deployments(namespaces: set[str]) -> list[dict[str, Any]] | None:
+        service = KubernetesService()
+        deployments: list[dict[str, Any]] = []
         try:
-            return KubernetesService().list_deployments(namespace=namespace)
-        except ObservabilityUnavailableError:
-            return []
+            for namespace in sorted(namespaces):
+                try:
+                    deployments.extend(service.list_deployments(namespace=namespace))
+                except ApiException as exc:
+                    if exc.status == 404:
+                        continue
+                    raise
+        except (ObservabilityUnavailableError, ApiException):
+            return None
+        return deployments
+
+    def _mark_stale_requests(self, requests: Iterable[GitOpsDeploymentRequest]) -> bool:
+        now = datetime.now(timezone.utc)
+        changed = False
+        for request in requests:
+            if not self._should_mark_stale(request, now):
+                continue
+            request.status = "stale"
+            request.error_message = STALE_GITOPS_REQUEST_MESSAGE
+            request.updated_at = now
+            changed = True
+        return changed
+
+    @staticmethod
+    def _should_mark_stale(request: GitOpsDeploymentRequest, now: datetime) -> bool:
+        if request.status not in ACTIVE_GITOPS_REQUEST_STATUSES:
+            return False
+        reference_time = GitOpsDeploymentService._request_reference_time(request)
+        return now - reference_time > STALE_GITOPS_REQUEST_AFTER
+
+    @staticmethod
+    def _request_reference_time(request: GitOpsDeploymentRequest) -> datetime:
+        value = request.updated_at or request.created_at
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
     @staticmethod
     def _from_live_deployment(
@@ -170,6 +219,7 @@ class GitOpsDeploymentService:
             updated_replicas=live_deployment["updated_replicas"],
             status=live_deployment.get("status", "unknown"),
             source="gitops" if request else "cluster",
+            is_live=True,
             created_at=request.created_at if request else live_deployment.get("created_at"),
             updated_at=live_deployment.get("updated_at") or (request.updated_at if request else None),
         )
@@ -191,6 +241,7 @@ class GitOpsDeploymentService:
             updated_replicas=0,
             status=GitOpsDeploymentService._status_from_request(request.status),
             source="gitops",
+            is_live=False,
             created_at=request.created_at,
             updated_at=request.updated_at,
         )
@@ -213,13 +264,16 @@ class GitOpsDeploymentService:
             updated_replicas=deployment.replica_count if deployment.status in {"running", "success"} else 0,
             status=deployment.status,
             source="legacy",
+            is_live=False,
             created_at=deployment.created_at,
             updated_at=deployment.updated_at,
         )
 
     @staticmethod
     def _status_from_request(status_value: str) -> str:
-        if status_value == "failed":
+        if status_value in {"failed", "stale"}:
+            if status_value == "stale":
+                return "stale"
             return "failed"
         if status_value in {"pending", "pending_manual_trigger"}:
             return "pending"
@@ -229,7 +283,10 @@ class GitOpsDeploymentService:
 
     @staticmethod
     def _sort_timestamp(item: DeploymentListItem) -> datetime:
-        return item.updated_at or item.created_at or datetime.min.replace(tzinfo=timezone.utc)
+        value = item.updated_at or item.created_at or datetime.min.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
     def _dispatch_workflow(self, inputs: dict[str, str]) -> None:
         url = (

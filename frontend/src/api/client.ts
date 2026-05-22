@@ -8,6 +8,7 @@ import type {
   ApiTokenCreateResponse,
   ClusterMetrics,
   ClusterSummary,
+  DashboardSummary,
   Deployment,
   DeploymentCreateInput,
   DeploymentListItem,
@@ -133,6 +134,13 @@ export const authApi = {
 export const usersApi = {
   async summary() {
     const { data } = await apiClient.get<UserSummary>("/users/me/summary");
+    return data;
+  }
+};
+
+export const dashboardApi = {
+  async summary() {
+    const { data } = await apiClient.get<DashboardSummary>("/dashboard/summary");
     return data;
   }
 };

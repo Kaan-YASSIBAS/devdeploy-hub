@@ -7,10 +7,13 @@ const variantMap = {
   staging: "warning",
   development: "info",
   prod: "danger",
-  dev: "info"
+  dev: "info",
+  release: "success",
+  cluster: "muted"
 } as const;
 
-export function EnvironmentBadge({ environment }: { environment: Environment | PlatformEnvironment }) {
+export function EnvironmentBadge({ environment }: { environment: Environment | PlatformEnvironment | string }) {
   const { t } = useTranslation();
-  return <Badge variant={variantMap[environment]}>{t(`environment.${environment}`)}</Badge>;
+  const variant = environment in variantMap ? variantMap[environment as keyof typeof variantMap] : "muted";
+  return <Badge variant={variant}>{t(`environment.${environment}`, { defaultValue: environment })}</Badge>;
 }
