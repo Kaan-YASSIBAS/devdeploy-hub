@@ -14,6 +14,7 @@ export type User = {
   id: number;
   email: string;
   username: string;
+  display_name?: string | null;
   role: "admin" | "developer" | string;
   is_active: boolean;
   created_at: string;
@@ -308,4 +309,56 @@ export type LogEntry = {
   timestamp: string;
   line: string;
   labels: Record<string, string>;
+};
+
+export type ProfileSettings = {
+  id: number;
+  display_name: string;
+  email: string;
+  role: "admin" | "developer" | string;
+};
+
+export type ProfileSettingsUpdateInput = {
+  display_name: string;
+};
+
+export type WorkspaceSettings = {
+  id: number;
+  name: string;
+  plan: string;
+  created_at: string;
+  updated_at: string | null;
+};
+
+export type WorkspaceSettingsUpdateInput = {
+  name: string;
+};
+
+export type ApiToken = {
+  id: number;
+  name: string;
+  prefix: string;
+  last_four: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  active: boolean;
+};
+
+export type ApiTokenCreateInput = {
+  name: string;
+};
+
+export type ApiTokenCreateResponse = {
+  token: string;
+  item: ApiToken;
+};
+
+export type IntegrationStatus = "connected" | "not_configured" | "error";
+
+export type IntegrationStatusItem = {
+  key: "github" | "argocd" | "kubernetes" | "grafana";
+  name: string;
+  status: IntegrationStatus;
+  detail: string | null;
 };

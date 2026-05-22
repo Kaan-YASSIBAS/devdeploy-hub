@@ -524,41 +524,77 @@
   },
   "settings": {
     "title": "Settings",
-    "description": "Manage workspace identity, preferences, mock API tokens, and platform integrations.",
+    "description": "Manage profile details, workspace identity, API tokens, and platform integration health.",
+    "loading": "Loading settings from the backend.",
+    "errorTitle": "Could not load settings",
+    "errorDescription": "Refresh the page or try again after the backend is available.",
     "profile": {
       "title": "Profile",
       "description": "Personal details used across deployment ownership and audit trails.",
       "name": "Name",
       "email": "Email",
-      "role": "Role"
+      "role": "Role",
+      "save": "Save profile",
+      "saved": "Profile saved."
     },
-    "organization": {
-      "title": "Organization",
+    "workspace": {
+      "title": "Workspace",
       "description": "Workspace-level identity for teams and environment policy.",
-      "name": "Organization name",
+      "name": "Workspace name",
       "plan": "Plan",
-      "planValue": "Platform Premium",
-      "placeholderName": "DevDeploy Hub Workspace"
-    },
-    "appearance": {
-      "title": "Appearance",
-      "description": "Keep the interface tuned for operations rooms and focused engineering sessions.",
-      "theme": "Theme",
-      "dark": "Dark",
-      "compactMode": "Compact mode"
+      "save": "Save workspace",
+      "saved": "Workspace saved."
     },
     "apiTokens": {
       "title": "API tokens",
-      "description": "Mock token management for future API integrations.",
+      "description": "Create and revoke real backend API tokens. Full token values are shown once.",
       "create": "Create token",
-      "lastUsed": "Last used"
+      "createTitle": "Create API token",
+      "createDescription": "Name the token so it is easy to recognize later.",
+      "name": "Token name",
+      "namePlaceholder": "Release automation",
+      "lastUsed": "Last used",
+      "empty": "No API tokens have been created for your account.",
+      "created": "API token created.",
+      "createdOnce": "Copy this token now",
+      "createdWarning": "For security, the full token is stored as a hash and cannot be shown again.",
+      "copied": "Token copied.",
+      "revoke": "Revoke",
+      "revoked": "API token revoked.",
+      "revokedStatus": "Revoked"
     },
     "integrations": {
       "title": "Integrations",
-      "description": "Connect delivery, cluster, and observability systems when the backend is ready.",
-      "connected": "Connected",
-      "mocked": "Mocked",
-      "configure": "Configure"
+      "description": "Read live connection status for delivery, cluster, and observability systems.",
+      "refresh": "Refresh integrations",
+      "configuredExternally": "Configured through Kubernetes secrets or environment variables.",
+      "status": {
+        "connected": "Connected",
+        "not_configured": "Not configured",
+        "error": "Error"
+      },
+      "details": {
+        "github": {
+          "connected": "Workflow dispatch API is reachable.",
+          "not_configured": "GitHub dispatch token or repository settings are missing.",
+          "error": "GitHub workflow API check failed."
+        },
+        "argocd": {
+          "connected": "The release Application is visible to the backend.",
+          "not_configured": "Argo CD namespace or release Application is missing.",
+          "error": "Argo CD status could not be read with current RBAC."
+        },
+        "kubernetes": {
+          "connected": "Read-only Kubernetes API access is available.",
+          "not_configured": "Kubernetes client configuration is not available.",
+          "error": "Kubernetes API request failed."
+        },
+        "grafana": {
+          "connected": "Grafana health endpoint is reachable.",
+          "not_configured": "Grafana URL is not configured.",
+          "error": "Grafana health check failed."
+        }
+      }
     }
   },
   "empty": {
@@ -589,6 +625,9 @@
       "observabilityLoadFailed": "Could not load observability data.",
       "observabilityPermissionDenied": "You do not have permission to view observability data.",
       "observabilityUnavailable": "Observability backend is unavailable.",
+      "settingsSaveFailed": "Could not save settings.",
+      "apiTokenCreateFailed": "Could not create API token.",
+      "apiTokenRevokeFailed": "Could not revoke API token.",
       "generic": "Something went wrong. Please try again."
     },
     "success": {

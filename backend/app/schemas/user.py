@@ -14,6 +14,7 @@ class UserRead(BaseModel):
     id: int
     email: EmailStr
     username: str
+    display_name: str | None = None
     role: Literal["admin", "developer"]
     is_active: bool
     created_at: datetime

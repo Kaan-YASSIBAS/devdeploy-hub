@@ -3,6 +3,9 @@ import type {
   Application,
   ApplicationCreateInput,
   ApplicationUpdateInput,
+  ApiToken,
+  ApiTokenCreateInput,
+  ApiTokenCreateResponse,
   ClusterMetrics,
   ClusterSummary,
   Deployment,
@@ -17,8 +20,13 @@ import type {
   KubernetesService,
   LogEntry,
   ObservabilityHealth,
+  IntegrationStatusItem,
+  ProfileSettings,
+  ProfileSettingsUpdateInput,
   User,
-  UserSummary
+  UserSummary,
+  WorkspaceSettings,
+  WorkspaceSettingsUpdateInput
 } from "@/types";
 
 export const AUTH_TOKEN_KEY = "devdeploy-token";
@@ -223,6 +231,40 @@ export const observabilityApi = {
   },
   async logs(params: { namespace?: string; pod?: string; limit?: number }) {
     const { data } = await apiClient.get<LogEntry[]>("/observability/logs", { params });
+    return data;
+  }
+};
+
+export const settingsApi = {
+  async profile() {
+    const { data } = await apiClient.get<ProfileSettings>("/settings/profile");
+    return data;
+  },
+  async updateProfile(input: ProfileSettingsUpdateInput) {
+    const { data } = await apiClient.put<ProfileSettings>("/settings/profile", input);
+    return data;
+  },
+  async workspace() {
+    const { data } = await apiClient.get<WorkspaceSettings>("/settings/workspace");
+    return data;
+  },
+  async updateWorkspace(input: WorkspaceSettingsUpdateInput) {
+    const { data } = await apiClient.put<WorkspaceSettings>("/settings/workspace", input);
+    return data;
+  },
+  async apiTokens() {
+    const { data } = await apiClient.get<ApiToken[]>("/settings/api-tokens");
+    return data;
+  },
+  async createApiToken(input: ApiTokenCreateInput) {
+    const { data } = await apiClient.post<ApiTokenCreateResponse>("/settings/api-tokens", input);
+    return data;
+  },
+  async revokeApiToken(id: number) {
+    await apiClient.delete(`/settings/api-tokens/${id}`);
+  },
+  async integrations() {
+    const { data } = await apiClient.get<IntegrationStatusItem[]>("/settings/integrations");
     return data;
   }
 };

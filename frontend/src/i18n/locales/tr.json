@@ -524,41 +524,77 @@
   },
   "settings": {
     "title": "Ayarlar",
-    "description": "Workspace kimliği, tercihler, mock API tokenları ve platform entegrasyonlarını yönet.",
+    "description": "Profil bilgilerini, workspace kimliğini, API tokenlarını ve platform entegrasyon sağlığını yönet.",
+    "loading": "Ayarlar backend üzerinden yükleniyor.",
+    "errorTitle": "Ayarlar yüklenemedi",
+    "errorDescription": "Backend hazır olduğunda sayfayı yenile veya tekrar dene.",
     "profile": {
       "title": "Profil",
       "description": "Deployment sahipliği ve audit kayıtlarında kullanılan kişisel bilgiler.",
       "name": "Ad",
       "email": "E-posta",
-      "role": "Rol"
+      "role": "Rol",
+      "save": "Profili kaydet",
+      "saved": "Profil kaydedildi."
     },
-    "organization": {
-      "title": "Organizasyon",
+    "workspace": {
+      "title": "Workspace",
       "description": "Ekipler ve ortam politikası için workspace seviyesinde kimlik.",
-      "name": "Organizasyon adı",
+      "name": "Workspace adı",
       "plan": "Plan",
-      "planValue": "Platform Premium",
-      "placeholderName": "DevDeploy Hub Workspace"
-    },
-    "appearance": {
-      "title": "Görünüm",
-      "description": "Arayüzü operasyon odaları ve odaklı mühendislik seansları için uygun tut.",
-      "theme": "Tema",
-      "dark": "Koyu",
-      "compactMode": "Kompakt mod"
+      "save": "Workspace'i kaydet",
+      "saved": "Workspace kaydedildi."
     },
     "apiTokens": {
       "title": "API tokenları",
-      "description": "Gelecekteki API entegrasyonları için mock token yönetimi.",
+      "description": "Gerçek backend API tokenları oluştur ve iptal et. Tam token değeri yalnızca bir kez gösterilir.",
       "create": "Token oluştur",
-      "lastUsed": "Son kullanım"
+      "createTitle": "API token oluştur",
+      "createDescription": "Daha sonra kolay tanımak için tokena bir ad ver.",
+      "name": "Token adı",
+      "namePlaceholder": "Release otomasyonu",
+      "lastUsed": "Son kullanım",
+      "empty": "Hesabın için henüz API token oluşturulmadı.",
+      "created": "API token oluşturuldu.",
+      "createdOnce": "Bu tokenı şimdi kopyala",
+      "createdWarning": "Güvenlik için tam token hash olarak saklanır ve tekrar gösterilemez.",
+      "copied": "Token kopyalandı.",
+      "revoke": "İptal et",
+      "revoked": "API token iptal edildi.",
+      "revokedStatus": "İptal edildi"
     },
     "integrations": {
       "title": "Entegrasyonlar",
-      "description": "Backend hazır olduğunda delivery, cluster ve observability sistemlerini bağla.",
-      "connected": "Bağlı",
-      "mocked": "Mock",
-      "configure": "Yapılandır"
+      "description": "Delivery, cluster ve observability sistemleri için canlı bağlantı durumunu göster.",
+      "refresh": "Entegrasyonları yenile",
+      "configuredExternally": "Kubernetes secretları veya ortam değişkenleri üzerinden yapılandırılır.",
+      "status": {
+        "connected": "Bağlı",
+        "not_configured": "Yapılandırılmadı",
+        "error": "Hata"
+      },
+      "details": {
+        "github": {
+          "connected": "Workflow dispatch API erişilebilir.",
+          "not_configured": "GitHub dispatch tokenı veya repository ayarları eksik.",
+          "error": "GitHub workflow API kontrolü başarısız."
+        },
+        "argocd": {
+          "connected": "Release Application backend tarafından görülebiliyor.",
+          "not_configured": "Argo CD namespace'i veya release Application eksik.",
+          "error": "Argo CD durumu mevcut RBAC ile okunamadı."
+        },
+        "kubernetes": {
+          "connected": "Read-only Kubernetes API erişimi mevcut.",
+          "not_configured": "Kubernetes client yapılandırması mevcut değil.",
+          "error": "Kubernetes API isteği başarısız."
+        },
+        "grafana": {
+          "connected": "Grafana health endpoint erişilebilir.",
+          "not_configured": "Grafana URL yapılandırılmadı.",
+          "error": "Grafana health kontrolü başarısız."
+        }
+      }
     }
   },
   "empty": {
@@ -589,6 +625,9 @@
       "observabilityLoadFailed": "Observability verisi yüklenemedi.",
       "observabilityPermissionDenied": "Observability verisini görüntüleme yetkin yok.",
       "observabilityUnavailable": "Observability backend'i kullanılamıyor.",
+      "settingsSaveFailed": "Ayarlar kaydedilemedi.",
+      "apiTokenCreateFailed": "API token oluşturulamadı.",
+      "apiTokenRevokeFailed": "API token iptal edilemedi.",
       "generic": "Bir şeyler ters gitti. Lütfen tekrar dene."
     },
     "success": {
