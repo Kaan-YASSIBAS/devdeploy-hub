@@ -295,6 +295,12 @@ In Docker Compose, observability integrations may return `503` unless the backen
 
 Detailed endpoint examples live in `docs/observability-api.md`.
 
+## Dashboard API
+
+The main dashboard uses `GET /api/v1/dashboard/summary` instead of mock data. The backend combines application records, GitOps deployment requests, live Kubernetes deployments from `devdeploy-workloads`, legacy deployment records, and real Kubernetes/Argo CD/Prometheus/Loki health checks.
+
+If Kubernetes or observability services are unavailable, the endpoint still returns database-backed dashboard fields and marks the affected health checks as `unavailable` or `not_configured`.
+
 ## Settings API
 
 The Settings page is backed by authenticated backend endpoints under:

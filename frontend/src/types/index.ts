@@ -362,3 +362,42 @@ export type IntegrationStatusItem = {
   status: IntegrationStatus;
   detail: string | null;
 };
+
+export type DashboardEnvironmentDistributionItem = {
+  environment: string;
+  count: number;
+};
+
+export type DashboardTimelineEventStatus = "complete" | "current" | "pending" | "failed";
+
+export type DashboardTimelineEvent = {
+  id: string;
+  deployment_name: string;
+  namespace: string;
+  event_type: string;
+  message: string;
+  status: DashboardTimelineEventStatus;
+  timestamp: string;
+};
+
+export type DashboardClusterHealthStatus = "healthy" | "degraded" | "unavailable" | "not_configured";
+
+export type DashboardClusterHealthItem = {
+  key: "kubernetes" | "argocd" | "prometheus" | "loki";
+  name: string;
+  status: DashboardClusterHealthStatus;
+  detail: string | null;
+};
+
+export type DashboardSummary = {
+  application_count: number;
+  deployment_count: number;
+  pending_deployment_count: number;
+  running_deployment_count: number;
+  successful_deployment_count: number;
+  failed_deployment_count: number;
+  environment_distribution: DashboardEnvironmentDistributionItem[];
+  recent_deployments: DeploymentListItem[];
+  deployment_timeline: DashboardTimelineEvent[];
+  cluster_health: DashboardClusterHealthItem[];
+};

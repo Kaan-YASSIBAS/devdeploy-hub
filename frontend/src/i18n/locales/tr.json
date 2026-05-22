@@ -104,7 +104,8 @@
     "production": "Production",
     "staging": "Staging",
     "development": "Development",
-    "release": "Release"
+    "release": "Release",
+    "cluster": "Cluster"
   },
   "strategy": {
     "rolling": "Rolling update",
@@ -209,13 +210,75 @@
     },
     "charts": {
       "deploymentActivity": "Deployment aktivitesi",
-      "deploymentActivityDescription": "Son deploy pencerelerindeki başarılı ve başarısız rollout hacmi.",
+      "deploymentActivityDescription": "Son gerçek deployment kayıtlarından deployment hacmi.",
       "environmentDistribution": "Ortam dağılımı",
-      "environmentDistributionDescription": "Mevcut uygulamaların hedef ortamlara göre dağılımı."
+      "environmentDistributionDescription": "Gerçek environment/source etiketlerine göre deployment dağılımı.",
+      "deploymentActivityEmptyTitle": "Henüz deployment aktivite verisi yok",
+      "deploymentActivityEmptyDescription": "Bu grafiği doldurmak için GitOps deployment veya legacy deployment isteği oluştur.",
+      "environmentDistributionEmptyTitle": "Henüz environment dağılımı yok",
+      "environmentDistributionEmptyDescription": "Gerçek deploymentlar olduğunda ortam dağılımı burada görünecek."
     },
     "recentDeployments": "Son deploymentlar",
     "timeline": "Deployment timeline",
     "clusterStatus": "Cluster durumu",
+    "timelineEmptyTitle": "Henüz deployment eventi yok",
+    "timelineEmptyDescription": "GitOps istekleri veya canlı Kubernetes güncellemeleri görüldüğünde gerçek eventler burada görünecek.",
+    "clusterHealthEmptyTitle": "Cluster sağlığı kullanılamıyor",
+    "clusterHealthEmptyDescription": "Backend herhangi bir cluster health sonucu döndürmedi.",
+    "refresh": {
+      "success": "Dashboard yenilendi.",
+      "lastRefreshed": "Son yenileme {{time}}"
+    },
+    "timelineEvents": {
+      "request_created": {
+        "title": "{{deployment}} isteği oluşturuldu",
+        "description": "{{namespace}} için GitOps deployment isteği kaydedildi."
+      },
+      "deployment_created": {
+        "title": "{{deployment}} gözlemlendi",
+        "description": "{{namespace}} içinde canlı Kubernetes deployment görüldü."
+      },
+      "deployment_updated": {
+        "title": "{{deployment}} güncellendi",
+        "description": "Kubernetes {{namespace}} içinde deployment durum güncellemesi bildirdi."
+      },
+      "deployment_healthy": {
+        "title": "{{deployment}} sağlıklı",
+        "description": "Deployment istenen available replica sayısına sahip."
+      }
+    },
+    "clusterHealthStatus": {
+      "healthy": "Sağlıklı",
+      "degraded": "Degraded",
+      "unavailable": "Kullanılamıyor",
+      "not_configured": "Yapılandırılmadı"
+    },
+    "clusterHealthDetails": {
+      "kubernetes": {
+        "healthy": "Kubernetes API erişilebilir.",
+        "degraded": "Kubernetes API kısmen kullanılabilir.",
+        "unavailable": "Kubernetes API erişilemedi.",
+        "not_configured": "Kubernetes client yapılandırması mevcut değil."
+      },
+      "argocd": {
+        "healthy": "Release Application görülebiliyor.",
+        "degraded": "Argo CD mevcut ama release Application eksik.",
+        "unavailable": "Argo CD Application durumu okunamadı.",
+        "not_configured": "Bu cluster içinde Argo CD yapılandırılmadı."
+      },
+      "prometheus": {
+        "healthy": "Prometheus API erişilebilir.",
+        "degraded": "Prometheus degraded durumda yanıt veriyor.",
+        "unavailable": "Prometheus API erişilemedi.",
+        "not_configured": "Bu backend için Prometheus yapılandırılmadı."
+      },
+      "loki": {
+        "healthy": "Loki API erişilebilir.",
+        "degraded": "Loki degraded durumda yanıt veriyor.",
+        "unavailable": "Loki API erişilemedi.",
+        "not_configured": "Bu backend için Loki yapılandırılmadı."
+      }
+    },
     "quickActions": "Hızlı işlemler",
     "quickActionsDescription": "Geçerli ortam için sık kullanılan platform görevleri.",
     "actions": {

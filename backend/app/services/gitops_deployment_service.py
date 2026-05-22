@@ -3,6 +3,7 @@ from typing import Any
 
 import httpx
 from fastapi import HTTPException, status
+from kubernetes.client import ApiException
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -146,7 +147,7 @@ class GitOpsDeploymentService:
     def _list_live_deployments(namespace: str) -> list[dict[str, Any]]:
         try:
             return KubernetesService().list_deployments(namespace=namespace)
-        except ObservabilityUnavailableError:
+        except (ObservabilityUnavailableError, ApiException):
             return []
 
     @staticmethod
