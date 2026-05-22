@@ -5,3 +5,4 @@ resources:
   - namespace.yaml
   - apps/podinfo-demo
   - apps/podinfo-final-demo
+  - apps/podinfo-final-demo-1
