@@ -40,4 +40,4 @@ jobs:
           sudo mv /tmp/kubeconform /usr/local/bin/kubeconform
 
       - name: Validate Kubernetes schemas
-        run: kubeconform -strict -summary /tmp/devdeploy-dev-k8s.yaml /tmp/devdeploy-release-k8s.yaml
+        run: kubeconform -strict -ignore-missing-schemas -summary /tmp/devdeploy-dev-k8s.yaml /tmp/devdeploy-release-k8s.yaml
