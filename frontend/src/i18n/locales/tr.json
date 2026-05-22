@@ -297,17 +297,27 @@
   },
   "applications": {
     "title": "Uygulamalar",
-    "description": "Servisleri kaydet, sahipliği takip et ve ortamlar arasında deployment sağlığını incele.",
-    "newApplication": "Yeni Uygulama",
-    "searchPlaceholder": "Ad, image, sahip veya namespace ile ara...",
+    "description": "Servis kataloğunu yönet, varsayılan image ve deployment ayarlarını tanımla.",
+    "newApplication": "Yeni uygulama",
+    "searchPlaceholder": "Ad, image repository, sahip veya repository ile ara...",
     "statusFilter": "Sağlık filtresi",
-    "emptyTitle": "Filtrelerle eşleşen uygulama yok",
-    "emptyDescription": "Filtreleri temizle veya workspace'e yeni bir uygulama kaydet.",
+    "emptyTitle": "Henüz uygulama kaydı yok.",
+    "emptyDescription": "Deploymentları daha hızlı ve tutarlı başlatmak için bir servis tanımı kaydet.",
+    "emptyNoResultsTitle": "Aramayla eşleşen uygulama yok",
+    "emptyNoResultsDescription": "Aramayı temizle veya yeni bir uygulama kaydet.",
     "table": {
+      "application": "Uygulama",
       "name": "Ad",
       "image": "Image",
+      "imageRepository": "Image repository",
       "environment": "Ortam",
+      "defaultEnvironment": "Varsayılan ortam",
       "owner": "Sahip",
+      "defaultPort": "Varsayılan port",
+      "repository": "Repository",
+      "updatedCreated": "Güncellendi / Oluşturuldu",
+      "updatedAt": "Güncellendi {{date}}",
+      "createdAt": "Oluşturuldu {{date}}",
       "lastDeployment": "Son Deployment",
       "health": "Sağlık",
       "actions": "İşlemler"
@@ -317,8 +327,8 @@
       "description": "Platform kataloğunda uygulama kaydı oluştur.",
       "name": "Uygulama adı",
       "image": "Container image",
-      "imageName": "Image adı",
-      "imagePlaceholder": "kaanyassibas/notes-api",
+      "imageName": "Image repository",
+      "imagePlaceholder": "ghcr.io/kaan-yassibas/notes-api",
       "environment": "Ortam",
       "defaultEnvironment": "Varsayılan ortam",
       "owner": "Sahip",
@@ -328,13 +338,20 @@
       "repositoryPlaceholder": "https://github.com/example/notes-api",
       "replicas": "Replica sayısı",
       "submit": "Uygulama oluştur",
-      "success": "Uygulama oluşturuldu."
+      "success": "Uygulama oluşturuldu.",
+      "validation": {
+        "required": "Uygulama adı ve image repository zorunludur.",
+        "port": "Container port 1 ile 65535 arasında olmalıdır.",
+        "repositoryUrl": "Repository URL geçerli bir http veya https URL olmalıdır."
+      }
     },
     "actions": {
-      "delete": "Uygulamayı sil"
+      "deploy": "Deploy et",
+      "delete": "Uygulamayı sil",
+      "deleteConfirm": "{{name}} servis kataloğundan silinsin mi? Bu işlem Kubernetes workload'larını silmez."
     },
     "detail": {
-      "subtitle": "Uygulama runtime bilgisi, release geçmişi, pod sağlığı, loglar, metrikler ve ayarlar.",
+      "subtitle": "Katalog metadatası, varsayılan runtime ayarları ve ilişkili GitOps deploymentları.",
       "currentImage": "Mevcut Image",
       "lastDeploy": "Son Deploy",
       "healthScore": "Sağlık Skoru",
@@ -342,11 +359,19 @@
       "relatedPods": "İlgili podlar",
       "runtimeMetrics": "Runtime metrikleri",
       "settingsTitle": "Uygulama ayarları",
-      "settingsDescription": "Bu servis için sahiplik, repository ve deployment varsayılanları.",
+      "settingsDescription": "Bu servis için katalog sahipliği, repository ve deployment varsayılanları.",
       "loadingDescription": "Uygulama verisi backend'den yükleniyor.",
       "previewHealth": "Runtime sağlık bağlantısına kadar türetilmiş",
       "notFoundTitle": "Uygulama bulunamadı",
-      "notFoundDescription": "Uygulama platform kataloğunda yer almıyor."
+      "notFoundDescription": "Uygulama platform kataloğunda yer almıyor.",
+      "catalogMetadata": "Katalog metadatası",
+      "catalogMetadataDescription": "Bu değerler servis tanımını açıklar. Runtime sağlığı Deployments ve Cluster sayfalarında yaşar.",
+      "defaultEnvironmentDetail": "Deployment isteklerinde varsayılan olarak kullanılır",
+      "defaultPortDetail": "GitOps workload manifestlerini doldurur",
+      "noDescription": "Açıklama girilmemiş.",
+      "noRepository": "Repository yapılandırılmamış.",
+      "deploymentsEmptyTitle": "Henüz ilişkili deployment yok",
+      "deploymentsEmptyDescription": "Bu uygulama için GitOps deployment isteği oluşturmak üzere deploy kısayolunu kullan."
     },
     "tabs": {
       "overview": "Genel Bakış",
@@ -715,6 +740,7 @@
       "applicationsLoadFailed": "Uygulamalar yüklenemedi.",
       "applicationCreateFailed": "Uygulama oluşturulamadı.",
       "applicationDeleteFailed": "Uygulama silinemedi.",
+      "applicationDeleteBlocked": "Deployment geçmişi olan uygulama silinemez.",
       "deploymentsLoadFailed": "Deploymentlar yüklenemedi.",
       "deploymentCreateFailed": "Deployment oluşturulamadı.",
       "deploymentAutomationUnavailable": "Deployment otomasyonu yapılandırılmamış. Platform yöneticisiyle iletişime geç.",
