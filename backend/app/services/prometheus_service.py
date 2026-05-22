@@ -164,7 +164,10 @@ class PrometheusService:
         if key == "request_rate":
             detail = "No request rate samples returned for this time range."
         elif key == "error_rate":
-            detail = "No 5xx error metrics. The system has not produced server errors or the app is not exposing 5xx metrics."
+            detail = (
+                "No 5xx error metrics. The system has not produced server errors or the app is "
+                "not exposing 5xx metrics."
+            )
         elif key == "pod_restarts":
             detail = (
                 last_error
@@ -172,6 +175,7 @@ class PrometheusService:
             )
         else:
             detail = last_error or "No data returned for this metric."
+
         status = "unavailable" if last_error else "empty"
         return {
             "key": key,

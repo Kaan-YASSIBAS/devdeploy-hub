@@ -55,14 +55,6 @@ GET /api/v1/observability/logs?namespace=devdeploy&limit=100
 GET /api/v1/observability/logs?namespace=devdeploy&pod=<pod-name>&limit=100
 ```
 
-Development-only metrics test endpoint:
-
-```text
-GET /api/v1/debug/error
-```
-
-This endpoint is enabled only when `ENVIRONMENT=development`. It intentionally returns HTTP 500 so local Prometheus scraping can be used to verify 5xx error-rate charts. Outside development it returns `404` and should not be used for production testing.
-
 ## Prometheus Time-Series
 
 `GET /api/v1/observability/metrics/timeseries` returns real Prometheus range-query data for CPU, memory, pod restarts, request rate, and error rate.
