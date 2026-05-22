@@ -12,6 +12,7 @@ const ApplicationsPage = lazy(() => import("@/features/applications/Applications
 const ApplicationDetailPage = lazy(() => import("@/features/applications/ApplicationDetailPage").then(({ ApplicationDetailPage }) => ({ default: ApplicationDetailPage })));
 const DeploymentsPage = lazy(() => import("@/features/deployments/DeploymentsPage").then(({ DeploymentsPage }) => ({ default: DeploymentsPage })));
 const DeploymentDetailPage = lazy(() => import("@/features/deployments/DeploymentDetailPage").then(({ DeploymentDetailPage }) => ({ default: DeploymentDetailPage })));
+const GitOpsDeploymentDetailPage = lazy(() => import("@/features/deployments/GitOpsDeploymentDetailPage").then(({ GitOpsDeploymentDetailPage }) => ({ default: GitOpsDeploymentDetailPage })));
 const ClusterPage = lazy(() => import("@/features/cluster/ClusterPage").then(({ ClusterPage }) => ({ default: ClusterPage })));
 const LogsPage = lazy(() => import("@/features/monitoring/LogsPage").then(({ LogsPage }) => ({ default: LogsPage })));
 const MonitoringPage = lazy(() => import("@/features/monitoring/MonitoringPage").then(({ MonitoringPage }) => ({ default: MonitoringPage })));
@@ -44,6 +45,7 @@ export const router = createBrowserRouter([
           { path: "/applications", element: withSuspense(<ApplicationsPage />) },
           { path: "/applications/:id", element: withSuspense(<ApplicationDetailPage />) },
           { path: "/deployments", element: withSuspense(<DeploymentsPage />) },
+          { path: "/deployments/gitops/:namespace/:name", element: withSuspense(<GitOpsDeploymentDetailPage />) },
           { path: "/deployments/:id", element: withSuspense(<DeploymentDetailPage />) },
           { path: "/cluster", element: withSuspense(<ClusterPage />) },
           { path: "/logs", element: withSuspense(<LogsPage />) },

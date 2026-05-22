@@ -2,7 +2,7 @@ export type PlatformEnvironment = "production" | "staging" | "development";
 
 export type Environment = "dev" | "staging" | "prod";
 
-export type DeploymentStatus = "pending" | "running" | "success" | "failed";
+export type DeploymentStatus = "pending" | "running" | "progressing" | "success" | "failed" | "unknown";
 
 export type DeploymentStrategy = "rolling" | "recreate";
 
@@ -113,6 +113,28 @@ export type GitOpsDeploymentResponse = {
   message: string;
   manual_workflow: string | null;
   manual_inputs: Record<string, string>;
+};
+
+export type DeploymentListSource = "gitops" | "cluster" | "legacy";
+
+export type DeploymentListItem = {
+  id: number | null;
+  gitops_request_id: number | null;
+  legacy_deployment_id: number | null;
+  application_id: number | null;
+  name: string;
+  app_name: string;
+  namespace: string;
+  image: string | null;
+  tag: string | null;
+  environment: string;
+  replicas: number;
+  available_replicas: number;
+  updated_replicas: number;
+  status: DeploymentStatus;
+  source: DeploymentListSource;
+  created_at: string | null;
+  updated_at: string | null;
 };
 
 export type DeploymentStatusUpdateInput = {
@@ -250,6 +272,11 @@ export type KubernetesDeployment = {
   ready_replicas: number;
   available_replicas: number;
   updated_replicas: number;
+  status?: DeploymentStatus;
+  image?: string | null;
+  tag?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
   labels: Record<string, string>;
 };
 

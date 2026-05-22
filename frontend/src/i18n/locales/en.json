@@ -88,8 +88,10 @@
   "status": {
     "pending": "Pending",
     "running": "Running",
+    "progressing": "Progressing",
     "success": "Success",
-    "failed": "Failed"
+    "failed": "Failed",
+    "unknown": "Unknown"
   },
   "health": {
     "healthy": "Healthy",
@@ -101,7 +103,8 @@
     "prod": "Prod",
     "production": "Production",
     "staging": "Staging",
-    "development": "Development"
+    "development": "Development",
+    "release": "Release"
   },
   "strategy": {
     "rolling": "Rolling update",
@@ -308,7 +311,17 @@
       "owner": "Owner",
       "duration": "Duration",
       "created": "Created",
+      "updated": "Updated",
+      "updatedShort": "{{count}} updated",
+      "updatedReplicas": "Updated replicas",
+      "source": "Source",
+      "requestId": "Request ID",
       "actions": "Actions"
+    },
+    "source": {
+      "gitops": "GitOps",
+      "cluster": "Live cluster",
+      "legacy": "Legacy"
     },
     "modal": {
       "title": "Create deployment",
@@ -366,6 +379,9 @@
     },
     "detail": {
       "subtitle": "Deployment execution timeline, metadata, and logs preview.",
+      "liveSubtitle": "Live Kubernetes deployment status enriched with GitOps request metadata.",
+      "liveStatus": "Live status",
+      "liveStatusDescription": "Read-only state from the Kubernetes deployment controller.",
       "metadata": "Deployment metadata",
       "logsPreview": "Logs preview",
       "rollback": "Rollback",

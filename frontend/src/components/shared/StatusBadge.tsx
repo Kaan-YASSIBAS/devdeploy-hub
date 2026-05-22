@@ -10,8 +10,10 @@ type Props =
 const variantMap = {
   pending: "warning",
   running: "info",
+  progressing: "warning",
   success: "success",
   failed: "danger",
+  unknown: "muted",
   healthy: "success",
   degraded: "warning",
   critical: "danger",

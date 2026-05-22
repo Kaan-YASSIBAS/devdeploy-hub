@@ -87,9 +87,11 @@
   },
   "status": {
     "pending": "Beklemede",
+    "progressing": "Ä°lerliyor",
     "running": "Çalışıyor",
     "success": "Başarılı",
-    "failed": "Başarısız"
+    "failed": "Başarısız",
+    "unknown": "Bilinmiyor"
   },
   "health": {
     "healthy": "Sağlıklı",
@@ -101,7 +103,8 @@
     "prod": "Prod",
     "production": "Production",
     "staging": "Staging",
-    "development": "Development"
+    "development": "Development",
+    "release": "Release"
   },
   "strategy": {
     "rolling": "Rolling update",
@@ -308,7 +311,17 @@
       "owner": "Sahip",
       "duration": "Süre",
       "created": "Oluşturulma",
+      "updated": "Güncellendi",
+      "updatedShort": "{{count}} updated",
+      "updatedReplicas": "Updated replica",
+      "source": "Kaynak",
+      "requestId": "İstek ID",
       "actions": "İşlemler"
+    },
+    "source": {
+      "gitops": "GitOps",
+      "cluster": "Canlı cluster",
+      "legacy": "Legacy"
     },
     "modal": {
       "title": "Deployment oluştur",
@@ -366,6 +379,9 @@
     },
     "detail": {
       "subtitle": "Deployment yürütme timeline'ı, metadata ve log önizlemesi.",
+      "liveSubtitle": "GitOps istek metadatası ile zenginleştirilmiş canlı Kubernetes deployment durumu.",
+      "liveStatus": "Canlı durum",
+      "liveStatusDescription": "Kubernetes deployment controller üzerinden salt okunur durum.",
       "metadata": "Deployment metadata",
       "logsPreview": "Log önizlemesi",
       "rollback": "Rollback",

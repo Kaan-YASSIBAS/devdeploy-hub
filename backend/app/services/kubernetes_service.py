@@ -158,15 +158,73 @@ class KubernetesService:
     @staticmethod
     def _serialize_deployment(deployment: client.V1Deployment) -> dict[str, Any]:
         status = deployment.status
+        desired_replicas = deployment.spec.replicas or status.replicas or 0
+        image = KubernetesService._first_container_image(deployment)
+        image_repository, image_tag = KubernetesService._split_image(image)
         return {
             "namespace": deployment.metadata.namespace,
             "name": deployment.metadata.name,
-            "replicas": status.replicas or 0,
+            "replicas": desired_replicas,
             "ready_replicas": status.ready_replicas or 0,
             "available_replicas": status.available_replicas or 0,
             "updated_replicas": status.updated_replicas or 0,
+            "status": KubernetesService._deployment_status(deployment, desired_replicas),
+            "image": image_repository,
+            "tag": image_tag,
+            "created_at": deployment.metadata.creation_timestamp,
+            "updated_at": KubernetesService._deployment_updated_at(deployment),
             "labels": deployment.metadata.labels or {},
         }
+
+    @staticmethod
+    def _first_container_image(deployment: client.V1Deployment) -> str | None:
+        containers = deployment.spec.template.spec.containers or []
+        if not containers:
+            return None
+        return containers[0].image
+
+    @staticmethod
+    def _split_image(image: str | None) -> tuple[str | None, str | None]:
+        if not image:
+            return None, None
+        if "@" in image:
+            repository, digest = image.rsplit("@", 1)
+            return repository, digest
+        last_segment = image.rsplit("/", 1)[-1]
+        if ":" not in last_segment:
+            return image, None
+        repository, tag = image.rsplit(":", 1)
+        return repository, tag
+
+    @staticmethod
+    def _deployment_status(deployment: client.V1Deployment, desired_replicas: int) -> str:
+        status = deployment.status
+        conditions = status.conditions or []
+        if any(
+            condition.type == "Progressing"
+            and condition.status == "False"
+            and condition.reason == "ProgressDeadlineExceeded"
+            for condition in conditions
+        ):
+            return "failed"
+
+        available_replicas = status.available_replicas or 0
+        updated_replicas = status.updated_replicas or 0
+        if desired_replicas > 0 and available_replicas >= desired_replicas and updated_replicas >= desired_replicas:
+            return "running"
+        if desired_replicas > 0 and (available_replicas < desired_replicas or updated_replicas < desired_replicas):
+            return "progressing"
+        return "unknown"
+
+    @staticmethod
+    def _deployment_updated_at(deployment: client.V1Deployment) -> Any:
+        conditions = deployment.status.conditions or []
+        timestamps = [
+            condition.last_update_time
+            for condition in conditions
+            if condition.last_update_time is not None
+        ]
+        return max(timestamps) if timestamps else None
 
     @staticmethod
     def _serialize_service(service: client.V1Service) -> dict[str, Any]:

@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 GitOpsDeploymentStatus = Literal["pending", "pending_manual_trigger", "workflow_triggered", "pr_opened", "failed"]
+DeploymentListStatus = Literal["pending", "running", "progressing", "success", "failed", "unknown"]
+DeploymentListSource = Literal["gitops", "cluster", "legacy"]
 TAG_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 INGRESS_HOST_PATTERN = re.compile(r"^[a-z0-9]([-.a-z0-9]*[a-z0-9])?$")
 
@@ -75,3 +77,23 @@ class GitOpsDeploymentResponse(BaseModel):
     message: str
     manual_workflow: str | None = None
     manual_inputs: dict[str, str] = Field(default_factory=dict)
+
+
+class DeploymentListItem(BaseModel):
+    id: int | None = None
+    gitops_request_id: int | None = None
+    legacy_deployment_id: int | None = None
+    application_id: int | None = None
+    name: str
+    app_name: str
+    namespace: str
+    image: str | None = None
+    tag: str | None = None
+    environment: str
+    replicas: int
+    available_replicas: int
+    updated_replicas: int
+    status: DeploymentListStatus
+    source: DeploymentListSource
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
