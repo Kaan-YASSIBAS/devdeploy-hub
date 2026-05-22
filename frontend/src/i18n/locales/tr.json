@@ -566,18 +566,39 @@
     "title": "Monitoring",
     "description": "Kaynak kullanımı, trafik, hatalar ve pod restartları için Grafana tarzı operasyonel görünüm.",
     "timeRange": "Zaman aralığı",
+    "autoRefresh": "Otomatik yenileme",
+    "autoRefreshStatus": "Otomatik yenileme: {{interval}}",
+    "lastRefreshed": "Son yenileme {{time}}",
+    "notRefreshedYet": "Henüz yenilenmedi",
     "ranges": {
-      "oneHour": "1s",
-      "sixHours": "6s",
-      "twentyFourHours": "24s",
-      "sevenDays": "7g"
+      "fiveMinutes": "Son 5 dk",
+      "fifteenMinutes": "Son 15 dk",
+      "oneHour": "Son 1 saat",
+      "sixHours": "Son 6 saat",
+      "twentyFourHours": "Son 24 saat",
+      "sevenDays": "Son 7 gün"
+    },
+    "refreshIntervals": {
+      "off": "Kapalı",
+      "oneSecond": "1 sn",
+      "fiveSeconds": "5 sn",
+      "tenSeconds": "10 sn",
+      "thirtySeconds": "30 sn"
     },
     "charts": {
       "cpu": "Zamana göre CPU kullanımı",
       "memory": "Zamana göre memory kullanımı",
       "requests": "Request rate",
       "errors": "Error rate",
-      "restarts": "Pod restartları"
+      "restarts": "Pod restartları",
+      "realTimeSeries": "Prometheus range query"
+    },
+    "units": {
+      "cores": "CPU core",
+      "mebibytes": "MiB",
+      "requestsPerSecond": "request/s",
+      "errorsPerSecond": "hata/s",
+      "count": "adet"
     },
     "metrics": {
       "clusterScope": "Cluster geneli",
@@ -587,8 +608,16 @@
       "restartCount": "Restart sayısı",
       "availableReplicas": "Available replica"
     },
-    "previewTitle": "Önizleme time-series grafikleri",
-    "previewDescription": "Backend range query bağlantısı eklenene kadar grafikler demo veride kalır.",
+    "timeseriesTitle": "Canlı Prometheus time-series",
+    "timeseriesDescription": "{{namespace}} namespace'i için range verisi. Eksik counterlar simüle edilmez, boş gösterilir.",
+    "prometheusUnavailable": "Prometheus kullanılamıyor. Metrikler yüklenemiyor.",
+    "empty": {
+      "title": "Metrik verisi yok",
+      "loading": "Metrik noktaları Prometheus üzerinden yükleniyor.",
+      "noData": "Bu zaman aralığı için metrik verisi yok.",
+      "metricUnavailable": "Bu Prometheus sorgusu şu anda kullanılamıyor.",
+      "requestMetrics": "Uygulama henüz request metrikleri yayınlamıyor."
+    },
     "unavailableTitle": "Monitoring verisi kullanılamıyor"
   },
   "settings": {

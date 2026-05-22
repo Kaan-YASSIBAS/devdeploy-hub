@@ -566,18 +566,39 @@
     "title": "Monitoring",
     "description": "Grafana-style operational views for resource use, traffic, errors, and pod restarts.",
     "timeRange": "Time range",
+    "autoRefresh": "Auto-refresh",
+    "autoRefreshStatus": "Auto-refresh: {{interval}}",
+    "lastRefreshed": "Last refreshed at {{time}}",
+    "notRefreshedYet": "Not refreshed yet",
     "ranges": {
-      "oneHour": "1h",
-      "sixHours": "6h",
-      "twentyFourHours": "24h",
-      "sevenDays": "7d"
+      "fiveMinutes": "Last 5 min",
+      "fifteenMinutes": "Last 15 min",
+      "oneHour": "Last 1 hour",
+      "sixHours": "Last 6 hours",
+      "twentyFourHours": "Last 24 hours",
+      "sevenDays": "Last 7 days"
+    },
+    "refreshIntervals": {
+      "off": "Off",
+      "oneSecond": "1 sec",
+      "fiveSeconds": "5 sec",
+      "tenSeconds": "10 sec",
+      "thirtySeconds": "30 sec"
     },
     "charts": {
       "cpu": "CPU usage over time",
       "memory": "Memory usage over time",
       "requests": "Request rate",
       "errors": "Error rate",
-      "restarts": "Pod restarts"
+      "restarts": "Pod restarts",
+      "realTimeSeries": "Prometheus range query"
+    },
+    "units": {
+      "cores": "CPU cores",
+      "mebibytes": "MiB",
+      "requestsPerSecond": "requests/s",
+      "errorsPerSecond": "errors/s",
+      "count": "count"
     },
     "metrics": {
       "clusterScope": "Cluster-wide",
@@ -587,8 +608,16 @@
       "restartCount": "Restart count",
       "availableReplicas": "Available replicas"
     },
-    "previewTitle": "Preview time-series charts",
-    "previewDescription": "Charts stay on demo data until backend range queries are connected.",
+    "timeseriesTitle": "Live Prometheus time-series",
+    "timeseriesDescription": "Range data for the {{namespace}} namespace. Missing counters are shown as empty instead of simulated.",
+    "prometheusUnavailable": "Prometheus is unavailable. Metrics cannot be loaded.",
+    "empty": {
+      "title": "No metric data",
+      "loading": "Loading metric points from Prometheus.",
+      "noData": "No metric data available for this time range.",
+      "metricUnavailable": "This Prometheus query is currently unavailable.",
+      "requestMetrics": "Request metrics are not exposed by the application yet."
+    },
     "unavailableTitle": "Monitoring data unavailable"
   },
   "settings": {

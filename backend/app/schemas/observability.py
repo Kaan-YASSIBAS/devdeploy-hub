@@ -76,6 +76,28 @@ class MetricsSummary(BaseModel):
     deployment_available_replicas: float
 
 
+class MetricSeriesPoint(BaseModel):
+    timestamp: datetime
+    value: float
+
+
+class MetricSeries(BaseModel):
+    key: str
+    name: str
+    unit: str
+    status: str = "ok"
+    detail: str | None = None
+    points: list[MetricSeriesPoint] = Field(default_factory=list)
+
+
+class MetricsTimeSeriesResponse(BaseModel):
+    namespace: str
+    range: str
+    step: str
+    prometheus_available: bool = True
+    series: list[MetricSeries] = Field(default_factory=list)
+
+
 class LogEntry(BaseModel):
     timestamp: str
     line: str

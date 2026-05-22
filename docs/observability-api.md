@@ -42,9 +42,36 @@ GET /api/v1/observability/kubernetes/deployments?namespace=devdeploy
 GET /api/v1/observability/kubernetes/services?namespace=devdeploy
 GET /api/v1/observability/metrics/cluster
 GET /api/v1/observability/metrics/namespaces/devdeploy
+GET /api/v1/observability/metrics/timeseries?namespace=devdeploy&range=15m
 GET /api/v1/observability/logs?namespace=devdeploy&limit=100
 GET /api/v1/observability/logs?namespace=devdeploy&pod=<pod-name>&limit=100
 ```
+
+## Prometheus Time-Series
+
+`GET /api/v1/observability/metrics/timeseries` returns real Prometheus range-query data for CPU, memory, pod restarts, request rate, and error rate.
+
+Supported query parameters:
+
+```text
+namespace=devdeploy
+range=5m | 15m | 1h | 6h | 24h | 7d
+step=15s | 30s | 1m | 5m | 15m | 1h
+metric=cpu_usage | memory_working_set | pod_restarts | request_rate | error_rate
+```
+
+When `step` is omitted, the backend chooses a Prometheus step from the selected range:
+
+```text
+5m  -> 15s
+15m -> 30s
+1h  -> 1m
+6h  -> 5m
+24h -> 15m
+7d  -> 1h
+```
+
+If Prometheus is unreachable, the endpoint returns `503`. If Prometheus is reachable but a metric has no samples, that series is returned with `status: "empty"` and an empty `points` list. Request and error rate charts may be empty until application or ingress HTTP counters are exposed.
 
 ## Kubernetes RBAC
 
