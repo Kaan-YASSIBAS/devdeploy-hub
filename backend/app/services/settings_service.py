@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 import hashlib
 import secrets
+from collections.abc import Callable
+from typing import Literal
 
 import httpx
 from kubernetes.client import ApiException
@@ -95,11 +97,27 @@ class SettingsService:
     @staticmethod
     def list_integrations() -> list[IntegrationStatusResponse]:
         return [
-            self._github_status(),
-            self._argocd_status(),
-            self._kubernetes_status(),
-            self._grafana_status(),
+            SettingsService._safe_integration_status("github", "GitHub", SettingsService._github_status),
+            SettingsService._safe_integration_status("argocd", "Argo CD", SettingsService._argocd_status),
+            SettingsService._safe_integration_status("kubernetes", "Kubernetes", SettingsService._kubernetes_status),
+            SettingsService._safe_integration_status("grafana", "Grafana", SettingsService._grafana_status),
         ]
+
+    @staticmethod
+    def _safe_integration_status(
+        key: Literal["github", "argocd", "kubernetes", "grafana"],
+        name: str,
+        check: Callable[[], IntegrationStatusResponse],
+    ) -> IntegrationStatusResponse:
+        try:
+            return check()
+        except Exception as exc:
+            return IntegrationStatusResponse(
+                key=key,
+                name=name,
+                status="error",
+                detail=f"{name} integration check failed: {exc.__class__.__name__}",
+            )
 
     @staticmethod
     def _display_name(user: User) -> str:
