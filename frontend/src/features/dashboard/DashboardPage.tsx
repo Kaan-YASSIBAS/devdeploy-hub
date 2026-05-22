@@ -3,12 +3,13 @@ import {
   Activity,
   Boxes,
   CheckCircle2,
-  CircleDashed,
   ClipboardList,
   Gauge,
+  Info,
   Loader2,
   RefreshCw,
   Rocket,
+  Timer,
   TriangleAlert
 } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -42,7 +43,6 @@ import type {
   DashboardClusterHealthItem,
   DashboardClusterHealthStatus,
   DashboardTimelineEvent,
-  DashboardTimelineEventStatus,
   DeploymentListItem
 } from "@/types";
 
@@ -104,16 +104,24 @@ function clusterHealthVariant(status: DashboardClusterHealthStatus) {
   return "muted";
 }
 
-function timelineIcon(status: DashboardTimelineEventStatus) {
-  if (status === "complete") {
+function timelineIcon(event: DashboardTimelineEvent) {
+  if (event.status === "failed") {
+    return TriangleAlert;
+  }
+
+  if (event.status === "pending") {
+    return Timer;
+  }
+
+  if (event.event_type === "deployment_updated") {
+    return RefreshCw;
+  }
+
+  if (event.event_type === "deployment_healthy") {
     return CheckCircle2;
   }
 
-  if (status === "current") {
-    return Loader2;
-  }
-
-  return CircleDashed;
+  return Info;
 }
 
 function DashboardTimeline({ events }: { events: DashboardTimelineEvent[] }) {
@@ -134,7 +142,7 @@ function DashboardTimeline({ events }: { events: DashboardTimelineEvent[] }) {
     <div className="space-y-4">
       {events.map((event, index) => {
         const isLast = index === events.length - 1;
-        const Icon = timelineIcon(event.status);
+        const Icon = timelineIcon(event);
         return (
           <div key={event.id} className="relative flex gap-4">
             {!isLast ? <div className="absolute left-4 top-8 h-full w-px bg-white/10" /> : null}
@@ -147,7 +155,7 @@ function DashboardTimeline({ events }: { events: DashboardTimelineEvent[] }) {
                 event.status === "pending" && "border-white/10 text-slate-500"
               )}
             >
-              <Icon className={cn("h-4 w-4", event.status === "current" && "animate-spin")} />
+              <Icon className="h-4 w-4" />
             </div>
             <div className="min-w-0 flex-1 pb-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -158,6 +166,11 @@ function DashboardTimeline({ events }: { events: DashboardTimelineEvent[] }) {
                 </p>
                 <span className="text-xs text-slate-500">{formatDate(event.timestamp)}</span>
               </div>
+              {event.status === "current" ? (
+                <Badge className="mt-2" variant="info">
+                  {t("dashboard.timelineInProgress")}
+                </Badge>
+              ) : null}
               <p className="mt-1 text-sm leading-6 text-slate-400">
                 {t(`dashboard.timelineEvents.${event.event_type}.description`, {
                   namespace: event.namespace,

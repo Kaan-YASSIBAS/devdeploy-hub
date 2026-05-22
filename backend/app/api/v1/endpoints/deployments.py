@@ -5,7 +5,12 @@ from app.core.deps import get_current_user, get_db, require_admin
 from app.models.deployment import Deployment
 from app.models.user import User
 from app.schemas.deployment import DeploymentCreate, DeploymentRead, DeploymentStatusUpdate
-from app.schemas.gitops_deployment import DeploymentListItem, GitOpsDeploymentCreate, GitOpsDeploymentResponse
+from app.schemas.gitops_deployment import (
+    DeploymentListItem,
+    GitOpsDeploymentCreate,
+    GitOpsDeploymentDeleteResponse,
+    GitOpsDeploymentResponse,
+)
 from app.services.deployment_service import DeploymentService
 from app.services.gitops_deployment_service import GitOpsDeploymentService
 
@@ -55,6 +60,16 @@ def get_gitops_deployment(
     current_user: User = Depends(get_current_user),
 ) -> DeploymentListItem:
     return GitOpsDeploymentService(db).get_deployment(namespace, name, current_user)
+
+
+@router.delete("/gitops/{namespace}/{name}", response_model=GitOpsDeploymentDeleteResponse)
+def delete_gitops_deployment(
+    namespace: str,
+    name: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GitOpsDeploymentDeleteResponse:
+    return GitOpsDeploymentService(db).delete(namespace, name, current_user)
 
 
 @router.get("/{deployment_id}", response_model=DeploymentRead)

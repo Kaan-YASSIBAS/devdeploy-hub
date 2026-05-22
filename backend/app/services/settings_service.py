@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-import hashlib
 import secrets
 from collections.abc import Callable
 from typing import Literal
@@ -9,6 +8,7 @@ from kubernetes.client import ApiException
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.security import hash_api_token
 from app.models.settings import ApiToken, WorkspaceSettings
 from app.models.user import User
 from app.schemas.settings import (
@@ -75,7 +75,7 @@ class SettingsService:
         token = ApiToken(
             user_id=user.id,
             name=name.strip(),
-            token_hash=self._hash_token(raw_token),
+            token_hash=hash_api_token(raw_token),
             prefix=raw_token[:16],
             last_four=raw_token[-4:],
         )
@@ -85,14 +85,25 @@ class SettingsService:
         return raw_token, self._token_response(token)
 
     def revoke_api_token(self, token_id: int, user: User) -> None:
+        token = self._get_api_token_for_user(token_id, user)
+        if token is None:
+            return
+        if token.revoked_at is None:
+            token.revoked_at = datetime.now(timezone.utc)
+        self.db.commit()
+
+    def delete_api_token(self, token_id: int, user: User) -> None:
+        token = self._get_api_token_for_user(token_id, user)
+        if token is None:
+            return
+        self.db.delete(token)
+        self.db.commit()
+
+    def _get_api_token_for_user(self, token_id: int, user: User) -> ApiToken | None:
         query = self.db.query(ApiToken).filter(ApiToken.id == token_id)
         if user.role != "admin":
             query = query.filter(ApiToken.user_id == user.id)
-        token = query.first()
-        if token is None:
-            return
-        token.revoked_at = datetime.now(timezone.utc)
-        self.db.commit()
+        return query.first()
 
     @staticmethod
     def list_integrations() -> list[IntegrationStatusResponse]:
@@ -125,10 +136,6 @@ class SettingsService:
             return user.display_name
         local_part = user.email.split("@", 1)[0]
         return user.username or local_part
-
-    @staticmethod
-    def _hash_token(raw_token: str) -> str:
-        return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _token_response(token: ApiToken) -> ApiTokenResponse:

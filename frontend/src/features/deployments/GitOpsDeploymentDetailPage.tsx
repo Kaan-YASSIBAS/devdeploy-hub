@@ -1,8 +1,9 @@
-import { RotateCcw } from "lucide-react";
+import { RotateCcw, Trash2 } from "lucide-react";
 import { useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
-import { deploymentsApi, getApiErrorStatus } from "@/api/client";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { deploymentsApi, getApiErrorMessage, getApiErrorStatus } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,8 +25,11 @@ function formatDate(value: string | null) {
 }
 
 function sourceVariant(deployment: DeploymentListItem) {
-  if (deployment.source === "gitops" && deployment.status === "stale") {
+  if (deployment.source === "gitops" && (deployment.status === "stale" || deployment.status === "deleted")) {
     return "muted";
+  }
+  if (deployment.source === "gitops" && deployment.status === "deletion_requested") {
+    return "warning";
   }
   if (deployment.source === "gitops" && deployment.status === "failed" && !deployment.is_live) {
     return "danger";
@@ -71,6 +75,7 @@ function getErrorKey(status?: number) {
 export function GitOpsDeploymentDetailPage() {
   const { namespace = "", name = "" } = useParams();
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
 
   const deploymentQuery = useQuery({
     queryKey: ["deployments", "gitops", namespace, name],
@@ -78,6 +83,26 @@ export function GitOpsDeploymentDetailPage() {
     enabled: Boolean(namespace && name)
   });
   const deployment = deploymentQuery.data;
+  const deleteMutation = useMutation({
+    mutationFn: (item: DeploymentListItem) => deploymentsApi.deleteGitOps(item.namespace, item.name),
+    onSuccess: async (response) => {
+      if (response.workflow_triggered) {
+        toast.success(t("deployments.gitops.delete.startedToast"));
+      } else {
+        toast.error(t("api.errors.deploymentAutomationUnavailable"));
+      }
+      await queryClient.invalidateQueries({ queryKey: ["deployments"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      await deploymentQuery.refetch();
+    },
+    onError: (error) => {
+      if (getApiErrorStatus(error) === 503) {
+        toast.error(t("api.errors.deploymentAutomationUnavailable"));
+        return;
+      }
+      toast.error(getApiErrorMessage(error) || t("api.errors.deploymentDeleteFailed"));
+    }
+  });
 
   if (deploymentQuery.isLoading) {
     return <EmptyState description={t("deployments.detail.loadingDescription")} title={t("common.loading")} />;
@@ -93,15 +118,27 @@ export function GitOpsDeploymentDetailPage() {
   }
 
   const image = deployment.image ? `${deployment.image}${deployment.tag ? `:${deployment.tag}` : ""}` : "-";
+  const canDelete = deployment.source !== "legacy" && deployment.status !== "deletion_requested" && deployment.status !== "deleted";
+  const confirmDelete = () => {
+    if (window.confirm(t("deployments.gitops.delete.confirm", { name: deployment.name }))) {
+      deleteMutation.mutate(deployment);
+    }
+  };
 
   return (
     <div>
       <PageHeader
         actions={
-          <Button disabled variant="outline">
-            <RotateCcw className="h-4 w-4" />
-            {t("deployments.detail.rollback")}
-          </Button>
+          <div className="flex flex-wrap gap-3">
+            <Button disabled variant="outline">
+              <RotateCcw className="h-4 w-4" />
+              {t("deployments.detail.rollback")}
+            </Button>
+            <Button disabled={!canDelete || deleteMutation.isPending} variant="danger" onClick={confirmDelete}>
+              <Trash2 className="h-4 w-4" />
+              {t("deployments.gitops.delete.action")}
+            </Button>
+          </div>
         }
         description={t("deployments.detail.liveSubtitle")}
         title={deployment.name}

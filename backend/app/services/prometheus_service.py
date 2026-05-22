@@ -164,7 +164,7 @@ class PrometheusService:
         if key == "request_rate":
             detail = "No request rate samples returned for this time range."
         elif key == "error_rate":
-            detail = "No 5xx request samples returned for this time range."
+            detail = "No 5xx error metrics. The system has not produced server errors or the app is not exposing 5xx metrics."
         elif key == "pod_restarts":
             detail = (
                 last_error
@@ -231,6 +231,7 @@ class PrometheusService:
         backend_job_selector = 'job=~".*devdeploy-backend.*"'
         ingress_namespace_selector = f'exported_namespace="{namespace}"'
         error_status_selector = 'status=~"5..|5xx"'
+        error_status_code_selector = 'status_code=~"5..|5xx"'
         return {
             "cpu_usage": {
                 "name": "CPU usage",
@@ -279,9 +280,18 @@ class PrometheusService:
                         f"sum(rate(http_requests_total{{{backend_service_selector},{error_status_selector}}}[5m]))",
                         f"sum(rate(http_requests_total{{{backend_job_selector},{error_status_selector}}}[5m]))",
                         f"sum(rate(http_requests_total{{{error_status_selector}}}[5m]))",
+                        f"sum(rate(http_requests_total{{{namespace_selector},{error_status_code_selector}}}[5m]))",
+                        f"sum(rate(http_requests_total{{{backend_service_selector},{error_status_code_selector}}}[5m]))",
+                        f"sum(rate(http_requests_total{{{backend_job_selector},{error_status_code_selector}}}[5m]))",
+                        f"sum(rate(http_requests_total{{{error_status_code_selector}}}[5m]))",
                         f"sum(rate(http_request_duration_seconds_count{{{namespace_selector},{error_status_selector}}}[5m]))",
                         f"sum(rate(http_request_duration_seconds_count{{{backend_service_selector},{error_status_selector}}}[5m]))",
                         f"sum(rate(http_request_duration_seconds_count{{{backend_job_selector},{error_status_selector}}}[5m]))",
+                        f"sum(rate(http_request_duration_seconds_count{{{error_status_selector}}}[5m]))",
+                        f"sum(rate(http_request_duration_seconds_count{{{namespace_selector},{error_status_code_selector}}}[5m]))",
+                        f"sum(rate(http_request_duration_seconds_count{{{backend_service_selector},{error_status_code_selector}}}[5m]))",
+                        f"sum(rate(http_request_duration_seconds_count{{{backend_job_selector},{error_status_code_selector}}}[5m]))",
+                        f"sum(rate(http_request_duration_seconds_count{{{error_status_code_selector}}}[5m]))",
                         f"sum(rate(nginx_ingress_controller_requests{{{ingress_namespace_selector},{error_status_selector}}}[5m]))",
                     ]
                 ),

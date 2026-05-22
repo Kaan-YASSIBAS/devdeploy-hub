@@ -5,12 +5,14 @@ from fastapi import HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.application import Application
 from app.models.deployment import Deployment
 from app.models.gitops_deployment_request import GitOpsDeploymentRequest
 from app.models.user import User
 from app.repositories.application_repository import ApplicationRepository
 from app.schemas.application import ApplicationCreate, ApplicationUpdate
+from app.services.gitops_deployment_service import DEFAULT_WORKLOAD_NAMESPACE, GitOpsDeploymentService
 
 
 def slugify(value: str) -> str:
@@ -79,13 +81,32 @@ class ApplicationService:
         gitops_request_count = (
             self.db.query(func.count(GitOpsDeploymentRequest.id))
             .filter(GitOpsDeploymentRequest.application_id == application.id)
+            .filter(GitOpsDeploymentRequest.status.notin_(["failed", "stale", "deleted"]))
             .scalar()
             or 0
         )
-        if legacy_deployment_count or gitops_request_count:
+        live_deployments = GitOpsDeploymentService._list_live_deployments({DEFAULT_WORKLOAD_NAMESPACE})
+        if live_deployments is None:
+            if settings.kubernetes_in_cluster:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Live deployments could not be verified. Try again after Kubernetes observability is available.",
+                )
+            live_deployments = []
+        live_deployment_names = {application.slug, application.name}
+        live_deployment = next(
+            (
+                deployment
+                for deployment in live_deployments
+                if deployment["name"] in live_deployment_names
+            ),
+            None,
+        )
+
+        if legacy_deployment_count or gitops_request_count or live_deployment is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Application has deployment history and cannot be deleted.",
+                detail="Service has related deployments. Delete related deployments through GitOps before deleting the catalog record.",
             )
         self.applications.delete(application)
         self.db.commit()

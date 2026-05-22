@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Plus, RefreshCw, Rocket } from "lucide-react";
+import { Plus, RefreshCw, Rocket, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -16,7 +16,7 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import type { DeploymentListItem, GitOpsDeploymentCreateInput, GitOpsDeploymentResponse, DeploymentStatus } from "@/types";
 
-const statuses: DeploymentStatus[] = ["pending", "running", "progressing", "success", "failed", "stale", "unknown"];
+const statuses: DeploymentStatus[] = ["pending", "running", "progressing", "success", "failed", "stale", "deletion_requested", "deleted", "unknown"];
 
 function formatDate(value: string | null) {
   if (!value) {
@@ -45,8 +45,11 @@ function imageLabel(deployment: DeploymentListItem) {
 }
 
 function sourceVariant(deployment: DeploymentListItem) {
-  if (deployment.source === "gitops" && deployment.status === "stale") {
+  if (deployment.source === "gitops" && (deployment.status === "stale" || deployment.status === "deleted")) {
     return "muted";
+  }
+  if (deployment.source === "gitops" && deployment.status === "deletion_requested") {
+    return "warning";
   }
   if (deployment.source === "gitops" && deployment.status === "failed" && !deployment.is_live) {
     return "danger";
@@ -135,6 +138,33 @@ export function DeploymentsPage() {
     }
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: (deployment: DeploymentListItem) => deploymentsApi.deleteGitOps(deployment.namespace, deployment.name),
+    onSuccess: async (response) => {
+      if (response.workflow_triggered) {
+        toast.success(t("deployments.gitops.delete.startedToast"));
+      } else {
+        toast.error(t("api.errors.deploymentAutomationUnavailable"));
+      }
+      await queryClient.invalidateQueries({ queryKey: ["deployments"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      await queryClient.invalidateQueries({ queryKey: ["user-summary"] });
+    },
+    onError: (error) => {
+      if (getApiErrorStatus(error) === 503) {
+        toast.error(t("api.errors.deploymentAutomationUnavailable"));
+        return;
+      }
+      toast.error(getApiErrorMessage(error) || t("api.errors.deploymentDeleteFailed"));
+    }
+  });
+
+  const confirmDelete = (deployment: DeploymentListItem) => {
+    if (window.confirm(t("deployments.gitops.delete.confirm", { name: deployment.name }))) {
+      deleteMutation.mutate(deployment);
+    }
+  };
+
   const filteredDeployments = useMemo(
     () =>
       deployments.filter((deployment) => {
@@ -193,9 +223,22 @@ export function DeploymentsPage() {
             ? `/deployments/${deployment.legacy_deployment_id}`
             : `/deployments/gitops/${deployment.namespace}/${deployment.name}`;
         return (
-          <Button asChild size="sm" variant="ghost">
-            <Link to={href}>{t("common.viewDetails")}</Link>
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button asChild size="sm" variant="ghost">
+              <Link to={href}>{t("common.viewDetails")}</Link>
+            </Button>
+            {deployment.source !== "legacy" ? (
+              <Button
+                aria-label={t("deployments.gitops.delete.action")}
+                disabled={deleteMutation.isPending || deployment.status === "deletion_requested" || deployment.status === "deleted"}
+                size="icon"
+                variant="danger"
+                onClick={() => confirmDelete(deployment)}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            ) : null}
+          </div>
         );
       }
     }

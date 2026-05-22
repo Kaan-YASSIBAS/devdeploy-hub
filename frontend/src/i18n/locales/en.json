@@ -13,8 +13,8 @@
     "actions": "Actions",
     "active": "Active",
     "all": "All",
-    "application": "Application",
-    "applications": "Applications",
+    "application": "Service",
+    "applications": "Services",
     "apply": "Apply",
     "cancel": "Cancel",
     "clear": "Clear",
@@ -70,7 +70,7 @@
     "platform": "Platform",
     "operations": "Operations",
     "dashboard": "Dashboard",
-    "applications": "Applications",
+    "applications": "Services",
     "deployments": "Deployments",
     "cluster": "Cluster",
     "logs": "Logs",
@@ -78,7 +78,7 @@
     "settings": "Settings"
   },
   "topbar": {
-    "searchPlaceholder": "Search apps, deployments, pods...",
+    "searchPlaceholder": "Search services, deployments, pods...",
     "environmentLabel": "Environment",
     "commandCenter": "Command center",
     "notifications": "Notifications",
@@ -92,6 +92,8 @@
     "success": "Success",
     "failed": "Failed",
     "stale": "Stale",
+    "deletion_requested": "Deletion requested",
+    "deleted": "Deleted",
     "unknown": "Unknown"
   },
   "health": {
@@ -117,7 +119,7 @@
   "landing": {
     "eyebrow": "Self-service DevOps platform",
     "headline": "Deploy faster. Observe smarter. Control Kubernetes with confidence.",
-    "subheadline": "DevDeploy Hub gives engineering teams a polished command layer for registering applications, triggering Kubernetes deployments, inspecting pod health, viewing logs, and watching the metrics that matter.",
+    "subheadline": "DevDeploy Hub gives engineering teams a polished command layer for registering services, triggering Kubernetes deployments, inspecting pod health, viewing logs, and watching the metrics that matter.",
     "openDashboard": "Open Dashboard",
     "createAccount": "Create Account",
     "previewTitle": "Production deploy control plane",
@@ -186,9 +188,9 @@
   },
   "dashboard": {
     "title": "Operations dashboard",
-    "description": "A live executive view of applications, deployments, pods, and cluster pressure.",
+    "description": "A live executive view of services, deployments, pods, and cluster pressure.",
     "stats": {
-      "totalApps": "Total Apps",
+      "totalApps": "Total Services",
       "totalDeployments": "Total Deployments",
       "activeDeployments": "Active Deployments",
       "pendingDeployments": "Pending",
@@ -198,7 +200,7 @@
       "failedDeployments": "Failed Deployments",
       "clusterHealth": "Cluster Health",
       "details": {
-        "totalApps": "Across all tracked namespaces",
+        "totalApps": "Registered service definitions",
         "totalDeployments": "All deployment requests",
         "activeDeployments": "Currently pending or running",
         "pendingDeployments": "Waiting in the queue",
@@ -221,6 +223,7 @@
     },
     "recentDeployments": "Recent deployments",
     "timeline": "Deployment timeline",
+    "timelineInProgress": "In progress",
     "clusterStatus": "Cluster status",
     "timelineEmptyTitle": "No deployment events yet",
     "timelineEmptyDescription": "Real deployment events will appear after GitOps requests or live Kubernetes updates are observed.",
@@ -283,7 +286,7 @@
     "quickActions": "Quick actions",
     "quickActionsDescription": "Common platform tasks for the current environment.",
     "actions": {
-      "registerApplication": "Register application",
+      "registerApplication": "Register service",
       "createDeployment": "Create deployment",
       "viewLogs": "View logs",
       "openMonitoring": "Open monitoring"
@@ -296,17 +299,17 @@
     }
   },
   "applications": {
-    "title": "Applications",
+    "title": "Services",
     "description": "Manage the service catalog and define default image/deployment settings.",
-    "newApplication": "New application",
+    "newApplication": "New service",
     "searchPlaceholder": "Search by name, image repository, owner, or repository...",
     "statusFilter": "Health filter",
-    "emptyTitle": "No applications registered yet.",
+    "emptyTitle": "No services registered yet.",
     "emptyDescription": "Register a service definition to make deployments faster and more consistent.",
-    "emptyNoResultsTitle": "No applications match your search",
-    "emptyNoResultsDescription": "Clear the search or register a new application.",
+    "emptyNoResultsTitle": "No services match your search",
+    "emptyNoResultsDescription": "Clear the search or register a new service.",
     "table": {
-      "application": "Application",
+      "application": "Service",
       "name": "Name",
       "image": "Image",
       "imageRepository": "Image repository",
@@ -323,9 +326,9 @@
       "actions": "Actions"
     },
     "modal": {
-      "title": "Register application",
-      "description": "Create an application record in the platform catalog.",
-      "name": "Application name",
+      "title": "Register service",
+      "description": "Create a service definition in the platform catalog.",
+      "name": "Service name",
       "image": "Container image",
       "imageName": "Image repository",
       "imagePlaceholder": "ghcr.io/kaan-yassibas/notes-api",
@@ -337,18 +340,18 @@
       "descriptionPlaceholder": "FastAPI notes service",
       "repositoryPlaceholder": "https://github.com/example/notes-api",
       "replicas": "Replica count",
-      "submit": "Create application",
-      "success": "Application created.",
+      "submit": "Create service",
+      "success": "Service created.",
       "validation": {
-        "required": "Application name and image repository are required.",
+        "required": "Service name and image repository are required.",
         "port": "Container port must be between 1 and 65535.",
         "repositoryUrl": "Repository URL must be a valid http or https URL."
       }
     },
     "actions": {
       "deploy": "Deploy",
-      "delete": "Delete application",
-      "deleteConfirm": "Delete {{name}} from the service catalog? This does not delete Kubernetes workloads."
+      "delete": "Delete service",
+      "deleteConfirm": "Delete {{name}} from the service catalog? If related deployments exist, delete them through GitOps first."
     },
     "detail": {
       "subtitle": "Catalog metadata, default runtime settings, and related GitOps deployments.",
@@ -358,12 +361,12 @@
       "deploymentHistory": "Deployment history",
       "relatedPods": "Related pods",
       "runtimeMetrics": "Runtime metrics",
-      "settingsTitle": "Application settings",
+      "settingsTitle": "Service settings",
       "settingsDescription": "Catalog ownership, repository, and deployment defaults for this service.",
-      "loadingDescription": "Loading application data from the backend.",
+      "loadingDescription": "Loading service data from the backend.",
       "previewHealth": "Derived until runtime health is connected",
-      "notFoundTitle": "Application not found",
-      "notFoundDescription": "The application does not exist in the platform catalog.",
+      "notFoundTitle": "Service not found",
+      "notFoundDescription": "The service does not exist in the platform catalog.",
       "catalogMetadata": "Catalog metadata",
       "catalogMetadataDescription": "These values describe the service definition. Runtime health lives in Deployments and Cluster.",
       "defaultEnvironmentDetail": "Used when creating deployment requests",
@@ -371,7 +374,7 @@
       "noDescription": "No description provided.",
       "noRepository": "No repository configured.",
       "deploymentsEmptyTitle": "No related deployments yet",
-      "deploymentsEmptyDescription": "Use the deploy shortcut to create a GitOps deployment request for this application."
+      "deploymentsEmptyDescription": "Use the deploy shortcut to create a GitOps deployment request for this service."
     },
     "tabs": {
       "overview": "Overview",
@@ -389,11 +392,11 @@
     "filters": {
       "environment": "Environment",
       "status": "Status",
-      "application": "Application"
+      "application": "Service"
     },
     "table": {
       "deployment": "Deployment",
-      "application": "Application",
+      "application": "Service",
       "imageTag": "Image Tag",
       "environment": "Environment",
       "status": "Status",
@@ -418,8 +421,8 @@
     },
     "modal": {
       "title": "Create deployment",
-      "description": "Create a deployment request for the selected application.",
-      "application": "Application",
+      "description": "Create a deployment request for the selected service.",
+      "application": "Service",
       "environment": "Environment",
       "imageTag": "Image tag",
       "imageTagPlaceholder": "v1.0.0",
@@ -431,7 +434,7 @@
     "gitops": {
       "title": "Create GitOps deployment request",
       "description": "Generate a reviewed manifest change through GitHub Actions. The backend never applies Kubernetes resources directly.",
-      "application": "Application",
+      "application": "Service",
       "manualApplication": "Manual workload",
       "appName": "App name",
       "image": "Image repository",
@@ -457,7 +460,14 @@
         "workflow_triggered": "Workflow triggered",
         "pr_opened": "Pull request opened",
         "failed": "Failed",
-        "stale": "Stale"
+        "stale": "Stale",
+        "deletion_requested": "Deletion requested",
+        "deleted": "Deleted"
+      },
+      "delete": {
+        "action": "Delete",
+        "confirm": "This deployment will be deleted through GitOps. The manifest will be removed from the repository and Argo CD will remove it from the cluster. Delete {{name}}?",
+        "startedToast": "Deletion requested. A GitOps PR will remove the workload and Argo CD will sync the change."
       },
       "result": {
         "workflowTriggered": "GitOps workflow triggered",
@@ -486,7 +496,7 @@
       "notFoundDescription": "The deployment does not exist in the deployment queue."
     },
     "emptyTitle": "No deployments yet",
-    "emptyDescription": "Create a deployment request after registering an application."
+    "emptyDescription": "Create a deployment request after registering a service."
   },
   "timeline": {
     "requestCreated": "Request created",
@@ -554,7 +564,7 @@
   },
   "logs": {
     "title": "Logs",
-    "description": "Tail application and pod logs with level filters and searchable runtime context.",
+    "description": "Tail service and pod logs with level filters and searchable runtime context.",
     "level": {
       "info": "Info",
       "warn": "Warn",
@@ -562,7 +572,7 @@
       "debug": "Debug"
     },
     "filters": {
-      "app": "App",
+      "app": "Service",
       "pod": "Pod",
       "level": "Level",
       "limit": "Limit",
@@ -641,7 +651,8 @@
       "loading": "Loading metric points from Prometheus.",
       "noData": "No metric data available for this time range.",
       "metricUnavailable": "This Prometheus query is currently unavailable.",
-      "requestMetrics": "Request metrics are not exposed by the application yet."
+      "requestMetrics": "Request metrics are not exposed by the service yet.",
+      "errorMetrics": "No 5xx error metrics. The system has not produced server errors or the service is not exposing 5xx metrics."
     },
     "unavailableTitle": "Monitoring data unavailable"
   },
@@ -670,7 +681,7 @@
     },
     "apiTokens": {
       "title": "API tokens",
-      "description": "Create and revoke real backend API tokens. Full token values are shown once.",
+      "description": "API tokens let scripts and external automation access the DevDeploy Hub API.",
       "create": "Create token",
       "createTitle": "Create API token",
       "createDescription": "Name the token so it is easy to recognize later.",
@@ -683,7 +694,11 @@
       "createdWarning": "For security, the full token is stored as a hash and cannot be shown again.",
       "copied": "Token copied.",
       "revoke": "Revoke",
+      "delete": "Delete",
+      "revokeConfirm": "Revoke {{name}}? The token will stop working but remain visible as an audit record.",
+      "deleteConfirm": "Delete {{name}}? This removes the token record from Settings.",
       "revoked": "API token revoked.",
+      "deleted": "API token deleted.",
       "revokedStatus": "Revoked"
     },
     "integrations": {
@@ -737,12 +752,13 @@
       "loginFailed": "Login failed. Check your email and password.",
       "registrationFailed": "Registration failed. Check the form and try again.",
       "dashboardSummaryFailed": "Could not load dashboard summary.",
-      "applicationsLoadFailed": "Could not load applications.",
-      "applicationCreateFailed": "Could not create application.",
-      "applicationDeleteFailed": "Could not delete application.",
-      "applicationDeleteBlocked": "Application has deployment history and cannot be deleted.",
+      "applicationsLoadFailed": "Could not load services.",
+      "applicationCreateFailed": "Could not create service.",
+      "applicationDeleteFailed": "Could not delete service.",
+      "applicationDeleteBlocked": "This service may have related deployments. Delete related deployments through GitOps first, or retry after live cluster status is available.",
       "deploymentsLoadFailed": "Could not load deployments.",
       "deploymentCreateFailed": "Could not create deployment.",
+      "deploymentDeleteFailed": "Could not request deployment deletion.",
       "deploymentAutomationUnavailable": "Deployment automation is not configured. Contact the platform administrator.",
       "gitopsRequestFailed": "Could not create GitOps deployment request.",
       "logsLoadFailed": "Could not load logs.",
@@ -752,11 +768,12 @@
       "settingsSaveFailed": "Could not save settings.",
       "apiTokenCreateFailed": "Could not create API token.",
       "apiTokenRevokeFailed": "Could not revoke API token.",
+      "apiTokenDeleteFailed": "Could not delete API token.",
       "generic": "Something went wrong. Please try again."
     },
     "success": {
-      "applicationCreated": "Application created.",
-      "applicationDeleted": "Application deleted.",
+      "applicationCreated": "Service created.",
+      "applicationDeleted": "Service deleted.",
       "deploymentCreated": "Deployment request created.",
       "gitopsRequestCreated": "GitOps deployment request created."
     }
