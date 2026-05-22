@@ -19,6 +19,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String(255), unique=True, index=True, nullable=False)
     username = Column(String(80), unique=True, index=True, nullable=False)
+    display_name = Column(String(120), nullable=True)
     hashed_password = Column(String(255), nullable=False)
     role = Column(String(32), nullable=False, default="developer")
     is_active = Column(Boolean, nullable=False, default=True)
@@ -27,3 +28,4 @@ class User(Base):
 
     applications = relationship("Application", back_populates="owner", cascade="all, delete-orphan")
     deployments = relationship("Deployment", back_populates="requested_by")
+    api_tokens = relationship("ApiToken", back_populates="user", cascade="all, delete-orphan")

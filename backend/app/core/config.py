@@ -21,6 +21,7 @@ class Settings(BaseSettings):
         default="http://loki-gateway.monitoring.svc.cluster.local",
         alias="LOKI_BASE_URL",
     )
+    grafana_base_url: str | None = Field(default=None, alias="GRAFANA_BASE_URL")
     gitops_enabled: bool = Field(default=False, alias="GITOPS_ENABLED")
     github_owner: str = Field(default="Kaan-YASSIBAS", alias="GITHUB_OWNER")
     github_repo: str = Field(default="devdeploy-hub", alias="GITHUB_REPO")

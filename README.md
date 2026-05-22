@@ -295,6 +295,27 @@ In Docker Compose, observability integrations may return `503` unless the backen
 
 Detailed endpoint examples live in `docs/observability-api.md`.
 
+## Settings API
+
+The Settings page is backed by authenticated backend endpoints under:
+
+```text
+/api/v1/settings
+```
+
+It manages:
+
+```text
+Profile display name
+Workspace name and read-only plan
+User-owned API tokens
+GitHub, Argo CD, Kubernetes, and Grafana integration status
+```
+
+API tokens are generated with high entropy and shown only once. The backend stores only a SHA-256 token hash plus display metadata such as prefix, last four characters, and revocation time. Real GitHub workflow tokens are never returned by the API.
+
+Integration cards do not fake connected states. They show `connected`, `not_configured`, or `error` based on backend checks. Some integrations depend on Kubernetes environment variables, cluster-local secrets, and read-only RBAC.
+
 ## GitOps / Argo CD
 
 Argo CD is installed by Terraform as a local platform add-on. It can sync the dev overlay at `infra/kubernetes/overlays/dev` or the GHCR-backed release overlay at `infra/kubernetes/overlays/release`.

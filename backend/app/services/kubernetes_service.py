@@ -70,6 +70,31 @@ class KubernetesService:
         )
         return [self._serialize_service(service) for service in services]
 
+    def namespace_exists(self, name: str) -> bool:
+        try:
+            self._core_api.read_namespace(name)
+        except client.ApiException as exc:
+            if exc.status == 404:
+                return False
+            raise
+        return True
+
+    def argocd_application_exists(self, name: str, namespace: str = "argocd") -> bool:
+        custom_api = client.CustomObjectsApi(self._get_api_client())
+        try:
+            custom_api.get_namespaced_custom_object(
+                group="argoproj.io",
+                version="v1alpha1",
+                namespace=namespace,
+                plural="applications",
+                name=name,
+            )
+        except client.ApiException as exc:
+            if exc.status == 404:
+                return False
+            raise
+        return True
+
     @cached_property
     def _core_api(self) -> client.CoreV1Api:
         return client.CoreV1Api(self._get_api_client())

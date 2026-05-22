@@ -122,6 +122,11 @@ spec:
                 configMapKeyRef:
                   name: devdeploy-config
                   key: LOKI_BASE_URL
+            - name: GRAFANA_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: devdeploy-config
+                  key: GRAFANA_BASE_URL
             - name: GITOPS_ENABLED
               valueFrom:
                 configMapKeyRef:
