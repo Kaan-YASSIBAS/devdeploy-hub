@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: podinfo-final-demo
+  namespace: devdeploy-workloads
+  labels:
+    app.kubernetes.io/name: podinfo-final-demo
+    app.kubernetes.io/managed-by: devdeploy-hub
+    devdeploy.io/application: podinfo-final-demo
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: podinfo-final-demo
+    devdeploy.io/application: podinfo-final-demo
+  ports:
+    - name: http
+      port: 9898
+      targetPort: 9898
+      protocol: TCP
