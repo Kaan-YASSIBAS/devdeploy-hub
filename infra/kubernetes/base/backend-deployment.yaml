@@ -127,6 +127,11 @@ spec:
                 configMapKeyRef:
                   name: devdeploy-config
                   key: GITOPS_ENABLED
+            - name: GITOPS_AUTO_MERGE
+              valueFrom:
+                configMapKeyRef:
+                  name: devdeploy-config
+                  key: GITOPS_AUTO_MERGE
             - name: GITHUB_OWNER
               valueFrom:
                 configMapKeyRef:
