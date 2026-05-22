@@ -1,3 +1,4 @@
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -6,6 +7,9 @@ import httpx
 
 from app.core.config import settings
 from app.services.observability_errors import ObservabilityUnavailableError
+
+
+logger = logging.getLogger(__name__)
 
 
 class PrometheusQueryError(Exception):
@@ -69,13 +73,14 @@ class PrometheusService:
         step: str | None = None,
         metric: str | None = None,
     ) -> dict[str, Any]:
-        duration = self._parse_duration(range_value)
+        range_window = range_value.strip()
+        duration = self._parse_duration(range_window)
         step_value = step or self._default_step(duration)
         self._parse_duration(step_value)
         end = datetime.now(timezone.utc)
         start = end - duration
 
-        definitions = self._timeseries_definitions(namespace)
+        definitions = self._timeseries_definitions(namespace, restart_window=range_window)
         if metric:
             definitions = {key: value for key, value in definitions.items() if key == metric}
             if not definitions:
@@ -88,7 +93,7 @@ class PrometheusService:
 
         return {
             "namespace": namespace,
-            "range": range_value,
+            "range": range_window,
             "step": step_value,
             "prometheus_available": True,
             "series": series,
@@ -142,6 +147,9 @@ class PrometheusService:
                 last_error = str(exc)
                 continue
 
+            if key == "pod_restarts" and not self._matrix_has_series(payload):
+                self._log_empty_restart_series(definition, start=start, end=end, step=step)
+
             points = self._matrix_points(payload)
             if points:
                 return {
@@ -157,6 +165,11 @@ class PrometheusService:
             detail = "No request rate samples returned for this time range."
         elif key == "error_rate":
             detail = "No 5xx request samples returned for this time range."
+        elif key == "pod_restarts":
+            detail = (
+                last_error
+                or "No kube_pod_container_status_restarts_total series returned for this namespace and range."
+            )
         else:
             detail = last_error or "No data returned for this metric."
         status = "unavailable" if last_error else "empty"
@@ -168,6 +181,10 @@ class PrometheusService:
             "detail": detail,
             "points": [],
         }
+
+    @staticmethod
+    def _matrix_has_series(payload: dict[str, Any]) -> bool:
+        return bool(payload.get("data", {}).get("result", []))
 
     @staticmethod
     def _matrix_points(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -191,7 +208,24 @@ class PrometheusService:
         return points
 
     @staticmethod
-    def _timeseries_definitions(namespace: str) -> dict[str, dict[str, str]]:
+    def _log_empty_restart_series(
+        definition: dict[str, str],
+        start: datetime,
+        end: datetime,
+        step: str,
+    ) -> None:
+        logger.info(
+            "Prometheus returned no pod restart series for namespace=%s range=%s window=%s step=%s start=%s end=%s",
+            definition.get("namespace", ""),
+            definition.get("range", ""),
+            definition.get("restart_window", ""),
+            step,
+            start.isoformat(),
+            end.isoformat(),
+        )
+
+    @staticmethod
+    def _timeseries_definitions(namespace: str, restart_window: str) -> dict[str, dict[str, str]]:
         namespace_selector = f'namespace="{namespace}"'
         backend_service_selector = 'service="devdeploy-backend"'
         backend_job_selector = 'job=~".*devdeploy-backend.*"'
@@ -215,7 +249,10 @@ class PrometheusService:
             "pod_restarts": {
                 "name": "Pod restarts",
                 "unit": "count",
-                "queries": f"sum(increase(kube_pod_container_status_restarts_total{{{namespace_selector}}}[5m]))",
+                "namespace": namespace,
+                "range": restart_window,
+                "restart_window": restart_window,
+                "queries": f"sum(increase(kube_pod_container_status_restarts_total{{{namespace_selector}}}[{restart_window}]))",
             },
             "request_rate": {
                 "name": "Request rate",
