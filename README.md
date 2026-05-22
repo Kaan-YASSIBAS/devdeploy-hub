@@ -337,6 +337,7 @@ Automatic dispatch is controlled with non-secret settings from the Kubernetes Co
 
 ```text
 GITOPS_ENABLED=true
+GITOPS_AUTO_MERGE=true
 GITHUB_OWNER=Kaan-YASSIBAS
 GITHUB_REPO=devdeploy-hub
 GITOPS_WORKFLOW_FILE=gitops-workload-request.yml
