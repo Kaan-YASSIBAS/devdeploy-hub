@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from datetime import datetime, timezone
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -7,13 +8,15 @@ from jwt import InvalidTokenError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.security import get_jwt_algorithm
+from app.core.security import get_jwt_algorithm, hash_api_token
 from app.db.session import SessionLocal
+from app.models.settings import ApiToken
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
+API_TOKEN_PREFIX = "ddh_live_"
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -30,6 +33,18 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    if token.startswith(API_TOKEN_PREFIX):
+        api_token = (
+            db.query(ApiToken)
+            .filter(ApiToken.token_hash == hash_api_token(token), ApiToken.revoked_at.is_(None))
+            .first()
+        )
+        if api_token is None or api_token.user is None or not api_token.user.is_active:
+            raise credentials_error
+        api_token.last_used_at = datetime.now(timezone.utc)
+        db.commit()
+        return api_token.user
+
     try:
         payload = jwt.decode(
             token,

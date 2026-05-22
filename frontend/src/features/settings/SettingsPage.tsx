@@ -141,6 +141,27 @@ export function SettingsPage() {
     onError: () => toast.error(t("api.errors.apiTokenRevokeFailed"))
   });
 
+  const deleteTokenMutation = useMutation({
+    mutationFn: (id: number) => settingsApi.deleteApiToken(id),
+    onSuccess: async () => {
+      toast.success(t("settings.apiTokens.deleted"));
+      await queryClient.invalidateQueries({ queryKey: ["settings", "api-tokens"] });
+    },
+    onError: () => toast.error(t("api.errors.apiTokenDeleteFailed"))
+  });
+
+  const confirmRevokeToken = (token: ApiToken) => {
+    if (window.confirm(t("settings.apiTokens.revokeConfirm", { name: token.name }))) {
+      revokeTokenMutation.mutate(token.id);
+    }
+  };
+
+  const confirmDeleteToken = (token: ApiToken) => {
+    if (window.confirm(t("settings.apiTokens.deleteConfirm", { name: token.name }))) {
+      deleteTokenMutation.mutate(token.id);
+    }
+  };
+
   const handleOpenTokenModal = () => {
     setTokenName("");
     setCreatedToken(null);
@@ -279,15 +300,28 @@ export function SettingsPage() {
                       {t("common.created")}: {formatDate(token.created_at)} · {t("settings.apiTokens.lastUsed")}: {formatDate(token.last_used_at)}
                     </p>
                   </div>
-                  <Button
-                    disabled={!token.active || revokeTokenMutation.isPending}
-                    size="sm"
-                    variant="danger"
-                    onClick={() => revokeTokenMutation.mutate(token.id)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    {t("settings.apiTokens.revoke")}
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    {token.active ? (
+                      <Button
+                        disabled={revokeTokenMutation.isPending}
+                        size="sm"
+                        variant="outline"
+                        onClick={() => confirmRevokeToken(token)}
+                      >
+                        <ShieldCheck className="h-4 w-4" />
+                        {t("settings.apiTokens.revoke")}
+                      </Button>
+                    ) : null}
+                    <Button
+                      disabled={deleteTokenMutation.isPending}
+                      size="sm"
+                      variant="danger"
+                      onClick={() => confirmDeleteToken(token)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      {t("settings.apiTokens.delete")}
+                    </Button>
+                  </div>
                 </div>
               ))
             ) : (

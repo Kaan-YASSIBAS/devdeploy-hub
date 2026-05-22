@@ -1,5 +1,6 @@
 from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
+import re
 from typing import Any
 
 import httpx
@@ -13,7 +14,7 @@ from app.models.gitops_deployment_request import GitOpsDeploymentRequest
 from app.models.user import User
 from app.repositories.application_repository import ApplicationRepository
 from app.repositories.deployment_repository import DeploymentRepository
-from app.schemas.gitops_deployment import GitOpsDeploymentCreate, GitOpsDeploymentResponse
+from app.schemas.gitops_deployment import GitOpsDeploymentCreate, GitOpsDeploymentDeleteResponse, GitOpsDeploymentResponse
 from app.schemas.gitops_deployment import DeploymentListItem
 from app.services.kubernetes_service import KubernetesService
 from app.services.observability_errors import ObservabilityUnavailableError
@@ -25,6 +26,7 @@ STALE_GITOPS_REQUEST_AFTER = timedelta(hours=1)
 STALE_GITOPS_REQUEST_MESSAGE = (
     "No matching Kubernetes deployment was observed within the expected GitOps reconciliation window."
 )
+DNS_SAFE_NAME_PATTERN = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 
 
 class GitOpsDeploymentService:
@@ -53,6 +55,8 @@ class GitOpsDeploymentService:
                 items.append(self._from_live_deployment(live_deployment, request))
 
             if self._mark_stale_requests(requests_by_workload.values()):
+                self.db.commit()
+            if self._mark_deleted_requests(requests_by_workload.values()):
                 self.db.commit()
 
         for request in requests_by_workload.values():
@@ -150,6 +154,81 @@ class GitOpsDeploymentService:
             manual_inputs=manual_inputs,
         )
 
+    def delete(self, namespace: str, name: str, current_user: User) -> GitOpsDeploymentDeleteResponse:
+        if not DNS_SAFE_NAME_PATTERN.fullmatch(namespace) or not DNS_SAFE_NAME_PATTERN.fullmatch(name):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="namespace and name must be DNS-safe values",
+            )
+
+        request = self._find_request(namespace, name, current_user)
+        live_deployment = self._find_live_deployment(namespace, name)
+
+        if request is None and live_deployment is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="GitOps deployment not found")
+
+        if request is None:
+            if current_user.role != "admin":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only admins can delete cluster-only GitOps deployments.",
+                )
+            request = self._create_delete_tracking_request(live_deployment or {}, namespace, name, current_user)
+
+        manual_inputs = self._delete_workflow_inputs(namespace=namespace, name=name)
+        manual_workflow = f"{settings.github_owner}/{settings.github_repo}/actions/workflows/{settings.gitops_delete_workflow_file}"
+
+        if not settings.gitops_enabled or not settings.github_workflow_token:
+            self.db.commit()
+            self.db.refresh(request)
+            return GitOpsDeploymentDeleteResponse(
+                request=request,
+                workflow_triggered=False,
+                message="GitOps workflow dispatch is not configured. Trigger the deletion workflow manually.",
+                manual_workflow=manual_workflow,
+                manual_inputs=manual_inputs,
+            )
+
+        try:
+            self._dispatch_workflow(manual_inputs, workflow_file=settings.gitops_delete_workflow_file)
+        except httpx.HTTPStatusError as exc:
+            request.status = "failed"
+            request.error_message = self._sanitize_http_error(exc)
+            self.db.commit()
+            self.db.refresh(request)
+            return GitOpsDeploymentDeleteResponse(
+                request=request,
+                workflow_triggered=False,
+                message="GitOps workload deletion dispatch failed.",
+                manual_workflow=manual_workflow,
+                manual_inputs=manual_inputs,
+            )
+        except httpx.HTTPError as exc:
+            request.status = "failed"
+            request.error_message = f"GitHub workflow dispatch failed: {exc.__class__.__name__}"
+            self.db.commit()
+            self.db.refresh(request)
+            return GitOpsDeploymentDeleteResponse(
+                request=request,
+                workflow_triggered=False,
+                message="GitOps workload deletion dispatch failed.",
+                manual_workflow=manual_workflow,
+                manual_inputs=manual_inputs,
+            )
+
+        request.status = "deletion_requested"
+        request.error_message = None
+        request.updated_at = datetime.now(timezone.utc)
+        self.db.commit()
+        self.db.refresh(request)
+        return GitOpsDeploymentDeleteResponse(
+            request=request,
+            workflow_triggered=True,
+            message="GitOps workload deletion workflow was triggered.",
+            manual_workflow=manual_workflow,
+            manual_inputs=manual_inputs,
+        )
+
     def _list_requests(self, current_user: User) -> list[GitOpsDeploymentRequest]:
         query = self.db.query(GitOpsDeploymentRequest).order_by(GitOpsDeploymentRequest.created_at.desc())
         if current_user.role != "admin":
@@ -180,6 +259,17 @@ class GitOpsDeploymentService:
                 continue
             request.status = "stale"
             request.error_message = STALE_GITOPS_REQUEST_MESSAGE
+            request.updated_at = now
+            changed = True
+        return changed
+
+    def _mark_deleted_requests(self, requests: Iterable[GitOpsDeploymentRequest]) -> bool:
+        now = datetime.now(timezone.utc)
+        changed = False
+        for request in requests:
+            if request.status != "deletion_requested":
+                continue
+            request.status = "deleted"
             request.updated_at = now
             changed = True
         return changed
@@ -217,7 +307,11 @@ class GitOpsDeploymentService:
             replicas=live_deployment["replicas"],
             available_replicas=live_deployment["available_replicas"],
             updated_replicas=live_deployment["updated_replicas"],
-            status=live_deployment.get("status", "unknown"),
+            status=(
+                GitOpsDeploymentService._status_from_request(request.status)
+                if request and request.status == "deletion_requested"
+                else live_deployment.get("status", "unknown")
+            ),
             source="gitops" if request else "cluster",
             is_live=True,
             created_at=request.created_at if request else live_deployment.get("created_at"),
@@ -271,6 +365,8 @@ class GitOpsDeploymentService:
 
     @staticmethod
     def _status_from_request(status_value: str) -> str:
+        if status_value in {"deletion_requested", "deleted"}:
+            return status_value
         if status_value in {"failed", "stale"}:
             if status_value == "stale":
                 return "stale"
@@ -288,10 +384,11 @@ class GitOpsDeploymentService:
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
 
-    def _dispatch_workflow(self, inputs: dict[str, str]) -> None:
+    def _dispatch_workflow(self, inputs: dict[str, str], *, workflow_file: str | None = None) -> None:
+        selected_workflow_file = workflow_file or settings.gitops_workflow_file
         url = (
             f"https://api.github.com/repos/{settings.github_owner}/{settings.github_repo}"
-            f"/actions/workflows/{settings.gitops_workflow_file}/dispatches"
+            f"/actions/workflows/{selected_workflow_file}/dispatches"
         )
         headers = {
             "Accept": "application/vnd.github+json",
@@ -313,6 +410,60 @@ class GitOpsDeploymentService:
             "replicas": str(payload.replicas),
             "ingress_host": payload.ingress_host or "",
         }
+
+    @staticmethod
+    def _delete_workflow_inputs(*, namespace: str, name: str) -> dict[str, str]:
+        return {
+            "app_name": name,
+            "namespace": namespace,
+            "auto_merge": "true",
+        }
+
+    def _find_request(self, namespace: str, name: str, current_user: User) -> GitOpsDeploymentRequest | None:
+        query = self.db.query(GitOpsDeploymentRequest).filter(
+            GitOpsDeploymentRequest.namespace == namespace,
+            GitOpsDeploymentRequest.app_name == name,
+        )
+        if current_user.role != "admin":
+            query = query.filter(GitOpsDeploymentRequest.created_by_id == current_user.id)
+        return query.order_by(GitOpsDeploymentRequest.created_at.desc()).first()
+
+    @staticmethod
+    def _find_live_deployment(namespace: str, name: str) -> dict[str, Any] | None:
+        live_deployments = GitOpsDeploymentService._list_live_deployments({namespace})
+        if live_deployments is None:
+            return None
+        return next(
+            (
+                deployment
+                for deployment in live_deployments
+                if deployment["namespace"] == namespace and deployment["name"] == name
+            ),
+            None,
+        )
+
+    def _create_delete_tracking_request(
+        self,
+        live_deployment: dict[str, Any],
+        namespace: str,
+        name: str,
+        current_user: User,
+    ) -> GitOpsDeploymentRequest:
+        request = GitOpsDeploymentRequest(
+            application_id=None,
+            app_name=name,
+            image=live_deployment.get("image") or "ghcr.io/unknown/workload",
+            tag=live_deployment.get("tag") or "deleted",
+            namespace=namespace,
+            container_port=1024,
+            replicas=max(int(live_deployment.get("replicas") or 1), 1),
+            ingress_host=None,
+            status="pending",
+            created_by_id=current_user.id,
+        )
+        self.db.add(request)
+        self.db.flush()
+        return request
 
     @staticmethod
     def _sanitize_http_error(exc: httpx.HTTPStatusError) -> str:

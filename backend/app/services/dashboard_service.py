@@ -37,7 +37,7 @@ class DashboardService:
         return DashboardSummaryResponse(
             application_count=application_count,
             deployment_count=len(deployments),
-            pending_deployment_count=self._count_status(deployments, {"pending", "progressing"}),
+            pending_deployment_count=self._count_status(deployments, {"pending", "progressing", "deletion_requested"}),
             running_deployment_count=self._count_status(deployments, {"running"}),
             successful_deployment_count=self._count_status(deployments, {"success"}),
             failed_deployment_count=self._count_status(deployments, {"failed"}),
@@ -74,6 +74,8 @@ class DashboardService:
     @staticmethod
     def _is_dashboard_deployment(deployment: DeploymentListItem) -> bool:
         if deployment.status == "stale":
+            return False
+        if deployment.status == "deleted":
             return False
         if deployment.source == "gitops" and not deployment.is_live and deployment.status == "failed":
             return False
@@ -122,7 +124,7 @@ class DashboardService:
                         namespace=deployment.namespace,
                         event_type="deployment_updated",
                         message="Kubernetes deployment status was updated.",
-                        status="failed" if deployment.status == "failed" else "current",
+                        status="failed" if deployment.status == "failed" else "complete",
                         timestamp=updated_at,
                     )
                 )

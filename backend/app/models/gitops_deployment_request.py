@@ -13,7 +13,7 @@ class GitOpsDeploymentRequest(Base):
     __tablename__ = "gitops_deployment_requests"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending', 'pending_manual_trigger', 'workflow_triggered', 'pr_opened', 'failed', 'stale')",
+            "status IN ('pending', 'pending_manual_trigger', 'workflow_triggered', 'pr_opened', 'failed', 'stale', 'deletion_requested', 'deleted')",
             name="ck_gitops_deployment_requests_status",
         ),
     )

@@ -14,6 +14,8 @@ const variantMap = {
   success: "success",
   failed: "danger",
   stale: "muted",
+  deletion_requested: "warning",
+  deleted: "muted",
   unknown: "muted",
   healthy: "success",
   degraded: "warning",

@@ -13,8 +13,8 @@
     "actions": "İşlemler",
     "active": "Aktif",
     "all": "Tümü",
-    "application": "Uygulama",
-    "applications": "Uygulamalar",
+    "application": "Servis",
+    "applications": "Servisler",
     "apply": "Uygula",
     "cancel": "İptal",
     "clear": "Temizle",
@@ -70,7 +70,7 @@
     "platform": "Platform",
     "operations": "Operasyon",
     "dashboard": "Dashboard",
-    "applications": "Uygulamalar",
+    "applications": "Servisler",
     "deployments": "Deploymentlar",
     "cluster": "Cluster",
     "logs": "Loglar",
@@ -78,7 +78,7 @@
     "settings": "Ayarlar"
   },
   "topbar": {
-    "searchPlaceholder": "Uygulama, deployment, pod ara...",
+    "searchPlaceholder": "Servis, deployment, pod ara...",
     "environmentLabel": "Ortam",
     "commandCenter": "Komut merkezi",
     "notifications": "Bildirimler",
@@ -87,11 +87,13 @@
   },
   "status": {
     "pending": "Beklemede",
-    "progressing": "Ä°lerliyor",
+    "progressing": "İlerliyor",
     "running": "Çalışıyor",
     "success": "Başarılı",
     "failed": "Başarısız",
     "stale": "Güncel değil",
+    "deletion_requested": "Silme istendi",
+    "deleted": "Silindi",
     "unknown": "Bilinmiyor"
   },
   "health": {
@@ -117,7 +119,7 @@
   "landing": {
     "eyebrow": "Self-service DevOps platformu",
     "headline": "Daha hızlı deploy et.\nDaha akıllı gözlemle.\nKubernetes'i güvenle yönet.",
-    "subheadline": "DevDeploy Hub; uygulama kaydı, Kubernetes deployment tetikleme, pod sağlığı inceleme, log görüntüleme ve kritik metrikleri izleme için ekiplere şık bir kontrol katmanı sunar.",
+    "subheadline": "DevDeploy Hub; servis kaydı, Kubernetes deployment tetikleme, pod sağlığı inceleme, log görüntüleme ve kritik metrikleri izleme için ekiplere şık bir kontrol katmanı sunar.",
     "openDashboard": "Dashboard'u Aç",
     "createAccount": "Hesap Oluştur",
     "previewTitle": "Production deploy kontrol merkezi",
@@ -186,9 +188,9 @@
   },
   "dashboard": {
     "title": "Operasyon dashboard'u",
-    "description": "Uygulamalar, deploymentlar, podlar ve cluster baskısı için canlı yönetici görünümü.",
+    "description": "Servisler, deploymentlar, podlar ve cluster baskısı için canlı yönetici görünümü.",
     "stats": {
-      "totalApps": "Toplam Uygulama",
+      "totalApps": "Toplam Servis",
       "totalDeployments": "Toplam Deployment",
       "activeDeployments": "Aktif Deployment",
       "pendingDeployments": "Bekleyen",
@@ -198,7 +200,7 @@
       "failedDeployments": "Başarısız Deployment",
       "clusterHealth": "Cluster Sağlığı",
       "details": {
-        "totalApps": "Tüm takip edilen namespace'lerde",
+        "totalApps": "Kayıtlı servis tanımları",
         "totalDeployments": "Tüm deployment istekleri",
         "activeDeployments": "Bekleyen veya çalışanlar",
         "pendingDeployments": "Kuyrukta bekleyenler",
@@ -224,6 +226,7 @@
     "clusterStatus": "Cluster durumu",
     "timelineEmptyTitle": "Henüz deployment eventi yok",
     "timelineEmptyDescription": "GitOps istekleri veya canlı Kubernetes güncellemeleri görüldüğünde gerçek eventler burada görünecek.",
+    "timelineInProgress": "Devam ediyor",
     "clusterHealthEmptyTitle": "Cluster sağlığı kullanılamıyor",
     "clusterHealthEmptyDescription": "Backend herhangi bir cluster health sonucu döndürmedi.",
     "refresh": {
@@ -283,7 +286,7 @@
     "quickActions": "Hızlı işlemler",
     "quickActionsDescription": "Geçerli ortam için sık kullanılan platform görevleri.",
     "actions": {
-      "registerApplication": "Uygulama kaydet",
+      "registerApplication": "Servis kaydet",
       "createDeployment": "Deployment oluştur",
       "viewLogs": "Logları görüntüle",
       "openMonitoring": "Monitoring aç"
@@ -296,17 +299,17 @@
     }
   },
   "applications": {
-    "title": "Uygulamalar",
+    "title": "Servisler",
     "description": "Servis kataloğunu yönet, varsayılan image ve deployment ayarlarını tanımla.",
-    "newApplication": "Yeni uygulama",
+    "newApplication": "Yeni servis",
     "searchPlaceholder": "Ad, image repository, sahip veya repository ile ara...",
     "statusFilter": "Sağlık filtresi",
-    "emptyTitle": "Henüz uygulama kaydı yok.",
+    "emptyTitle": "Henüz servis kaydı yok.",
     "emptyDescription": "Deploymentları daha hızlı ve tutarlı başlatmak için bir servis tanımı kaydet.",
-    "emptyNoResultsTitle": "Aramayla eşleşen uygulama yok",
-    "emptyNoResultsDescription": "Aramayı temizle veya yeni bir uygulama kaydet.",
+    "emptyNoResultsTitle": "Aramayla eşleşen servis yok",
+    "emptyNoResultsDescription": "Aramayı temizle veya yeni bir servis kaydet.",
     "table": {
-      "application": "Uygulama",
+      "application": "Servis",
       "name": "Ad",
       "image": "Image",
       "imageRepository": "Image repository",
@@ -323,9 +326,9 @@
       "actions": "İşlemler"
     },
     "modal": {
-      "title": "Uygulama kaydet",
-      "description": "Platform kataloğunda uygulama kaydı oluştur.",
-      "name": "Uygulama adı",
+      "title": "Servis kaydet",
+      "description": "Platform kataloğunda servis tanımı oluştur.",
+      "name": "Servis adı",
       "image": "Container image",
       "imageName": "Image repository",
       "imagePlaceholder": "ghcr.io/kaan-yassibas/notes-api",
@@ -337,18 +340,18 @@
       "descriptionPlaceholder": "FastAPI notes servisi",
       "repositoryPlaceholder": "https://github.com/example/notes-api",
       "replicas": "Replica sayısı",
-      "submit": "Uygulama oluştur",
-      "success": "Uygulama oluşturuldu.",
+      "submit": "Servis oluştur",
+      "success": "Servis oluşturuldu.",
       "validation": {
-        "required": "Uygulama adı ve image repository zorunludur.",
+        "required": "Servis adı ve image repository zorunludur.",
         "port": "Container port 1 ile 65535 arasında olmalıdır.",
         "repositoryUrl": "Repository URL geçerli bir http veya https URL olmalıdır."
       }
     },
     "actions": {
       "deploy": "Deploy et",
-      "delete": "Uygulamayı sil",
-      "deleteConfirm": "{{name}} servis kataloğundan silinsin mi? Bu işlem Kubernetes workload'larını silmez."
+      "delete": "Servisi sil",
+      "deleteConfirm": "{{name}} servis kataloğundan silinsin mi? İlişkili deployment varsa önce GitOps ile silinmelidir."
     },
     "detail": {
       "subtitle": "Katalog metadatası, varsayılan runtime ayarları ve ilişkili GitOps deploymentları.",
@@ -358,12 +361,12 @@
       "deploymentHistory": "Deployment geçmişi",
       "relatedPods": "İlgili podlar",
       "runtimeMetrics": "Runtime metrikleri",
-      "settingsTitle": "Uygulama ayarları",
+      "settingsTitle": "Servis ayarları",
       "settingsDescription": "Bu servis için katalog sahipliği, repository ve deployment varsayılanları.",
-      "loadingDescription": "Uygulama verisi backend'den yükleniyor.",
+      "loadingDescription": "Servis verisi backend'den yükleniyor.",
       "previewHealth": "Runtime sağlık bağlantısına kadar türetilmiş",
-      "notFoundTitle": "Uygulama bulunamadı",
-      "notFoundDescription": "Uygulama platform kataloğunda yer almıyor.",
+      "notFoundTitle": "Servis bulunamadı",
+      "notFoundDescription": "Servis platform kataloğunda yer almıyor.",
       "catalogMetadata": "Katalog metadatası",
       "catalogMetadataDescription": "Bu değerler servis tanımını açıklar. Runtime sağlığı Deployments ve Cluster sayfalarında yaşar.",
       "defaultEnvironmentDetail": "Deployment isteklerinde varsayılan olarak kullanılır",
@@ -371,7 +374,7 @@
       "noDescription": "Açıklama girilmemiş.",
       "noRepository": "Repository yapılandırılmamış.",
       "deploymentsEmptyTitle": "Henüz ilişkili deployment yok",
-      "deploymentsEmptyDescription": "Bu uygulama için GitOps deployment isteği oluşturmak üzere deploy kısayolunu kullan."
+      "deploymentsEmptyDescription": "Bu servis için GitOps deployment isteği oluşturmak üzere deploy kısayolunu kullan."
     },
     "tabs": {
       "overview": "Genel Bakış",
@@ -389,11 +392,11 @@
     "filters": {
       "environment": "Ortam",
       "status": "Durum",
-      "application": "Uygulama"
+      "application": "Servis"
     },
     "table": {
       "deployment": "Deployment",
-      "application": "Uygulama",
+      "application": "Servis",
       "imageTag": "Image Tag",
       "environment": "Ortam",
       "status": "Durum",
@@ -418,8 +421,8 @@
     },
     "modal": {
       "title": "Deployment oluştur",
-      "description": "Seçilen uygulama için deployment isteği oluştur.",
-      "application": "Uygulama",
+      "description": "Seçilen servis için deployment isteği oluştur.",
+      "application": "Servis",
       "environment": "Ortam",
       "imageTag": "Image tag",
       "imageTagPlaceholder": "v1.0.0",
@@ -431,9 +434,9 @@
     "gitops": {
       "title": "GitOps deployment isteği oluştur",
       "description": "GitHub Actions üzerinden review edilen manifest değişikliği üret. Backend Kubernetes kaynaklarını doğrudan uygulamaz.",
-      "application": "Uygulama",
+      "application": "Servis",
       "manualApplication": "Manuel workload",
-      "appName": "Uygulama adı",
+      "appName": "Servis adı",
       "image": "Image repository",
       "imagePlaceholder": "ghcr.io/kaan-yassibas/demo-api",
       "tag": "Image tag",
@@ -445,7 +448,7 @@
       "ingressPlaceholder": "demo.devdeploy.local",
       "submit": "GitOps isteği oluştur",
       "validation": {
-        "required": "Uygulama adı, image, tag, namespace, port ve replica zorunlu.",
+        "required": "Servis adı, image, tag, namespace, port ve replica zorunlu.",
         "latest": "Image tag latest olamaz.",
         "registry": "Image repository ghcr.io/ ile başlamalı.",
         "port": "Container port 1024 ile 65535 arasında olmalı.",
@@ -457,7 +460,14 @@
         "workflow_triggered": "Workflow tetiklendi",
         "pr_opened": "Pull request açıldı",
         "failed": "Başarısız",
-        "stale": "Güncel değil"
+        "stale": "Güncel değil",
+        "deletion_requested": "Silme istendi",
+        "deleted": "Silindi"
+      },
+      "delete": {
+        "action": "Sil",
+        "confirm": "Bu deployment GitOps ile silinecek. Manifest repo'dan kaldırılacak ve Argo CD cluster'dan silecek. {{name}} silinsin mi?",
+        "startedToast": "Silme istendi. GitOps PR workload'u kaldıracak ve Argo CD değişikliği senkronize edecek."
       },
       "result": {
         "workflowTriggered": "GitOps workflow tetiklendi",
@@ -486,7 +496,7 @@
       "notFoundDescription": "Deployment kuyruğunda bu kayıt yer almıyor."
     },
     "emptyTitle": "Henüz deployment yok",
-    "emptyDescription": "Uygulama kaydettikten sonra deployment isteği oluştur."
+    "emptyDescription": "Servis kaydettikten sonra deployment isteği oluştur."
   },
   "timeline": {
     "requestCreated": "İstek oluşturuldu",
@@ -554,7 +564,7 @@
   },
   "logs": {
     "title": "Loglar",
-    "description": "Uygulama ve pod loglarını seviye filtresi ve aranabilir runtime bağlamıyla takip et.",
+    "description": "Servis ve pod loglarını seviye filtresi ve aranabilir runtime bağlamıyla takip et.",
     "level": {
       "info": "Info",
       "warn": "Uyarı",
@@ -562,7 +572,7 @@
       "debug": "Debug"
     },
     "filters": {
-      "app": "Uygulama",
+      "app": "Servis",
       "pod": "Pod",
       "level": "Seviye",
       "limit": "Limit",
@@ -641,7 +651,8 @@
       "loading": "Metrik noktaları Prometheus üzerinden yükleniyor.",
       "noData": "Bu zaman aralığı için metrik verisi yok.",
       "metricUnavailable": "Bu Prometheus sorgusu şu anda kullanılamıyor.",
-      "requestMetrics": "Uygulama henüz request metrikleri yayınlamıyor."
+      "requestMetrics": "Servis henüz request metrikleri yayınlamıyor.",
+      "errorMetrics": "5xx hata metriği yok. Sistem hata üretmedi veya servis 5xx metriği yayınlamıyor."
     },
     "unavailableTitle": "Monitoring verisi kullanılamıyor"
   },
@@ -670,7 +681,7 @@
     },
     "apiTokens": {
       "title": "API tokenları",
-      "description": "Gerçek backend API tokenları oluştur ve iptal et. Tam token değeri yalnızca bir kez gösterilir.",
+      "description": "API tokenları, scriptler ve dış otomasyonların DevDeploy Hub API'ye erişmesi için kullanılır.",
       "create": "Token oluştur",
       "createTitle": "API token oluştur",
       "createDescription": "Daha sonra kolay tanımak için tokena bir ad ver.",
@@ -683,7 +694,11 @@
       "createdWarning": "Güvenlik için tam token hash olarak saklanır ve tekrar gösterilemez.",
       "copied": "Token kopyalandı.",
       "revoke": "İptal et",
+      "delete": "Sil",
+      "revokeConfirm": "{{name}} iptal edilsin mi? Token çalışmayı bırakır ama audit kaydı olarak görünür kalır.",
+      "deleteConfirm": "{{name}} silinsin mi? Bu işlem token kaydını Ayarlar'dan kaldırır.",
       "revoked": "API token iptal edildi.",
+      "deleted": "API token silindi.",
       "revokedStatus": "İptal edildi"
     },
     "integrations": {
@@ -737,12 +752,13 @@
       "loginFailed": "Giriş başarısız. E-posta ve şifreni kontrol et.",
       "registrationFailed": "Kayıt başarısız. Formu kontrol edip tekrar dene.",
       "dashboardSummaryFailed": "Dashboard özeti yüklenemedi.",
-      "applicationsLoadFailed": "Uygulamalar yüklenemedi.",
-      "applicationCreateFailed": "Uygulama oluşturulamadı.",
-      "applicationDeleteFailed": "Uygulama silinemedi.",
-      "applicationDeleteBlocked": "Deployment geçmişi olan uygulama silinemez.",
+      "applicationsLoadFailed": "Servisler yüklenemedi.",
+      "applicationCreateFailed": "Servis oluşturulamadı.",
+      "applicationDeleteFailed": "Servis silinemedi.",
+      "applicationDeleteBlocked": "Bu servisin ilişkili deploymentları olabilir. Önce ilgili deploymentları GitOps ile sil veya canlı cluster durumu erişilebilir olduğunda tekrar dene.",
       "deploymentsLoadFailed": "Deploymentlar yüklenemedi.",
       "deploymentCreateFailed": "Deployment oluşturulamadı.",
+      "deploymentDeleteFailed": "Deployment silme isteği oluşturulamadı.",
       "deploymentAutomationUnavailable": "Deployment otomasyonu yapılandırılmamış. Platform yöneticisiyle iletişime geç.",
       "gitopsRequestFailed": "GitOps deployment isteği oluşturulamadı.",
       "logsLoadFailed": "Loglar yüklenemedi.",
@@ -752,11 +768,12 @@
       "settingsSaveFailed": "Ayarlar kaydedilemedi.",
       "apiTokenCreateFailed": "API token oluşturulamadı.",
       "apiTokenRevokeFailed": "API token iptal edilemedi.",
+      "apiTokenDeleteFailed": "API token silinemedi.",
       "generic": "Bir şeyler ters gitti. Lütfen tekrar dene."
     },
     "success": {
-      "applicationCreated": "Uygulama oluşturuldu.",
-      "applicationDeleted": "Uygulama silindi.",
+      "applicationCreated": "Servis oluşturuldu.",
+      "applicationDeleted": "Servis silindi.",
       "deploymentCreated": "Deployment isteği oluşturuldu.",
       "gitopsRequestCreated": "GitOps deployment isteği oluşturuldu."
     }

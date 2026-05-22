@@ -14,6 +14,7 @@ import type {
   DeploymentListItem,
   DeploymentStatusUpdateInput,
   GitOpsDeploymentCreateInput,
+  GitOpsDeploymentDeleteResponse,
   GitOpsDeploymentResponse,
   KubernetesDeployment,
   KubernetesNamespace,
@@ -193,6 +194,10 @@ export const deploymentsApi = {
     const { data } = await apiClient.post<GitOpsDeploymentResponse>("/deployments/gitops", input);
     return data;
   },
+  async deleteGitOps(namespace: string, name: string) {
+    const { data } = await apiClient.delete<GitOpsDeploymentDeleteResponse>(`/deployments/gitops/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`);
+    return data;
+  },
   async updateStatus(id: number, input: DeploymentStatusUpdateInput) {
     const { data } = await apiClient.patch<Deployment>(`/deployments/${id}/status`, input);
     return data;
@@ -274,6 +279,9 @@ export const settingsApi = {
     return data;
   },
   async revokeApiToken(id: number) {
+    await apiClient.post(`/settings/api-tokens/${id}/revoke`);
+  },
+  async deleteApiToken(id: number) {
     await apiClient.delete(`/settings/api-tokens/${id}`);
   },
   async integrations() {
