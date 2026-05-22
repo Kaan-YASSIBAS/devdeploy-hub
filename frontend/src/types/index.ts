@@ -306,6 +306,30 @@ export type ClusterMetrics = {
   deployment_available_replicas: number;
 };
 
+export type MetricSeriesPoint = {
+  timestamp: string;
+  value: number;
+};
+
+export type MetricSeriesStatus = "ok" | "empty" | "unavailable";
+
+export type MetricSeries = {
+  key: "cpu_usage" | "memory_working_set" | "pod_restarts" | "request_rate" | "error_rate" | string;
+  name: string;
+  unit: string;
+  status: MetricSeriesStatus;
+  detail: string | null;
+  points: MetricSeriesPoint[];
+};
+
+export type MetricsTimeSeries = {
+  namespace: string;
+  range: string;
+  step: string;
+  prometheus_available: boolean;
+  series: MetricSeries[];
+};
+
 export type LogEntry = {
   timestamp: string;
   line: string;
