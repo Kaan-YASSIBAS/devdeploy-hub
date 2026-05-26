@@ -152,6 +152,11 @@ spec:
                 configMapKeyRef:
                   name: devdeploy-config
                   key: GITOPS_WORKFLOW_FILE
+            - name: GITOPS_DELETE_WORKFLOW_FILE
+              valueFrom:
+                configMapKeyRef:
+                  name: devdeploy-config
+                  key: GITOPS_DELETE_WORKFLOW_FILE
             - name: GITOPS_TARGET_REF
               valueFrom:
                 configMapKeyRef:

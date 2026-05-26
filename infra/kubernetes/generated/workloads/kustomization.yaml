@@ -3,6 +3,8 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
+  # Generated workload entries live under apps/<app-name>.
+  # GitHub Actions edits this list; Argo CD applies the merged state.
   - apps/podinfo-demo
   - apps/podinfo-final-demo
   - apps/podinfo-ui-test

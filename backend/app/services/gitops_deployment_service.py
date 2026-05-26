@@ -385,6 +385,8 @@ class GitOpsDeploymentService:
         return value.astimezone(timezone.utc)
 
     def _dispatch_workflow(self, inputs: dict[str, str], *, workflow_file: str | None = None) -> None:
+        # GitOps boundary: the backend dispatches a GitHub workflow that edits
+        # manifests in Git. It must not apply or delete Kubernetes resources.
         selected_workflow_file = workflow_file or settings.gitops_workflow_file
         url = (
             f"https://api.github.com/repos/{settings.github_owner}/{settings.github_repo}"

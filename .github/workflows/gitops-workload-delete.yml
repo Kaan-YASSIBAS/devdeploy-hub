@@ -55,6 +55,8 @@ jobs:
         run: python scripts/delete-gitops-workload.py --app-name "${{ inputs.app_name }}" --namespace "${{ inputs.namespace }}"
 
       - name: Render release overlay
+        # Validation only: this workflow never applies manifests to Kubernetes.
+        # Argo CD removes the workload after the manifest deletion is merged.
         run: kubectl kustomize infra/kubernetes/overlays/release
 
       - name: Check whitespace

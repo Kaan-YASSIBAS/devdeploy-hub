@@ -10,9 +10,12 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+# Standard generated workload root. GitHub Actions updates this Git path only;
+# Argo CD is responsible for syncing it to Kubernetes after merge.
 GENERATED_ROOT = REPO_ROOT / "infra/kubernetes/generated/workloads"
 APPS_ROOT = GENERATED_ROOT / "apps"
 ROOT_KUSTOMIZATION = GENERATED_ROOT / "kustomization.yaml"
+NAMESPACE_MANIFEST = GENERATED_ROOT / "namespace.yaml"
 
 DNS_LABEL_PATTERN = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 IMAGE_PATTERN = re.compile(r"^[a-z0-9]+([._-][a-z0-9]+)*(\/[a-z0-9]+([._-][a-z0-9]+)*)+$")
@@ -216,6 +219,19 @@ resources:
 
 def update_root_kustomization(app_name: str) -> None:
     ROOT_KUSTOMIZATION.parent.mkdir(parents=True, exist_ok=True)
+    if not NAMESPACE_MANIFEST.exists():
+        NAMESPACE_MANIFEST.write_text(
+            """apiVersion: v1
+kind: Namespace
+metadata:
+  name: devdeploy-workloads
+  labels:
+    app.kubernetes.io/name: devdeploy-workloads
+    app.kubernetes.io/managed-by: devdeploy-hub
+    devdeploy.io/component: generated-workloads
+""",
+            encoding="utf-8",
+        )
     if not ROOT_KUSTOMIZATION.exists():
         ROOT_KUSTOMIZATION.write_text(
             "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n\nresources:\n  - namespace.yaml\n",

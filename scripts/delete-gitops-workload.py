@@ -11,6 +11,8 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+# Standard generated workload root. This script removes manifests from Git only;
+# it never calls Kubernetes. Argo CD performs the cluster deletion after merge.
 GENERATED_ROOT = REPO_ROOT / "infra/kubernetes/generated/workloads"
 APPS_ROOT = GENERATED_ROOT / "apps"
 ROOT_KUSTOMIZATION = GENERATED_ROOT / "kustomization.yaml"

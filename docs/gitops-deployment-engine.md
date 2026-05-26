@@ -70,6 +70,7 @@ GITOPS_AUTO_MERGE=true
 GITHUB_OWNER=Kaan-YASSIBAS
 GITHUB_REPO=devdeploy-hub
 GITOPS_WORKFLOW_FILE=gitops-workload-request.yml
+GITOPS_DELETE_WORKFLOW_FILE=gitops-workload-delete.yml
 GITOPS_TARGET_REF=main
 ```
 

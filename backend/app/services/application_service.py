@@ -45,6 +45,8 @@ class ApplicationService:
             suffix += 1
 
     def create(self, payload: ApplicationCreate, owner: User) -> Application:
+        # Services are catalog records only. Kubernetes manifests are generated
+        # later by the GitOps deployment workflow, not during service creation.
         data = payload.model_dump(mode="json")
         data["slug"] = self._unique_slug(payload.name)
         application = self.applications.create(owner_id=owner.id, data=data)

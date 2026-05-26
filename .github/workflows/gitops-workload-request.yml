@@ -102,6 +102,8 @@ jobs:
           "${args[@]}"
 
       - name: Render release overlay
+        # Validation only: this workflow never applies manifests to Kubernetes.
+        # Argo CD syncs the merged desired state.
         run: kubectl kustomize infra/kubernetes/overlays/release
 
       - name: Check whitespace
