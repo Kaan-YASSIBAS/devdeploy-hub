@@ -217,7 +217,36 @@ resources:
 """
 
 
-def update_root_kustomization(app_name: str) -> None:
+def _render_root_kustomization(resources: list[str]) -> str:
+    lines = [
+        "apiVersion: kustomize.config.k8s.io/v1beta1",
+        "kind: Kustomization",
+        "",
+        "resources:",
+        "  - namespace.yaml",
+    ]
+    if len(resources) > 1:
+        lines.extend(
+            [
+                "  # Generated workload entries live under apps/<app-name>.",
+                "  # GitHub Actions edits this list; Argo CD applies the merged state.",
+            ]
+        )
+        lines.extend(f"  - {resource}" for resource in resources if resource != "namespace.yaml")
+    return "\n".join(lines) + "\n"
+
+
+def _discover_app_resources() -> list[str]:
+    if not APPS_ROOT.exists():
+        return []
+    return sorted(
+        f"apps/{path.name}"
+        for path in APPS_ROOT.iterdir()
+        if path.is_dir()
+    )
+
+
+def update_root_kustomization() -> None:
     ROOT_KUSTOMIZATION.parent.mkdir(parents=True, exist_ok=True)
     if not NAMESPACE_MANIFEST.exists():
         NAMESPACE_MANIFEST.write_text(
@@ -232,23 +261,9 @@ metadata:
 """,
             encoding="utf-8",
         )
-    if not ROOT_KUSTOMIZATION.exists():
-        ROOT_KUSTOMIZATION.write_text(
-            "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n\nresources:\n  - namespace.yaml\n",
-            encoding="utf-8",
-        )
-
-    content = ROOT_KUSTOMIZATION.read_text(encoding="utf-8")
-    lines = content.splitlines()
-    resource = f"apps/{app_name}"
-    existing_resources = {line.strip()[2:] for line in lines if line.strip().startswith("- ")}
-    if resource in existing_resources:
-        return
-
-    with ROOT_KUSTOMIZATION.open("a", encoding="utf-8") as file:
-        if content and not content.endswith("\n"):
-            file.write("\n")
-        file.write(f"  - {resource}\n")
+    resources = ["namespace.yaml"]
+    resources.extend(_discover_app_resources())
+    ROOT_KUSTOMIZATION.write_text(_render_root_kustomization(resources), encoding="utf-8")
 
 
 def generate(args: argparse.Namespace) -> None:
@@ -289,7 +304,7 @@ def generate(args: argparse.Namespace) -> None:
         (app_dir / "ingress.yaml").unlink()
 
     (app_dir / "kustomization.yaml").write_text(app_kustomization(include_ingress=bool(ingress_host)), encoding="utf-8")
-    update_root_kustomization(app_name)
+    update_root_kustomization()
 
     print(f"generated workload manifests for {app_name}")
     print(f"image: {image}:{tag}")

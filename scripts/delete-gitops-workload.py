@@ -25,14 +25,42 @@ def validate_dns_label(value: str, field_name: str) -> str:
     return value
 
 
-def update_root_kustomization(app_name: str) -> None:
+def _render_root_kustomization(resources: list[str]) -> str:
+    lines = [
+        "apiVersion: kustomize.config.k8s.io/v1beta1",
+        "kind: Kustomization",
+        "",
+        "resources:",
+        "  - namespace.yaml",
+    ]
+    if len(resources) > 1:
+        lines.extend(
+            [
+                "  # Generated workload entries live under apps/<app-name>.",
+                "  # GitHub Actions edits this list; Argo CD applies the merged state.",
+            ]
+        )
+        lines.extend(f"  - {resource}" for resource in resources if resource != "namespace.yaml")
+    return "\n".join(lines) + "\n"
+
+
+def _discover_app_resources() -> list[str]:
+    if not APPS_ROOT.exists():
+        return []
+    return sorted(
+        f"apps/{path.name}"
+        for path in APPS_ROOT.iterdir()
+        if path.is_dir()
+    )
+
+
+def update_root_kustomization() -> None:
     if not ROOT_KUSTOMIZATION.exists():
         raise FileNotFoundError(f"{ROOT_KUSTOMIZATION.relative_to(REPO_ROOT)} does not exist")
 
-    resource = f"apps/{app_name}"
-    lines = ROOT_KUSTOMIZATION.read_text(encoding="utf-8").splitlines()
-    next_lines = [line for line in lines if line.strip() != f"- {resource}"]
-    ROOT_KUSTOMIZATION.write_text("\n".join(next_lines).rstrip() + "\n", encoding="utf-8")
+    resources = ["namespace.yaml"]
+    resources.extend(_discover_app_resources())
+    ROOT_KUSTOMIZATION.write_text(_render_root_kustomization(resources), encoding="utf-8")
 
 
 def delete_workload(args: argparse.Namespace) -> None:
@@ -44,7 +72,7 @@ def delete_workload(args: argparse.Namespace) -> None:
         raise FileNotFoundError(f"Generated workload path does not exist: {app_dir.relative_to(REPO_ROOT)}")
 
     shutil.rmtree(app_dir)
-    update_root_kustomization(app_name)
+    update_root_kustomization()
 
     print(f"deleted workload manifests for {app_name}")
     print(f"namespace: {args.namespace}")
