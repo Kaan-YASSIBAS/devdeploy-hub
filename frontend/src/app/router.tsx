@@ -7,6 +7,7 @@ import { RouteLoader } from "@/app/RouteLoader";
 const LandingPage = lazy(() => import("@/features/auth/LandingPage").then(({ LandingPage }) => ({ default: LandingPage })));
 const LoginPage = lazy(() => import("@/features/auth/LoginPage").then(({ LoginPage }) => ({ default: LoginPage })));
 const RegisterPage = lazy(() => import("@/features/auth/RegisterPage").then(({ RegisterPage }) => ({ default: RegisterPage })));
+const SetupWizardPage = lazy(() => import("@/features/setup/SetupWizardPage").then(({ SetupWizardPage }) => ({ default: SetupWizardPage })));
 const DashboardPage = lazy(() => import("@/features/dashboard/DashboardPage").then(({ DashboardPage }) => ({ default: DashboardPage })));
 const ApplicationsPage = lazy(() => import("@/features/applications/ApplicationsPage").then(({ ApplicationsPage }) => ({ default: ApplicationsPage })));
 const ApplicationDetailPage = lazy(() => import("@/features/applications/ApplicationDetailPage").then(({ ApplicationDetailPage }) => ({ default: ApplicationDetailPage })));
@@ -41,6 +42,7 @@ export const router = createBrowserRouter([
       {
         element: <AppShell />,
         children: [
+          { path: "/setup", element: withSuspense(<SetupWizardPage />) },
           { path: "/dashboard", element: withSuspense(<DashboardPage />) },
           { path: "/applications", element: withSuspense(<ApplicationsPage />) },
           { path: "/applications/:id", element: withSuspense(<ApplicationDetailPage />) },

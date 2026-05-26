@@ -656,6 +656,74 @@
     },
     "unavailableTitle": "Monitoring verisi kullanılamıyor"
   },
+  "setup": {
+    "title": "İlk Kurulum",
+    "description": "Dashboard’a geçmeden önce local-first GitOps ortamını hazırla.",
+    "localFirstHint": "Bu akış şimdilik rehberli bir kurulum deneyimi sunar. Altyapıda veya cluster üzerinde değişiklik yapmaz.",
+    "progressTitle": "Kurulum kontrol listesi",
+    "progressDescription": "Platformun temel adımlarını gözden geçir ve hazır olan parçaları işaretle.",
+    "simulatedDescription": "Bu adım şimdilik yalnızca arayüzde simüle edilir. Backend, GitHub, Kubernetes veya Argo CD üzerinde işlem yapılmaz.",
+    "status": {
+      "not_configured": "Henüz yapılandırılmadı",
+      "ready": "Hazır",
+      "pending": "Bekliyor",
+      "simulated": "Simüle edildi"
+    },
+    "actions": {
+      "restart": "Kurulumu sıfırla",
+      "continue": "Devam et",
+      "saveEnvironment": "Ortamı kaydet",
+      "runSimulated": "Bu adımı simüle et",
+      "previous": "Geri",
+      "next": "İleri",
+      "finish": "Kurulumu bitir"
+    },
+    "messages": {
+      "completed": "Kurulum tamamlandı. DevDeploy Hub’a hoş geldin.",
+      "reset": "Kurulum ilerlemesi sıfırlandı."
+    },
+    "environment": {
+      "label": "Ortam tipi",
+      "localKind": "Lokal Kubernetes (kind)",
+      "localMinikube": "Lokal Kubernetes (minikube)",
+      "dockerOnly": "Sadece Docker ile geliştirme"
+    },
+    "steps": {
+      "welcome": {
+        "title": "Hoş geldin",
+        "description": "Local-first GitOps akışına kısa bir başlangıç yap.",
+        "body": "DevDeploy Hub deployment akışını GitOps odaklı tutar: UI bir istek oluşturur, Git hedef durumu günceller, Argo CD de Kubernetes’i senkronize eder."
+      },
+      "environment": {
+        "title": "Ortam tipi",
+        "description": "Bu workspace için kullanacağın lokal platform modunu seç."
+      },
+      "preflight": {
+        "title": "Ön kontroller",
+        "description": "Platform için gereken lokal araçları ve temel hazırlığı gözden geçir."
+      },
+      "github": {
+        "title": "GitHub bağlantısı",
+        "description": "Workflow dispatch için kullanılan GitHub bağlantısını gözden geçir."
+      },
+      "gitopsRepo": {
+        "title": "GitOps repository",
+        "description": "Üretilen workload manifestlerinin nerede tutulacağını gözden geçir."
+      },
+      "argocd": {
+        "title": "Argo CD",
+        "description": "Release manifestleri için Argo CD sync akışını gözden geçir."
+      },
+      "health": {
+        "title": "Sağlık kontrolü",
+        "description": "Platformun günlük kullanıma hazır olup olmadığını kontrol et."
+      },
+      "demoDeploy": {
+        "title": "Demo deployment",
+        "description": "Altyapıyı değiştirmeden ilk deployment akışını önizle."
+      }
+    }
+  },
   "settings": {
     "title": "Ayarlar",
     "description": "Profil bilgilerini, workspace kimliğini, API tokenlarını ve platform entegrasyon sağlığını yönet.",

@@ -656,6 +656,74 @@
     },
     "unavailableTitle": "Monitoring data unavailable"
   },
+  "setup": {
+    "title": "Initial setup",
+    "description": "Prepare your local-first GitOps environment before opening the dashboard.",
+    "localFirstHint": "This is a guided setup experience for now. It does not run infrastructure actions or change your cluster.",
+    "progressTitle": "Setup checklist",
+    "progressDescription": "Walk through the platform basics and confirm what is ready.",
+    "simulatedDescription": "This step is simulated in the UI for now. The backend, GitHub, Kubernetes, and Argo CD are not changed.",
+    "status": {
+      "not_configured": "Not configured",
+      "ready": "Ready",
+      "pending": "Pending",
+      "simulated": "Simulated"
+    },
+    "actions": {
+      "restart": "Restart setup",
+      "continue": "Continue",
+      "saveEnvironment": "Save environment",
+      "runSimulated": "Simulate this step",
+      "previous": "Previous",
+      "next": "Next",
+      "finish": "Finish setup"
+    },
+    "messages": {
+      "completed": "Setup complete. Welcome to DevDeploy Hub.",
+      "reset": "Setup progress reset."
+    },
+    "environment": {
+      "label": "Environment type",
+      "localKind": "Local Kubernetes (kind)",
+      "localMinikube": "Local Kubernetes (minikube)",
+      "dockerOnly": "Docker-only development"
+    },
+    "steps": {
+      "welcome": {
+        "title": "Welcome",
+        "description": "Start with the local-first GitOps flow.",
+        "body": "DevDeploy Hub keeps deployments GitOps-native: the UI creates a request, Git updates the desired state, and Argo CD syncs Kubernetes."
+      },
+      "environment": {
+        "title": "Environment type",
+        "description": "Select the local platform mode you want to use."
+      },
+      "preflight": {
+        "title": "Pre-flight checks",
+        "description": "Review the local tools and prerequisites for the platform."
+      },
+      "github": {
+        "title": "GitHub connection",
+        "description": "Review the GitHub connection used for workflow dispatch."
+      },
+      "gitopsRepo": {
+        "title": "GitOps repository",
+        "description": "Review where generated workload manifests will live."
+      },
+      "argocd": {
+        "title": "Argo CD",
+        "description": "Review the Argo CD sync path for release manifests."
+      },
+      "health": {
+        "title": "Health check",
+        "description": "Confirm the platform is ready for day-to-day use."
+      },
+      "demoDeploy": {
+        "title": "Demo deployment",
+        "description": "Preview the first deployment flow without changing infrastructure."
+      }
+    }
+  },
   "settings": {
     "title": "Settings",
     "description": "Manage profile details, workspace identity, API tokens, and platform integration health.",
