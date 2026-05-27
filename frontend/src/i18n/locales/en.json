@@ -747,6 +747,26 @@
       "save": "Save workspace",
       "saved": "Workspace saved."
     },
+    "setupStatus": {
+      "title": "Setup Status",
+      "description": "Track onboarding progress for this account.",
+      "completed": "Setup completed",
+      "notCompleted": "Setup not completed",
+      "warning": "This only resets the local onboarding state. It does not delete deployments, GitOps repositories, Kubernetes resources, or Argo CD configuration.",
+      "fields": {
+        "status": "Setup status",
+        "currentStep": "Current step",
+        "environmentType": "Environment type",
+        "lastUpdated": "Last updated"
+      },
+      "actions": {
+        "continue": "Continue setup",
+        "restart": "Restart setup"
+      },
+      "messages": {
+        "restarted": "Setup restarted."
+      }
+    },
     "apiTokens": {
       "title": "API tokens",
       "description": "API tokens let scripts and external automation access the DevDeploy Hub API.",

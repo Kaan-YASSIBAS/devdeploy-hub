@@ -14,6 +14,7 @@ import {
   UserRound,
   Workflow
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -26,6 +27,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useAuth } from "@/features/auth/useAuth";
+import { SETUP_STEP_KEYS, loadSetupState, resetSetupState } from "@/features/setup/setup-state";
+import type { SetupStepKey, SetupWizardState } from "@/features/setup/types";
 import type { ApiToken, IntegrationStatus, IntegrationStatusItem } from "@/types";
 
 const integrationIcons = {
@@ -64,14 +68,28 @@ function tokenDisplay(token: ApiToken) {
   return `${token.prefix}...${token.last_four}`;
 }
 
+const setupStepTitleKeys: Record<SetupStepKey, string> = {
+  welcome: "setup.steps.welcome.title",
+  environment_type: "setup.steps.environment.title",
+  preflight_checks: "setup.steps.preflight.title",
+  github_connection: "setup.steps.github.title",
+  gitops_repo_setup: "setup.steps.gitopsRepo.title",
+  argocd_setup: "setup.steps.argocd.title",
+  health_check: "setup.steps.health.title",
+  demo_app_deploy: "setup.steps.demoDeploy.title"
+};
+
 export function SettingsPage() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [profileName, setProfileName] = useState("");
   const [workspaceName, setWorkspaceName] = useState("");
   const [tokenModalOpen, setTokenModalOpen] = useState(false);
   const [tokenName, setTokenName] = useState("");
   const [createdToken, setCreatedToken] = useState<string | null>(null);
+  const [setupState, setSetupState] = useState<SetupWizardState | null>(null);
 
   const profileQuery = useQuery({ queryKey: ["settings", "profile"], queryFn: settingsApi.profile });
   const workspaceQuery = useQuery({ queryKey: ["settings", "workspace"], queryFn: settingsApi.workspace });
@@ -95,6 +113,39 @@ export function SettingsPage() {
     }
   }, [workspaceQuery.data]);
 
+  useEffect(() => {
+    if (!user) {
+      setSetupState(null);
+      return;
+    }
+
+    setSetupState(loadSetupState(user.id));
+  }, [user]);
+
+  const currentSetupStepLabel = useMemo(() => {
+    if (!setupState) {
+      return "-";
+    }
+
+    const stepIndex = Math.max(0, Math.min(SETUP_STEP_KEYS.length - 1, setupState.currentStep));
+    const stepKey = SETUP_STEP_KEYS[stepIndex];
+    return `${stepIndex + 1}. ${t(setupStepTitleKeys[stepKey])}`;
+  }, [setupState, t]);
+
+  const setupEnvironmentLabel = useMemo(() => {
+    if (!setupState?.environmentType) {
+      return "-";
+    }
+
+    if (setupState.environmentType === "local_kind") {
+      return t("setup.environment.localKind");
+    }
+    if (setupState.environmentType === "local_minikube") {
+      return t("setup.environment.localMinikube");
+    }
+    return t("setup.environment.dockerOnly");
+  }, [setupState, t]);
+
   const refreshSettings = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["settings", "profile"] }),
@@ -102,6 +153,25 @@ export function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ["settings", "api-tokens"] }),
       queryClient.invalidateQueries({ queryKey: ["settings", "integrations"] })
     ]);
+
+    if (user) {
+      setSetupState(loadSetupState(user.id));
+    }
+  };
+
+  const continueSetup = () => {
+    navigate("/setup");
+  };
+
+  const restartSetup = () => {
+    if (!user) {
+      return;
+    }
+
+    resetSetupState(user.id);
+    setSetupState(loadSetupState(user.id));
+    toast.success(t("settings.setupStatus.messages.restarted"));
+    navigate("/setup");
   };
 
   const profileMutation = useMutation({
@@ -265,6 +335,50 @@ export function SettingsPage() {
               <Save className="h-4 w-4" />
               {t("settings.workspace.save")}
             </Button>
+          </CardContent>
+        </Card>
+
+        <Card className="xl:col-span-2">
+          <CardHeader>
+            <CardTitle>{t("settings.setupStatus.title")}</CardTitle>
+            <CardDescription>{t("settings.setupStatus.description")}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-xs uppercase tracking-wide text-slate-500">{t("settings.setupStatus.fields.status")}</p>
+                <p className="mt-2 text-sm font-medium text-white">
+                  {setupState?.completed ? t("settings.setupStatus.completed") : t("settings.setupStatus.notCompleted")}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-xs uppercase tracking-wide text-slate-500">{t("settings.setupStatus.fields.currentStep")}</p>
+                <p className="mt-2 text-sm font-medium text-white">{setupState?.completed ? "-" : currentSetupStepLabel}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-xs uppercase tracking-wide text-slate-500">{t("settings.setupStatus.fields.environmentType")}</p>
+                <p className="mt-2 text-sm font-medium text-white">{setupEnvironmentLabel}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-xs uppercase tracking-wide text-slate-500">{t("settings.setupStatus.fields.lastUpdated")}</p>
+                <p className="mt-2 text-sm font-medium text-white">{setupState?.updatedAt ? formatDate(setupState.updatedAt) : "-"}</p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-amber-300/20 bg-amber-400/10 p-4 text-sm leading-6 text-amber-100">
+              {t("settings.setupStatus.warning")}
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {!setupState?.completed ? (
+                <Button variant="outline" onClick={continueSetup}>
+                  {t("settings.setupStatus.actions.continue")}
+                </Button>
+              ) : null}
+              <Button variant="outline" onClick={restartSetup}>
+                {t("settings.setupStatus.actions.restart")}
+              </Button>
+            </div>
           </CardContent>
         </Card>
 

@@ -747,6 +747,26 @@
       "save": "Workspace'i kaydet",
       "saved": "Workspace kaydedildi."
     },
+    "setupStatus": {
+      "title": "İlk Kurulum Durumu",
+      "description": "Bu hesap için onboarding ilerlemesini görüntüle.",
+      "completed": "Kurulum tamamlandı",
+      "notCompleted": "Kurulum tamamlanmadı",
+      "warning": "Bu işlem yalnızca yerel kurulum durumunu sıfırlar. Deployment’ları, GitOps repository’lerini, Kubernetes kaynaklarını veya Argo CD yapılandırmasını silmez.",
+      "fields": {
+        "status": "Kurulum durumu",
+        "currentStep": "Mevcut adım",
+        "environmentType": "Ortam türü",
+        "lastUpdated": "Son güncelleme"
+      },
+      "actions": {
+        "continue": "Kuruluma devam et",
+        "restart": "Kurulumu yeniden başlat"
+      },
+      "messages": {
+        "restarted": "Kurulum yeniden başlatıldı."
+      }
+    },
     "apiTokens": {
       "title": "API tokenları",
       "description": "API tokenları, scriptler ve dış otomasyonların DevDeploy Hub API'ye erişmesi için kullanılır.",
