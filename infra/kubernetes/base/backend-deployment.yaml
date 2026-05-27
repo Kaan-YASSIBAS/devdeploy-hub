@@ -50,12 +50,6 @@ spec:
                 secretKeyRef:
                   name: devdeploy-secret
                   key: POSTGRES_USER
-            - name: GITHUB_WORKFLOW_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: devdeploy-gitops-secret
-                  key: GITHUB_WORKFLOW_TOKEN
-                  optional: true
           volumeMounts:
             - name: backend-tmp
               mountPath: /tmp

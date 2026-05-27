@@ -21,6 +21,13 @@ from app.schemas.observability import (
 from app.services.kubernetes_service import KubernetesService
 from app.services.loki_service import LokiService
 from app.services.observability_errors import ObservabilityUnavailableError
+from app.services.observability_query import (
+    validate_metric_range,
+    validate_metric_step,
+    validate_namespace,
+    validate_optional_namespace,
+    validate_pod_name,
+)
 from app.services.prometheus_service import PrometheusQueryError, PrometheusService
 
 
@@ -40,6 +47,10 @@ def _call_observability(operation: Callable[[], T]) -> T:
     except ApiException as exc:
         detail = exc.reason or str(exc.status)
         raise _unavailable(f"Kubernetes API request failed: {detail}") from exc
+
+
+def _bad_request(detail: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
 
 def _component_health(check: Callable[[], None]) -> ObservabilityComponentHealth:
@@ -82,7 +93,11 @@ def list_pods(
     current_user: User = Depends(get_current_user),
 ) -> list[dict]:
     _ = current_user
-    return _call_observability(lambda: KubernetesService().list_pods(namespace=namespace))
+    try:
+        safe_namespace = validate_optional_namespace(namespace)
+    except ObservabilityUnavailableError as exc:
+        raise _bad_request(str(exc)) from exc
+    return _call_observability(lambda: KubernetesService().list_pods(namespace=safe_namespace))
 
 
 @router.get("/kubernetes/deployments", response_model=list[DeploymentSummary])
@@ -91,7 +106,11 @@ def list_deployments(
     current_user: User = Depends(get_current_user),
 ) -> list[dict]:
     _ = current_user
-    return _call_observability(lambda: KubernetesService().list_deployments(namespace=namespace))
+    try:
+        safe_namespace = validate_optional_namespace(namespace)
+    except ObservabilityUnavailableError as exc:
+        raise _bad_request(str(exc)) from exc
+    return _call_observability(lambda: KubernetesService().list_deployments(namespace=safe_namespace))
 
 
 @router.get("/kubernetes/services", response_model=list[ServiceSummary])
@@ -100,7 +119,11 @@ def list_services(
     current_user: User = Depends(get_current_user),
 ) -> list[dict]:
     _ = current_user
-    return _call_observability(lambda: KubernetesService().list_services(namespace=namespace))
+    try:
+        safe_namespace = validate_optional_namespace(namespace)
+    except ObservabilityUnavailableError as exc:
+        raise _bad_request(str(exc)) from exc
+    return _call_observability(lambda: KubernetesService().list_services(namespace=safe_namespace))
 
 
 @router.get("/metrics/cluster", response_model=MetricsSummary)
@@ -112,7 +135,11 @@ def get_cluster_metrics(current_user: User = Depends(get_current_user)) -> dict:
 @router.get("/metrics/namespaces/{namespace}", response_model=MetricsSummary)
 def get_namespace_metrics(namespace: str, current_user: User = Depends(get_current_user)) -> dict:
     _ = current_user
-    return _call_observability(lambda: PrometheusService().get_namespace_metrics(namespace))
+    try:
+        safe_namespace = validate_namespace(namespace)
+    except ObservabilityUnavailableError as exc:
+        raise _bad_request(str(exc)) from exc
+    return _call_observability(lambda: PrometheusService().get_namespace_metrics(safe_namespace))
 
 
 @router.get("/metrics/timeseries", response_model=MetricsTimeSeriesResponse)
@@ -125,10 +152,17 @@ def get_metrics_timeseries(
 ) -> dict:
     _ = current_user
     try:
+        safe_namespace = validate_namespace(namespace)
+        safe_range = validate_metric_range(range_value)
+        safe_step = validate_metric_step(step)
+    except ObservabilityUnavailableError as exc:
+        raise _bad_request(str(exc)) from exc
+
+    try:
         return PrometheusService().get_metrics_timeseries(
-            namespace=namespace,
-            range_value=range_value,
-            step=step,
+            namespace=safe_namespace,
+            range_value=safe_range,
+            step=safe_step,
             metric=metric,
         )
     except PrometheusQueryError as exc:
@@ -146,6 +180,11 @@ def query_logs(
 ) -> list[dict]:
     _ = current_user
     service = LokiService()
-    if pod:
-        return _call_observability(lambda: service.query_logs_by_pod(namespace=namespace, pod=pod, limit=limit))
-    return _call_observability(lambda: service.query_logs(namespace=namespace, limit=limit))
+    try:
+        safe_namespace = validate_namespace(namespace)
+        safe_pod = validate_pod_name(pod) if pod else None
+    except ObservabilityUnavailableError as exc:
+        raise _bad_request(str(exc)) from exc
+    if safe_pod:
+        return _call_observability(lambda: service.query_logs_by_pod(namespace=safe_namespace, pod=safe_pod, limit=limit))
+    return _call_observability(lambda: service.query_logs(namespace=safe_namespace, limit=limit))

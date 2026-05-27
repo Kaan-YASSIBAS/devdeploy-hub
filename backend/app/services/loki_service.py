@@ -4,6 +4,7 @@ import httpx
 
 from app.core.config import settings
 from app.services.observability_errors import ObservabilityUnavailableError
+from app.services.observability_query import escape_label_value, validate_namespace, validate_pod_name
 
 
 class LokiService:
@@ -14,10 +15,13 @@ class LokiService:
         self.query_logs(namespace="devdeploy", limit=1)
 
     def query_logs(self, namespace: str, limit: int = 100) -> list[dict[str, Any]]:
-        return self._query_range(query=f'{{namespace="{namespace}"}}', limit=limit)
+        safe_namespace = escape_label_value(validate_namespace(namespace))
+        return self._query_range(query=f'{{namespace="{safe_namespace}"}}', limit=limit)
 
     def query_logs_by_pod(self, namespace: str, pod: str, limit: int = 100) -> list[dict[str, Any]]:
-        return self._query_range(query=f'{{namespace="{namespace}", pod="{pod}"}}', limit=limit)
+        safe_namespace = escape_label_value(validate_namespace(namespace))
+        safe_pod = escape_label_value(validate_pod_name(pod))
+        return self._query_range(query=f'{{namespace="{safe_namespace}", pod="{safe_pod}"}}', limit=limit)
 
     def _query_range(self, query: str, limit: int) -> list[dict[str, Any]]:
         url = f"{self.base_url}/loki/api/v1/query_range"

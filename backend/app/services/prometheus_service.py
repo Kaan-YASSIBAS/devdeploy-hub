@@ -7,6 +7,12 @@ import httpx
 
 from app.core.config import settings
 from app.services.observability_errors import ObservabilityUnavailableError
+from app.services.observability_query import (
+    escape_label_value,
+    validate_metric_range,
+    validate_metric_step,
+    validate_namespace,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -64,7 +70,7 @@ class PrometheusService:
         return self._build_summary(namespace=None)
 
     def get_namespace_metrics(self, namespace: str) -> dict[str, float]:
-        return self._build_summary(namespace=namespace)
+        return self._build_summary(namespace=validate_namespace(namespace))
 
     def get_metrics_timeseries(
         self,
@@ -73,10 +79,12 @@ class PrometheusService:
         step: str | None = None,
         metric: str | None = None,
     ) -> dict[str, Any]:
-        range_window = range_value.strip()
+        namespace = validate_namespace(namespace)
+        range_window = validate_metric_range(range_value)
         duration = self._parse_duration(range_window)
-        step_value = step or self._default_step(duration)
-        self._parse_duration(step_value)
+        step_value = validate_metric_step(step or self._default_step(duration))
+        if step_value is None:
+            raise PrometheusQueryError("step is required")
         end = datetime.now(timezone.utc)
         start = end - duration
 
@@ -100,13 +108,14 @@ class PrometheusService:
         }
 
     def _build_summary(self, namespace: str | None) -> dict[str, float]:
-        selector = f'namespace="{namespace}",' if namespace else ""
-        deployment_selector = f'{{namespace="{namespace}"}}' if namespace else ""
+        namespace_value = escape_label_value(namespace) if namespace else None
+        selector = f'namespace="{namespace_value}",' if namespace_value else ""
+        deployment_selector = f'{{namespace="{namespace_value}"}}' if namespace_value else ""
 
         queries = {
             "cpu_usage_cores": f'sum(rate(container_cpu_usage_seconds_total{{{selector}container!="",image!=""}}[5m]))',
             "memory_working_set_bytes": f'sum(container_memory_working_set_bytes{{{selector}container!="",image!=""}})',
-            "pod_count": f'count(kube_pod_info{{namespace="{namespace}"}})' if namespace else "count(kube_pod_info)",
+            "pod_count": f'count(kube_pod_info{{namespace="{namespace_value}"}})' if namespace_value else "count(kube_pod_info)",
             "restart_count": f"sum(kube_pod_container_status_restarts_total{{{selector[:-1]}}})"
             if namespace
             else "sum(kube_pod_container_status_restarts_total)",
@@ -170,11 +179,12 @@ class PrometheusService:
             )
         elif key == "pod_restarts":
             detail = (
-                last_error
-                or "No kube_pod_container_status_restarts_total series returned for this namespace and range."
+                "Prometheus could not return pod restart data for this metric."
+                if last_error
+                else "No kube_pod_container_status_restarts_total series returned for this namespace and range."
             )
         else:
-            detail = last_error or "No data returned for this metric."
+            detail = "Prometheus could not return data for this metric." if last_error else "No data returned for this metric."
 
         status = "unavailable" if last_error else "empty"
         return {
@@ -230,10 +240,11 @@ class PrometheusService:
 
     @staticmethod
     def _timeseries_definitions(namespace: str, restart_window: str) -> dict[str, dict[str, str]]:
-        namespace_selector = f'namespace="{namespace}"'
+        namespace_value = escape_label_value(namespace)
+        namespace_selector = f'namespace="{namespace_value}"'
         backend_service_selector = 'service="devdeploy-backend"'
         backend_job_selector = 'job=~".*devdeploy-backend.*"'
-        ingress_namespace_selector = f'exported_namespace="{namespace}"'
+        ingress_namespace_selector = f'exported_namespace="{namespace_value}"'
         error_status_selector = 'status=~"5..|5xx"'
         error_status_code_selector = 'status_code=~"5..|5xx"'
         return {
