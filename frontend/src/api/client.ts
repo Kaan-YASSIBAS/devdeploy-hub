@@ -26,6 +26,7 @@ import type {
   IntegrationStatusItem,
   ProfileSettings,
   ProfileSettingsUpdateInput,
+  SetupPreflightResponse,
   User,
   UserSummary,
   WorkspaceSettings,
@@ -143,6 +144,13 @@ export const usersApi = {
 export const dashboardApi = {
   async summary() {
     const { data } = await apiClient.get<DashboardSummary>("/dashboard/summary");
+    return data;
+  }
+};
+
+export const setupApi = {
+  async preflight() {
+    const { data } = await apiClient.get<SetupPreflightResponse>("/setup/preflight");
     return data;
   }
 };

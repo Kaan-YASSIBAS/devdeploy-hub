@@ -428,3 +428,20 @@ export type DashboardSummary = {
   deployment_timeline: DashboardTimelineEvent[];
   cluster_health: DashboardClusterHealthItem[];
 };
+
+export type SetupPreflightCheckStatus = "ok" | "warning" | "failed";
+
+export type SetupPreflightOverallStatus = "ready" | "warnings" | "blocked";
+
+export type SetupPreflightCheck = {
+  id: string;
+  label: string;
+  status: SetupPreflightCheckStatus;
+  message: string;
+  details: string | null;
+};
+
+export type SetupPreflightResponse = {
+  overall_status: SetupPreflightOverallStatus;
+  checks: SetupPreflightCheck[];
+};

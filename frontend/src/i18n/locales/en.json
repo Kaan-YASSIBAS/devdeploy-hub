@@ -688,6 +688,77 @@
       "localMinikube": "Local Kubernetes (minikube)",
       "dockerOnly": "Docker-only development"
     },
+    "preflight": {
+      "run": "Run checks",
+      "running": "Running checks",
+      "safeHint": "This check only collects information for local environment setup. It does not create a cluster or change Kubernetes resources.",
+      "status": {
+        "ok": "Ready",
+        "warning": "Warning",
+        "failed": "Blocked"
+      },
+      "overall": {
+        "ready": "Ready",
+        "warnings": "Warnings found",
+        "blocked": "Blocking issue found"
+      },
+      "messages": {
+        "completed": "Pre-flight checks completed.",
+        "failed": "Pre-flight checks could not be completed."
+      },
+      "checks": {
+        "docker_cli": {
+          "label": "Docker CLI",
+          "ok": "Docker CLI is installed.",
+          "failed": "Docker CLI is not available."
+        },
+        "docker_daemon": {
+          "label": "Docker daemon",
+          "ok": "Docker is running.",
+          "failed": "Docker is not reachable."
+        },
+        "kind_cli": {
+          "label": "kind",
+          "ok": "kind is installed.",
+          "failed": "kind is not available."
+        },
+        "kubectl_cli": {
+          "label": "kubectl",
+          "ok": "kubectl is installed.",
+          "failed": "kubectl is not available."
+        },
+        "git_cli": {
+          "label": "Git",
+          "ok": "Git is installed.",
+          "warning": "Git is not available."
+        },
+        "port_api_server": {
+          "label": "API server port",
+          "ok": "Port 58080 is available.",
+          "failed": "Port 58080 is already in use."
+        },
+        "port_http_ingress": {
+          "label": "HTTP ingress port",
+          "ok": "Port 8080 is available.",
+          "failed": "Port 8080 is already in use."
+        },
+        "port_https_ingress": {
+          "label": "HTTPS ingress port",
+          "ok": "Port 8443 is available.",
+          "failed": "Port 8443 is already in use."
+        },
+        "kubectl_context": {
+          "label": "Current kubectl context",
+          "ok": "kubectl is already using kind-devdeploy.",
+          "warning": "Current kubectl context is not kind-devdeploy."
+        },
+        "existing_devdeploy_cluster": {
+          "label": "Existing devdeploy cluster",
+          "ok": "No existing devdeploy kind cluster was detected.",
+          "warning": "A kind cluster named devdeploy already exists."
+        }
+      }
+    },
     "steps": {
       "welcome": {
         "title": "Welcome",

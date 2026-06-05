@@ -3,6 +3,7 @@ import { CheckCircle2, ChevronLeft, ChevronRight, PlayCircle, RefreshCw, Sparkle
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+import { getApiErrorMessage, setupApi } from "@/api/client";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ import { Select } from "@/components/ui/select";
 import { useAuth } from "@/features/auth/useAuth";
 import { SETUP_STEP_KEYS, createDefaultSetupState, loadSetupState, resetSetupState, saveSetupState } from "@/features/setup/setup-state";
 import type { SetupEnvironmentType, SetupStepKey, SetupStepStatus, SetupWizardState } from "@/features/setup/types";
+import type { SetupPreflightCheckStatus, SetupPreflightOverallStatus, SetupPreflightResponse } from "@/types";
 
 type StepDefinition = {
   key: SetupStepKey;
@@ -47,6 +49,19 @@ function statusVariant(status: SetupStepStatus) {
   return "muted";
 }
 
+function preflightStatusVariant(status: SetupPreflightCheckStatus | SetupPreflightOverallStatus) {
+  if (status === "ok" || status === "ready") {
+    return "success";
+  }
+  if (status === "warning" || status === "warnings") {
+    return "warning";
+  }
+  if (status === "failed" || status === "blocked") {
+    return "danger";
+  }
+  return "muted";
+}
+
 export function SetupWizardPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -54,6 +69,9 @@ export function SetupWizardPage() {
   const timerRef = useRef<number | null>(null);
 
   const [state, setState] = useState<SetupWizardState>(() => createDefaultSetupState());
+  const [preflightResult, setPreflightResult] = useState<SetupPreflightResponse | null>(null);
+  const [preflightError, setPreflightError] = useState<string | null>(null);
+  const [isRunningPreflight, setIsRunningPreflight] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -127,6 +145,24 @@ export function SetupWizardPage() {
     timerRef.current = window.setTimeout(() => {
       setStepStatus(stepKey, "simulated");
     }, 650);
+  };
+
+  const runPreflightChecks = async () => {
+    setPreflightError(null);
+    setIsRunningPreflight(true);
+    setStepStatus("preflight_checks", "pending");
+    try {
+      const result = await setupApi.preflight();
+      setPreflightResult(result);
+      setStepStatus("preflight_checks", result.overall_status === "blocked" ? "not_configured" : "ready");
+      toast.success(t("setup.preflight.messages.completed"));
+    } catch (error) {
+      setPreflightError(getApiErrorMessage(error));
+      setStepStatus("preflight_checks", "not_configured");
+      toast.error(t("setup.preflight.messages.failed"));
+    } finally {
+      setIsRunningPreflight(false);
+    }
   };
 
   const finishSetup = () => {
@@ -236,7 +272,54 @@ export function SetupWizardPage() {
               </div>
             ) : null}
 
-            {!["welcome", "environment_type"].includes(activeStep.key) ? (
+            {activeStep.key === "preflight_checks" ? (
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm leading-6 text-slate-300">
+                  {t("setup.preflight.safeHint")}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button disabled={isRunningPreflight} onClick={runPreflightChecks}>
+                    <RefreshCw className={`h-4 w-4 ${isRunningPreflight ? "animate-spin" : ""}`} />
+                    {isRunningPreflight ? t("setup.preflight.running") : t("setup.preflight.run")}
+                  </Button>
+                  {preflightResult ? (
+                    <Badge variant={preflightStatusVariant(preflightResult.overall_status)}>
+                      {t(`setup.preflight.overall.${preflightResult.overall_status}`)}
+                    </Badge>
+                  ) : null}
+                </div>
+
+                {preflightError ? (
+                  <div className="rounded-2xl border border-red-300/20 bg-red-400/10 p-4 text-sm text-red-100">
+                    {preflightError}
+                  </div>
+                ) : null}
+
+                {preflightResult ? (
+                  <div className="space-y-3">
+                    {preflightResult.checks.map((check) => (
+                      <div key={check.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-sm font-medium text-white">
+                            {t(`setup.preflight.checks.${check.id}.label`, { defaultValue: check.label })}
+                          </p>
+                          <Badge variant={preflightStatusVariant(check.status)}>
+                            {t(`setup.preflight.status.${check.status}`)}
+                          </Badge>
+                        </div>
+                        <p className="mt-2 text-sm leading-6 text-slate-300">
+                          {t(`setup.preflight.checks.${check.id}.${check.status}`, { defaultValue: check.message })}
+                        </p>
+                        {check.details ? <p className="mt-1 text-xs text-slate-500">{check.details}</p> : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {!["welcome", "environment_type", "preflight_checks"].includes(activeStep.key) ? (
               <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm leading-6 text-slate-300">
                 {t("setup.simulatedDescription")}
               </div>
@@ -256,7 +339,7 @@ export function SetupWizardPage() {
                   {t("setup.actions.saveEnvironment")}
                 </Button>
               ) : null}
-              {!["welcome", "environment_type"].includes(activeStep.key) ? (
+              {!["welcome", "environment_type", "preflight_checks"].includes(activeStep.key) ? (
                 <Button onClick={() => runSimulatedStep(activeStep.key)}>
                   <PlayCircle className="h-4 w-4" />
                   {t("setup.actions.runSimulated")}

@@ -688,6 +688,77 @@
       "localMinikube": "Lokal Kubernetes (minikube)",
       "dockerOnly": "Sadece Docker ile geliştirme"
     },
+    "preflight": {
+      "run": "Kontrolleri çalıştır",
+      "running": "Kontroller çalışıyor",
+      "safeHint": "Bu kontrol yalnızca yerel ortam hazırlığı için bilgi toplar. Cluster oluşturmaz veya Kubernetes kaynaklarını değiştirmez.",
+      "status": {
+        "ok": "Hazır",
+        "warning": "Uyarı",
+        "failed": "Engellendi"
+      },
+      "overall": {
+        "ready": "Hazır",
+        "warnings": "Uyarı var",
+        "blocked": "Engelleyici sorun var"
+      },
+      "messages": {
+        "completed": "Ön kontroller tamamlandı.",
+        "failed": "Ön kontroller tamamlanamadı."
+      },
+      "checks": {
+        "docker_cli": {
+          "label": "Docker CLI",
+          "ok": "Docker CLI kurulu.",
+          "failed": "Docker CLI bulunamadı."
+        },
+        "docker_daemon": {
+          "label": "Docker daemon",
+          "ok": "Docker çalışıyor.",
+          "failed": "Docker’a ulaşılamıyor."
+        },
+        "kind_cli": {
+          "label": "kind",
+          "ok": "kind kurulu.",
+          "failed": "kind bulunamadı."
+        },
+        "kubectl_cli": {
+          "label": "kubectl",
+          "ok": "kubectl kurulu.",
+          "failed": "kubectl bulunamadı."
+        },
+        "git_cli": {
+          "label": "Git",
+          "ok": "Git kurulu.",
+          "warning": "Git bulunamadı."
+        },
+        "port_api_server": {
+          "label": "API server portu",
+          "ok": "58080 portu kullanılabilir.",
+          "failed": "58080 portu şu anda kullanımda."
+        },
+        "port_http_ingress": {
+          "label": "HTTP ingress portu",
+          "ok": "8080 portu kullanılabilir.",
+          "failed": "8080 portu şu anda kullanımda."
+        },
+        "port_https_ingress": {
+          "label": "HTTPS ingress portu",
+          "ok": "8443 portu kullanılabilir.",
+          "failed": "8443 portu şu anda kullanımda."
+        },
+        "kubectl_context": {
+          "label": "Mevcut kubectl context",
+          "ok": "kubectl zaten kind-devdeploy context’ini kullanıyor.",
+          "warning": "Mevcut kubectl context kind-devdeploy değil."
+        },
+        "existing_devdeploy_cluster": {
+          "label": "Mevcut devdeploy cluster",
+          "ok": "devdeploy adında mevcut bir kind cluster bulunmadı.",
+          "warning": "devdeploy adında bir kind cluster zaten var."
+        }
+      }
+    },
     "steps": {
       "welcome": {
         "title": "Hoş geldin",
