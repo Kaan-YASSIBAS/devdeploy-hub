@@ -706,6 +706,20 @@
         "completed": "Pre-flight checks completed.",
         "failed": "Pre-flight checks could not be completed."
       },
+      "runtime": {
+        "host": {
+          "title": "Host-local runtime",
+          "description": "These checks are running from a local backend process, so host tools and ports can be verified."
+        },
+        "kubernetes": {
+          "title": "Running inside Kubernetes",
+          "description": "This check is currently running from the DevDeploy backend pod. Host tools such as Docker, kind, and kubectl cannot be verified from this mode. Future local environment setup will use DevDeploy Hub's local launcher/backend mode."
+        },
+        "unknown": {
+          "title": "Runtime limited",
+          "description": "The backend runtime could not be identified. Some local environment checks may be limited."
+        }
+      },
       "checks": {
         "docker_cli": {
           "label": "Docker CLI",

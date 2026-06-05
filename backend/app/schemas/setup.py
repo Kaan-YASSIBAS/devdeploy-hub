@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 PreflightCheckStatus = Literal["ok", "warning", "failed"]
 PreflightOverallStatus = Literal["ready", "warnings", "blocked"]
+PreflightRuntimeMode = Literal["host", "kubernetes", "unknown"]
 
 
 class SetupPreflightCheck(BaseModel):
@@ -16,5 +17,7 @@ class SetupPreflightCheck(BaseModel):
 
 
 class SetupPreflightResponse(BaseModel):
+    runtime_mode: PreflightRuntimeMode
+    runtime_message: str
     overall_status: PreflightOverallStatus
     checks: list[SetupPreflightCheck]

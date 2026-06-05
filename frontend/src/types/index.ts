@@ -433,6 +433,8 @@ export type SetupPreflightCheckStatus = "ok" | "warning" | "failed";
 
 export type SetupPreflightOverallStatus = "ready" | "warnings" | "blocked";
 
+export type SetupPreflightRuntimeMode = "host" | "kubernetes" | "unknown";
+
 export type SetupPreflightCheck = {
   id: string;
   label: string;
@@ -442,6 +444,8 @@ export type SetupPreflightCheck = {
 };
 
 export type SetupPreflightResponse = {
+  runtime_mode: SetupPreflightRuntimeMode;
+  runtime_message: string;
   overall_status: SetupPreflightOverallStatus;
   checks: SetupPreflightCheck[];
 };

@@ -297,6 +297,27 @@ export function SetupWizardPage() {
                 ) : null}
 
                 {preflightResult ? (
+                  <div
+                    className={`rounded-2xl border p-4 text-sm leading-6 ${
+                      preflightResult.runtime_mode === "kubernetes"
+                        ? "border-amber-300/20 bg-amber-400/10 text-amber-100"
+                        : "border-cyan-300/20 bg-cyan-400/10 text-cyan-100"
+                    }`}
+                  >
+                    <p className="font-medium">
+                      {t(`setup.preflight.runtime.${preflightResult.runtime_mode}.title`, {
+                        defaultValue: t("setup.preflight.runtime.unknown.title")
+                      })}
+                    </p>
+                    <p className="mt-1 text-slate-300">
+                      {t(`setup.preflight.runtime.${preflightResult.runtime_mode}.description`, {
+                        defaultValue: preflightResult.runtime_message
+                      })}
+                    </p>
+                  </div>
+                ) : null}
+
+                {preflightResult ? (
                   <div className="space-y-3">
                     {preflightResult.checks.map((check) => (
                       <div key={check.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">

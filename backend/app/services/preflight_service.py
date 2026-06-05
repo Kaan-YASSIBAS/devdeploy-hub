@@ -4,8 +4,11 @@ import shutil
 import socket
 import subprocess
 from dataclasses import dataclass
+import os
+from pathlib import Path
+from typing import cast
 
-from app.schemas.setup import SetupPreflightCheck, SetupPreflightResponse
+from app.schemas.setup import PreflightCheckStatus, SetupPreflightCheck, SetupPreflightResponse
 
 
 LOCALHOST = "127.0.0.1"
@@ -16,6 +19,24 @@ REQUIRED_PORTS = {
     "port_http_ingress": ("HTTP ingress port 8080", 8080),
     "port_https_ingress": ("HTTPS ingress port 8443", 8443),
 }
+SERVICE_ACCOUNT_TOKEN_PATH = Path("/var/run/secrets/kubernetes.io/serviceaccount/token")
+KUBERNETES_RUNTIME_MESSAGE = (
+    "Preflight is running inside the DevDeploy backend pod. Host tools such as Docker, kind, kubectl, and Git "
+    "cannot be verified from this runtime. Future local environment creation should run from a local launcher/backend."
+)
+HOST_RUNTIME_MESSAGE = "Preflight is running in a host-local backend process, so host tools and ports can be verified."
+HOST_LOCAL_CHECKS = [
+    ("docker_cli", "Docker CLI"),
+    ("docker_daemon", "Docker daemon"),
+    ("kind_cli", "kind CLI"),
+    ("kubectl_cli", "kubectl CLI"),
+    ("git_cli", "Git CLI"),
+    ("port_api_server", "API server port 58080"),
+    ("port_http_ingress", "HTTP ingress port 8080"),
+    ("port_https_ingress", "HTTPS ingress port 8443"),
+    ("kubectl_context", "Current kubectl context"),
+    ("existing_devdeploy_cluster", "Existing devdeploy cluster"),
+]
 
 
 @dataclass(frozen=True)
@@ -31,16 +52,22 @@ class PreflightService:
 
     @classmethod
     def run(cls) -> SetupPreflightResponse:
-        checks = [
-            cls._docker_cli_check(),
-            cls._docker_daemon_check(),
-            cls._kind_cli_check(),
-            cls._kubectl_cli_check(),
-            cls._git_cli_check(),
-            *cls._port_checks(),
-            cls._kubectl_context_check(),
-            cls._existing_kind_cluster_check(),
-        ]
+        runtime_mode = cls._detect_runtime_mode()
+        runtime_message = cls._runtime_message(runtime_mode)
+
+        if runtime_mode == "kubernetes":
+            checks = cls._kubernetes_runtime_limited_checks()
+        else:
+            checks = [
+                cls._docker_cli_check(),
+                cls._docker_daemon_check(),
+                cls._kind_cli_check(),
+                cls._kubectl_cli_check(),
+                cls._git_cli_check(),
+                *cls._port_checks(),
+                cls._kubectl_context_check(),
+                cls._existing_kind_cluster_check(),
+            ]
 
         if any(check.status == "failed" for check in checks):
             overall_status = "blocked"
@@ -49,7 +76,39 @@ class PreflightService:
         else:
             overall_status = "ready"
 
-        return SetupPreflightResponse(overall_status=overall_status, checks=checks)
+        return SetupPreflightResponse(
+            runtime_mode=runtime_mode,
+            runtime_message=runtime_message,
+            overall_status=overall_status,
+            checks=checks,
+        )
+
+    @staticmethod
+    def _detect_runtime_mode() -> str:
+        if os.getenv("KUBERNETES_SERVICE_HOST") or SERVICE_ACCOUNT_TOKEN_PATH.exists():
+            return "kubernetes"
+        return "host"
+
+    @staticmethod
+    def _runtime_message(runtime_mode: str) -> str:
+        if runtime_mode == "kubernetes":
+            return KUBERNETES_RUNTIME_MESSAGE
+        if runtime_mode == "host":
+            return HOST_RUNTIME_MESSAGE
+        return "Preflight runtime could not be identified. Results may be limited."
+
+    @classmethod
+    def _kubernetes_runtime_limited_checks(cls) -> list[SetupPreflightCheck]:
+        return [
+            cls._check(
+                check_id,
+                label,
+                "warning",
+                "This host-local check is running inside the DevDeploy backend pod and cannot verify the user's host machine.",
+                "Runtime mode: kubernetes",
+            )
+            for check_id, label in HOST_LOCAL_CHECKS
+        ]
 
     @staticmethod
     def _command_exists(command: str) -> bool:
@@ -177,7 +236,7 @@ class PreflightService:
             )
 
         context = result.output or ""
-        status = "ok" if context == DEFAULT_KUBECTL_CONTEXT else "warning"
+        status: PreflightCheckStatus = "ok" if context == DEFAULT_KUBECTL_CONTEXT else "warning"
         message = (
             "Current kubectl context targets the default DevDeploy kind cluster."
             if status == "ok"
@@ -219,14 +278,14 @@ class PreflightService:
     def _check(
         check_id: str,
         label: str,
-        status: str,
+        status: PreflightCheckStatus,
         message: str,
         details: str | None = None,
     ) -> SetupPreflightCheck:
         return SetupPreflightCheck(
             id=check_id,
             label=label,
-            status=status,  # type: ignore[arg-type]
+            status=cast(PreflightCheckStatus, status),
             message=message,
             details=details,
         )

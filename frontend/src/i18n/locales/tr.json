@@ -706,6 +706,20 @@
         "completed": "Ön kontroller tamamlandı.",
         "failed": "Ön kontroller tamamlanamadı."
       },
+      "runtime": {
+        "host": {
+          "title": "Host üzerinde çalışıyor",
+          "description": "Bu kontroller local backend sürecinden çalışıyor. Bu yüzden host araçları ve portlar doğrulanabilir."
+        },
+        "kubernetes": {
+          "title": "Kubernetes içinde çalışıyor",
+          "description": "Bu kontrol şu anda Kubernetes içindeki backend pod’undan çalışıyor. Docker, kind ve kubectl gibi host araçları bu çalışma modundan doğrulanamaz. Local ortam kurulumu için ileride DevDeploy Hub’ın local launcher/backend modu kullanılacak."
+        },
+        "unknown": {
+          "title": "Çalışma modu sınırlı",
+          "description": "Backend çalışma modu belirlenemedi. Bazı local ortam kontrolleri sınırlı olabilir."
+        }
+      },
       "checks": {
         "docker_cli": {
           "label": "Docker CLI",
