@@ -7,7 +7,7 @@ alembic
 pydantic
 pydantic-settings
 python-dotenv
-PyJWT==2.12.1
+PyJWT==2.13.0
 httpx
 kubernetes
 prometheus-fastapi-instrumentator
