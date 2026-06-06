@@ -12,6 +12,8 @@
 param(
     [switch]$GenerateKindConfigs,
 
+    [switch]$CreateManagementCluster,
+
     [switch]$Quiet
 )
 
@@ -188,7 +190,9 @@ function Get-OverallStatus {
 
 function New-LauncherArtifacts {
     param(
-        [bool]$IncludeKindConfigs
+        [bool]$IncludeManagementKindConfig,
+
+        [bool]$IncludeWorkloadKindConfig
     )
 
     $artifacts = [ordered]@{
@@ -197,8 +201,11 @@ function New-LauncherArtifacts {
         kind_config_directory = [string]$KindDir
     }
 
-    if ($IncludeKindConfigs) {
+    if ($IncludeManagementKindConfig) {
         $artifacts["management_kind_config"] = [string]$MgmtKindConfigPath
+    }
+
+    if ($IncludeWorkloadKindConfig) {
         $artifacts["workload_kind_config"] = [string]$WorkloadKindConfigPath
     }
 
@@ -240,6 +247,9 @@ function New-NextActions {
     }
     elseif ($OverallStatus -eq "ok" -and $LauncherMode -eq "kind_config_preview") {
         $actions.Add("Kind config previews are ready. Proceed to the future cluster creation step when Phase 2C/2D implementation is available.") | Out-Null
+    }
+    elseif ($OverallStatus -eq "ok" -and $LauncherMode -eq "management_cluster_create") {
+        $actions.Add("devdeploy-mgmt is created or verified. Proceed to the future platform component bootstrap step when available.") | Out-Null
     }
     elseif ($OverallStatus -eq "warning") {
         $actions.Add("Review warning checks before continuing. Warnings are not currently blocking, but later setup steps may need attention.") | Out-Null
@@ -389,7 +399,15 @@ function Test-DockerDaemon {
 function Test-LocalPortAvailable {
     param(
         [Parameter(Mandatory = $true)]
-        [int]$Port
+        [int]$Port,
+
+        [bool]$Required = $true,
+
+        [bool]$AllowBusyAsOk = $false,
+
+        [string]$ExpectedCluster = "",
+
+        [bool]$ExistingClusterDetected = $false
     )
 
     $listener = $null
@@ -398,17 +416,35 @@ function Test-LocalPortAvailable {
         $listener = New-Object System.Net.Sockets.TcpListener $endpoint
         $listener.Start()
         Add-Check -Id ("port_{0}" -f $Port) -Label ("Port {0}" -f $Port) -Status "ok" -Message ("Port {0} is available on 127.0.0.1." -f $Port) -Details @{
-            port     = $Port
-            address  = "127.0.0.1"
-            required = $true
+            port                      = $Port
+            address                   = "127.0.0.1"
+            required                  = $Required
+            expected_cluster          = $ExpectedCluster
+            existing_cluster_detected = $ExistingClusterDetected
+            blocking                  = $false
         }
     }
     catch {
-        Add-Check -Id ("port_{0}" -f $Port) -Label ("Port {0}" -f $Port) -Status "failed" -Message ("Port {0} is already in use. Free this port before creating DevDeploy local clusters." -f $Port) -Details @{
-            port     = $Port
-            address  = "127.0.0.1"
-            required = $true
-            error    = Protect-LogText $_.Exception.Message
+        $status = if ($AllowBusyAsOk) { "ok" } elseif ($Required) { "failed" } else { "warning" }
+        $message = if ($AllowBusyAsOk) {
+            "Port {0} is in use and {1} exists; treating this as expected for the cluster." -f $Port, $ExpectedCluster
+        }
+        elseif ($Required) {
+            "Port {0} is already in use. Free this port before creating DevDeploy local clusters." -f $Port
+        }
+        else {
+            "Port {0} is already in use. This is not blocking for the current mode, but review it before later setup steps." -f $Port
+        }
+
+        Add-Check -Id ("port_{0}" -f $Port) -Label ("Port {0}" -f $Port) -Status $status -Message $message -Details @{
+            port                      = $Port
+            address                   = "127.0.0.1"
+            required                  = $Required
+            expected_cluster          = $ExpectedCluster
+            existing_cluster_detected = $ExistingClusterDetected
+            blocking                  = [bool]($Required -and -not $AllowBusyAsOk)
+            busy_ok                   = $AllowBusyAsOk
+            error                     = Protect-LogText $_.Exception.Message
         }
     }
     finally {
@@ -420,7 +456,9 @@ function Test-LocalPortAvailable {
 
 function Test-KindClusters {
     param(
-        [bool]$KindAvailable
+        [bool]$KindAvailable,
+
+        [bool]$ManagementCreateMode = $false
     )
 
     if (-not $KindAvailable) {
@@ -452,6 +490,15 @@ function Test-KindClusters {
     }
     else {
         "No existing DevDeploy kind cluster names were detected."
+    }
+
+    if ($ManagementCreateMode -and $mgmtExists -and -not $workloadExists) {
+        $status = "ok"
+        $message = "devdeploy-mgmt already exists and will be verified instead of recreated."
+    }
+    elseif ($ManagementCreateMode -and $workloadExists) {
+        $status = "warning"
+        $message = "An existing devdeploy-workload cluster was detected. This mode will not create, modify, or delete it."
     }
 
     Add-Check -Id "kind_clusters" -Label "Existing kind clusters" -Status $status -Message $message -Details @{
@@ -576,11 +623,239 @@ function Write-KindConfigPreview {
     }
 }
 
+function Get-KindClusterNames {
+    param(
+        [bool]$KindAvailable
+    )
+
+    if (-not $KindAvailable) {
+        return [ordered]@{
+            success  = $false
+            clusters = @()
+            error    = "kind CLI is missing."
+        }
+    }
+
+    $result = Invoke-ReadOnlyCommand -FileName "kind" -Arguments @("get", "clusters") -TimeoutSeconds 8
+    if ($result.exit_code -ne 0 -or $result.timed_out) {
+        return [ordered]@{
+            success  = $false
+            clusters = @()
+            error    = $result.stderr
+        }
+    }
+
+    $clusters = @()
+    if (-not [string]::IsNullOrWhiteSpace($result.stdout)) {
+        $clusters = @($result.stdout -split "\s+" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    }
+
+    return [ordered]@{
+        success  = $true
+        clusters = $clusters
+        error    = ""
+    }
+}
+
+function Test-ManagementClusterExists {
+    param(
+        [bool]$KindAvailable
+    )
+
+    $clusterResult = Get-KindClusterNames -KindAvailable $KindAvailable
+    if (-not $clusterResult.success) {
+        Add-Check -Id "management_cluster_exists" -Label "Management cluster exists" -Status "failed" -Message "Could not verify whether devdeploy-mgmt exists." -Details @{
+            required     = $true
+            cluster_name = "devdeploy-mgmt"
+            error        = Protect-LogText $clusterResult.error
+        }
+        return $false
+    }
+
+    $exists = @($clusterResult.clusters) -contains "devdeploy-mgmt"
+    if ($exists) {
+        Add-Check -Id "management_cluster_exists" -Label "Management cluster exists" -Status "ok" -Message "devdeploy-mgmt already exists." -Details @{
+            required     = $true
+            cluster_name = "devdeploy-mgmt"
+            exists       = $true
+        }
+        return $true
+    }
+
+    Add-Check -Id "management_cluster_exists" -Label "Management cluster exists" -Status "ok" -Message "devdeploy-mgmt does not exist yet and can be created by this explicit mode." -Details @{
+        required     = $true
+        cluster_name = "devdeploy-mgmt"
+        exists       = $false
+    }
+    return $false
+}
+
+function Invoke-ManagementClusterCreate {
+    param(
+        [bool]$AlreadyExists
+    )
+
+    if ($AlreadyExists) {
+        Add-Check -Id "management_cluster_create" -Label "Management cluster create" -Status "skipped" -Message "devdeploy-mgmt already exists, so creation was skipped." -Details @{
+            required     = $false
+            cluster_name = "devdeploy-mgmt"
+            created      = $false
+            skipped      = "already_exists"
+        }
+        return $true
+    }
+
+    Write-LauncherLog "Creating devdeploy-mgmt with kind. No Kubernetes manifests or Helm charts will be installed."
+    $result = Invoke-ReadOnlyCommand -FileName "kind" -Arguments @("create", "cluster", "--config", $MgmtKindConfigPath) -TimeoutSeconds 300
+    if ($result.exit_code -eq 0 -and -not $result.timed_out) {
+        Add-Check -Id "management_cluster_create" -Label "Management cluster create" -Status "ok" -Message "Created devdeploy-mgmt with kind." -Details @{
+            required     = $true
+            cluster_name = "devdeploy-mgmt"
+            config_path  = $MgmtKindConfigPath
+            created      = $true
+        }
+        return $true
+    }
+
+    $message = "kind failed to create devdeploy-mgmt. No automatic cleanup was performed."
+    if ($result.timed_out) {
+        $message = "kind create cluster timed out for devdeploy-mgmt. No automatic cleanup was performed."
+    }
+
+    Add-Check -Id "management_cluster_create" -Label "Management cluster create" -Status "failed" -Message $message -Details @{
+        required     = $true
+        cluster_name = "devdeploy-mgmt"
+        config_path  = $MgmtKindConfigPath
+        error        = $result.stderr
+    }
+    return $false
+}
+
+function Test-ManagementClusterVerify {
+    param(
+        [bool]$KindAvailable,
+
+        [bool]$KubectlAvailable
+    )
+
+    $clusterResult = Get-KindClusterNames -KindAvailable $KindAvailable
+    if (-not $clusterResult.success -or -not (@($clusterResult.clusters) -contains "devdeploy-mgmt")) {
+        Add-Check -Id "management_cluster_verify" -Label "Management cluster verify" -Status "failed" -Message "devdeploy-mgmt could not be found during verification." -Details @{
+            required     = $true
+            cluster_name = "devdeploy-mgmt"
+            error        = Protect-LogText $clusterResult.error
+        }
+        return
+    }
+
+    if (-not $KubectlAvailable) {
+        Add-Check -Id "management_cluster_verify" -Label "Management cluster verify" -Status "failed" -Message "kubectl is required to verify devdeploy-mgmt nodes." -Details @{
+            required     = $true
+            cluster_name = "devdeploy-mgmt"
+            context      = "kind-devdeploy-mgmt"
+        }
+        return
+    }
+
+    $contextResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("config", "get-contexts", "kind-devdeploy-mgmt", "--no-headers") -TimeoutSeconds 8
+    if ($contextResult.exit_code -ne 0 -or $contextResult.timed_out -or [string]::IsNullOrWhiteSpace($contextResult.stdout)) {
+        Add-Check -Id "management_cluster_verify" -Label "Management cluster verify" -Status "failed" -Message "kubectl context kind-devdeploy-mgmt is not usable." -Details @{
+            required     = $true
+            cluster_name = "devdeploy-mgmt"
+            context      = "kind-devdeploy-mgmt"
+            error        = $contextResult.stderr
+        }
+        return
+    }
+
+    $lastError = ""
+    $lastNodeCount = 0
+    $lastReadyCount = 0
+
+    for ($attempt = 1; $attempt -le 12; $attempt++) {
+        $nodesResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "get", "nodes", "--no-headers") -TimeoutSeconds 20
+        if ($nodesResult.exit_code -eq 0 -and -not $nodesResult.timed_out -and -not [string]::IsNullOrWhiteSpace($nodesResult.stdout)) {
+            try {
+                $nodes = @($nodesResult.stdout -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                $readyNodes = @($nodes | Where-Object {
+                        $columns = @($_ -split "\s+" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                        $columns.Count -ge 2 -and $columns[1] -eq "Ready"
+                    })
+
+                $lastNodeCount = [int]$nodes.Count
+                $lastReadyCount = [int]$readyNodes.Count
+
+                if ($lastNodeCount -gt 0 -and $lastReadyCount -eq $lastNodeCount) {
+                    Add-Check -Id "management_cluster_verify" -Label "Management cluster verify" -Status "ok" -Message "devdeploy-mgmt exists and all nodes are Ready." -Details @{
+                        required     = $true
+                        cluster_name = "devdeploy-mgmt"
+                        context      = "kind-devdeploy-mgmt"
+                        node_count   = [int]$lastNodeCount
+                        ready_nodes  = [int]$lastReadyCount
+                    }
+                    return
+                }
+            }
+            catch {
+                $lastError = Protect-LogText $_.Exception.Message
+            }
+        }
+        else {
+            $lastError = $nodesResult.stderr
+        }
+
+        if ($attempt -lt 12) {
+            Start-Sleep -Seconds 5
+        }
+    }
+
+    if ($lastNodeCount -gt 0) {
+        Add-Check -Id "management_cluster_verify" -Label "Management cluster verify" -Status "warning" -Message "devdeploy-mgmt exists, but not all nodes are Ready yet." -Details @{
+            required     = $true
+            cluster_name = "devdeploy-mgmt"
+            context      = "kind-devdeploy-mgmt"
+            node_count   = [int]$lastNodeCount
+            ready_nodes  = [int]$lastReadyCount
+        }
+        return
+    }
+
+    Add-Check -Id "management_cluster_verify" -Label "Management cluster verify" -Status "failed" -Message "kubectl could not read nodes from devdeploy-mgmt." -Details @{
+        required     = $true
+        cluster_name = "devdeploy-mgmt"
+        context      = "kind-devdeploy-mgmt"
+        error        = Protect-LogText $lastError
+    }
+}
+
+function Add-SkippedManagementClusterStages {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Reason
+    )
+
+    Add-Check -Id "management_cluster_exists" -Label "Management cluster exists" -Status "skipped" -Message $Reason -Details @{
+        required     = $true
+        cluster_name = "devdeploy-mgmt"
+    }
+    Add-Check -Id "management_cluster_create" -Label "Management cluster create" -Status "skipped" -Message $Reason -Details @{
+        required     = $true
+        cluster_name = "devdeploy-mgmt"
+    }
+    Add-Check -Id "management_cluster_verify" -Label "Management cluster verify" -Status "skipped" -Message $Reason -Details @{
+        required     = $true
+        cluster_name = "devdeploy-mgmt"
+    }
+}
+
 New-LocalDirectory -Path $StatusDir
 New-LocalDirectory -Path $LogsDir
 New-LocalDirectory -Path $KindDir
 
-if ($GenerateKindConfigs) {
+if ($CreateManagementCluster) {
+    Write-LauncherLog "Starting DevDeploy Launcher guarded management cluster create mode."
+}
+elseif ($GenerateKindConfigs) {
     Write-LauncherLog "Starting DevDeploy Launcher read-only preflight with kind config preview generation."
 }
 else {
@@ -595,16 +870,72 @@ $kubectlAvailable = Test-CommandAvailable -Name "kubectl" -Label "kubectl CLI" -
 
 Test-DockerDaemon -DockerCliAvailable $dockerAvailable
 
-foreach ($port in @($PortPlan.Values)) {
-    Test-LocalPortAvailable -Port $port
+$existingKindClusters = @()
+$managementClusterExistsBeforePortCheck = $false
+$workloadClusterExistsBeforePortCheck = $false
+if ($kindAvailable) {
+    $earlyClusterResult = Get-KindClusterNames -KindAvailable $kindAvailable
+    if ($earlyClusterResult.success) {
+        $existingKindClusters = @($earlyClusterResult.clusters)
+        $managementClusterExistsBeforePortCheck = $existingKindClusters -contains "devdeploy-mgmt"
+        $workloadClusterExistsBeforePortCheck = $existingKindClusters -contains "devdeploy-workload"
+    }
 }
 
-Test-KindClusters -KindAvailable $kindAvailable
+foreach ($entry in $PortPlan.GetEnumerator()) {
+    $portKey = [string]$entry.Key
+    $isManagementPort = $portKey -in @("management_api", "management_http", "management_https")
+    $isWorkloadPort = $portKey -in @("workload_api", "workload_http", "workload_https")
+    $expectedCluster = if ($isManagementPort) { "devdeploy-mgmt" } elseif ($isWorkloadPort) { "devdeploy-workload" } else { "" }
+    $existingClusterDetected = [bool](($isManagementPort -and $managementClusterExistsBeforePortCheck) -or ($isWorkloadPort -and $workloadClusterExistsBeforePortCheck))
+    $portRequired = [bool](-not $existingClusterDetected)
+    $allowBusyAsOk = [bool]$existingClusterDetected
+
+    Test-LocalPortAvailable -Port ([int]$entry.Value) -Required $portRequired -AllowBusyAsOk $allowBusyAsOk -ExpectedCluster $expectedCluster -ExistingClusterDetected $existingClusterDetected
+}
+
+if ($workloadClusterExistsBeforePortCheck) {
+    Add-Check -Id "workload_cluster_detected" -Label "Workload cluster detected" -Status "warning" -Message "devdeploy-workload already exists. This launcher mode will not create, modify, or delete it." -Details @{
+        required     = $false
+        cluster_name = "devdeploy-workload"
+        exists       = $true
+    }
+}
+
+Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster)
 Test-KubectlContext -KubectlAvailable $kubectlAvailable
 
-$launcherMode = if ($GenerateKindConfigs) { "kind_config_preview" } else { "preflight" }
+$launcherMode = "preflight"
+if ($CreateManagementCluster) {
+    $launcherMode = "management_cluster_create"
+}
+elseif ($GenerateKindConfigs) {
+    $launcherMode = "kind_config_preview"
+}
 
-if ($GenerateKindConfigs) {
+if ($CreateManagementCluster) {
+    Write-KindConfigPreview -Id "management_kind_config" -Label "Management kind config" -ClusterName "devdeploy-mgmt" -Path $MgmtKindConfigPath -ApiServerPort 58080 -HttpHostPort 8080 -HttpsHostPort 8443
+
+    $preCreateChecks = @($Checks | ForEach-Object { $_ })
+    $preCreateStatus = [string](Get-OverallStatus -StableChecks $preCreateChecks)
+    if ($preCreateStatus -eq "failed") {
+        Add-SkippedManagementClusterStages -Reason "Management cluster create was skipped because required preflight or kind config checks failed."
+    }
+    else {
+        $managementClusterExists = Test-ManagementClusterExists -KindAvailable $kindAvailable
+        $managementClusterCreatedOrPresent = Invoke-ManagementClusterCreate -AlreadyExists $managementClusterExists
+        if ($managementClusterCreatedOrPresent) {
+            Test-ManagementClusterVerify -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
+        }
+        else {
+            Add-Check -Id "management_cluster_verify" -Label "Management cluster verify" -Status "skipped" -Message "Management cluster verification was skipped because creation failed." -Details @{
+                required     = $true
+                cluster_name = "devdeploy-mgmt"
+            }
+        }
+    }
+}
+elseif ($GenerateKindConfigs) {
     Write-KindConfigPreview -Id "kind_config_mgmt_preview" -Label "Management kind config preview" -ClusterName "devdeploy-mgmt" -Path $MgmtKindConfigPath -ApiServerPort 58080 -HttpHostPort 8080 -HttpsHostPort 8443
     Write-KindConfigPreview -Id "kind_config_workload_preview" -Label "Workload kind config preview" -ClusterName "devdeploy-workload" -Path $WorkloadKindConfigPath -ApiServerPort 58081 -HttpHostPort 8081 -HttpsHostPort 8444
 }
@@ -612,7 +943,7 @@ if ($GenerateKindConfigs) {
 $stableChecks = @($Checks | ForEach-Object { $_ })
 $overallStatus = [string](Get-OverallStatus -StableChecks $stableChecks)
 $summary = New-LauncherSummary -StableChecks $stableChecks
-$artifacts = New-LauncherArtifacts -IncludeKindConfigs ([bool]$GenerateKindConfigs)
+$artifacts = New-LauncherArtifacts -IncludeManagementKindConfig ([bool]($GenerateKindConfigs -or $CreateManagementCluster)) -IncludeWorkloadKindConfig ([bool]($GenerateKindConfigs -and -not $CreateManagementCluster))
 $nextActions = @(New-NextActions -StableChecks $stableChecks -LauncherMode $launcherMode -OverallStatus $overallStatus)
 
 $statusDocument = [ordered]@{
@@ -637,7 +968,10 @@ Write-LauncherLog ("Wrote launcher status to {0}" -f $StatusPath)
 
 if (-not $Quiet) {
     Write-Host ("DevDeploy Launcher preflight status: {0}" -f $overallStatus)
-    if ($GenerateKindConfigs) {
+    if ($CreateManagementCluster) {
+        Write-Host ("Management kind config: {0}" -f $MgmtKindConfigPath)
+    }
+    elseif ($GenerateKindConfigs) {
         Write-Host ("Management kind config: {0}" -f $MgmtKindConfigPath)
         Write-Host ("Workload kind config: {0}" -f $WorkloadKindConfigPath)
     }

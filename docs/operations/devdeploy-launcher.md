@@ -1,8 +1,8 @@
 # DevDeploy Launcher Preflight
 
-This document explains the Phase 2B DevDeploy Launcher skeleton for Windows PowerShell.
+This document explains the DevDeploy Launcher skeleton for Windows PowerShell.
 
-The launcher currently performs read-only host preflight checks and writes sanitized structured status for future backend and Setup Wizard integration. It does not create clusters yet.
+The launcher writes sanitized structured status for future backend and Setup Wizard integration. Default preflight mode and kind config preview mode are read-only. Management cluster creation happens only when `-CreateManagementCluster` is explicitly passed.
 
 ## Run The Preflight
 
@@ -47,6 +47,40 @@ Preview mode still does not:
 - Run `kubectl delete`.
 - Install Helm charts.
 
+## Create Or Verify The Management Cluster
+
+To explicitly create or verify only the management cluster:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -CreateManagementCluster
+```
+
+This guarded mode:
+
+- Runs the preflight checks.
+- Generates or verifies `.devdeploy/local/kind/devdeploy-mgmt.yaml`.
+- Creates `devdeploy-mgmt` only if it does not already exist.
+- Verifies `devdeploy-mgmt` with safe read-only checks.
+- Does not recreate an existing `devdeploy-mgmt` cluster.
+- Does not delete clusters.
+- Does not create `devdeploy-workload`.
+- Does not install ingress-nginx.
+- Does not install Argo CD.
+- Does not deploy DevDeploy backend, frontend, or PostgreSQL.
+- Does not run `kubectl apply`.
+- Does not run `kubectl delete`.
+- Does not run `helm install`.
+
+Manual verification commands:
+
+```powershell
+kind get clusters
+kubectl config get-contexts
+kubectl --context kind-devdeploy-mgmt get nodes
+```
+
+If required preflight checks fail, the launcher does not create the cluster. If creation fails, the launcher records a failed status and does not perform automatic cleanup.
+
 ## What It Checks
 
 The launcher checks:
@@ -69,7 +103,21 @@ The launcher checks:
 
 Docker, Docker daemon, kind, kubectl, and required ports are treated as blocking checks. Git and Helm are warnings in this first read-only skeleton because the script does not yet perform repository or chart bootstrap.
 
-If a required port such as `8080` is busy, the launcher exits with a failed status. Preview mode still writes the deterministic kind config files so users can inspect the planned cluster configuration, but the configs cannot be used until the busy ports are freed.
+If a required port such as `8080` is busy before the matching DevDeploy cluster exists, the launcher exits with a failed status. Preview mode still writes deterministic kind config files so users can inspect the planned cluster configuration, but the configs cannot be used until blocking ports are freed.
+
+After a DevDeploy cluster exists, its expected ports may already be occupied by that cluster. In that case, the launcher treats the port usage as expected instead of a blocking failure:
+
+- `58080`, `8080`, and `8443` are expected when `devdeploy-mgmt` exists.
+- `58081`, `8081`, and `8444` are expected when `devdeploy-workload` exists.
+
+Port check details include:
+
+- `port`
+- `address`
+- `required`
+- `expected_cluster`
+- `existing_cluster_detected`
+- `blocking`
 
 ## Status Output
 
@@ -110,6 +158,7 @@ devdeploy-launcher-status
 
 - `preflight`
 - `kind_config_preview`
+- `management_cluster_create`
 
 `status` is one of:
 
@@ -168,6 +217,10 @@ When `-GenerateKindConfigs` is used, it also includes:
 - `management_kind_config`
 - `workload_kind_config`
 
+When `-CreateManagementCluster` is used, it includes:
+
+- `management_kind_config`
+
 The `next_actions` array contains safe, non-destructive guidance. For example:
 
 - If port `8080` is busy, it tells the user to free port `8080` before creating DevDeploy local clusters.
@@ -198,9 +251,9 @@ These paths are local launcher working directories. They are not Kubernetes mani
 
 ## Read-Only Scope
 
-This first launcher version is read-only.
+Default preflight mode and kind config preview mode are read-only.
 
-It does not:
+They do not:
 
 - Create kind clusters.
 - Delete kind clusters.
@@ -212,9 +265,11 @@ It does not:
 - Deploy workloads.
 - Modify Kubernetes runtime resources.
 
-## Phase 2B Role
+`-CreateManagementCluster` is the only current mode that may create a cluster, and it may create only `devdeploy-mgmt`.
 
-Phase 2B introduces the host-side launcher contract.
+## Phase 2B / 2C Role
+
+Phase 2B introduced the host-side launcher contract and kind config preview. Phase 2C adds guarded management cluster creation.
 
 The Setup Wizard and backend should eventually consume this launcher status instead of assuming that an in-cluster backend can verify host tools such as Docker, kind, kubectl, Helm, ports, kubeconfigs, or filesystem state.
 
