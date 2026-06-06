@@ -613,7 +613,7 @@ $stableChecks = @($Checks | ForEach-Object { $_ })
 $overallStatus = [string](Get-OverallStatus -StableChecks $stableChecks)
 $summary = New-LauncherSummary -StableChecks $stableChecks
 $artifacts = New-LauncherArtifacts -IncludeKindConfigs ([bool]$GenerateKindConfigs)
-$nextActions = New-NextActions -StableChecks $stableChecks -LauncherMode $launcherMode -OverallStatus $overallStatus
+$nextActions = @(New-NextActions -StableChecks $stableChecks -LauncherMode $launcherMode -OverallStatus $overallStatus)
 
 $statusDocument = [ordered]@{
     schema_version   = "1"
@@ -629,7 +629,7 @@ $statusDocument = [ordered]@{
     checks           = $stableChecks
     artifacts        = $artifacts
     ports            = $PortPlan
-    next_actions     = $nextActions
+    next_actions     = [string[]]$nextActions
 }
 
 $statusDocument | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $StatusPath -Encoding UTF8
