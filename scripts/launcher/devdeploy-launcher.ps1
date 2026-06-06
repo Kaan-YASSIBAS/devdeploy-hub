@@ -10,6 +10,8 @@
 
 [CmdletBinding()]
 param(
+    [switch]$GenerateKindConfigs,
+
     [switch]$Quiet
 )
 
@@ -25,7 +27,18 @@ $LogsDir = Join-Path $LocalRoot "logs"
 $KindDir = Join-Path $LocalRoot "kind"
 $StatusPath = Join-Path $StatusDir "launcher-status.json"
 $LogPath = Join-Path $LogsDir "devdeploy-launcher.log"
+$MgmtKindConfigPath = Join-Path $KindDir "devdeploy-mgmt.yaml"
+$WorkloadKindConfigPath = Join-Path $KindDir "devdeploy-workload.yaml"
 $Checks = New-Object System.Collections.Generic.List[object]
+
+$PortPlan = [ordered]@{
+    management_api   = 58080
+    management_http  = 8080
+    management_https = 8443
+    workload_api     = 58081
+    workload_http    = 8081
+    workload_https   = 8444
+}
 
 function New-LocalDirectory {
     param(
@@ -102,6 +115,143 @@ function Add-Check {
     Write-LauncherLog ("{0}: {1} - {2}" -f $Id, $Status, $Message)
 }
 
+function Get-CheckRequired {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Check
+    )
+
+    try {
+        if ($null -ne $Check.details -and $Check.details.Contains("required")) {
+            return [bool]$Check.details["required"]
+        }
+    }
+    catch {
+        return $false
+    }
+
+    return $false
+}
+
+function New-LauncherSummary {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$StableChecks
+    )
+
+    $totalChecks = @($StableChecks).Count
+    $okChecks = @($StableChecks | Where-Object { $_.status -eq "ok" }).Count
+    $warningChecks = @($StableChecks | Where-Object { $_.status -eq "warning" }).Count
+    $failedChecks = @($StableChecks | Where-Object { $_.status -eq "failed" }).Count
+    $requiredFailedChecks = @($StableChecks | Where-Object { $_.status -eq "failed" -and (Get-CheckRequired -Check $_) }).Count
+    $optionalFailedChecks = @($StableChecks | Where-Object { $_.status -eq "failed" -and -not (Get-CheckRequired -Check $_) }).Count
+    $blocking = $requiredFailedChecks -gt 0
+
+    $message = "All required launcher preflight checks passed."
+    if ($blocking) {
+        $message = "One or more required launcher preflight checks failed."
+    }
+    elseif ($warningChecks -gt 0 -or $optionalFailedChecks -gt 0) {
+        $message = "Required launcher preflight checks passed, but warnings need review."
+    }
+
+    return [ordered]@{
+        total_checks           = [int]$totalChecks
+        ok_checks              = [int]$okChecks
+        warning_checks         = [int]$warningChecks
+        failed_checks          = [int]$failedChecks
+        required_failed_checks = [int]$requiredFailedChecks
+        optional_failed_checks = [int]$optionalFailedChecks
+        blocking               = [bool]$blocking
+        message                = [string]$message
+    }
+}
+
+function Get-OverallStatus {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$StableChecks
+    )
+
+    $requiredFailedChecks = @($StableChecks | Where-Object { $_.status -eq "failed" -and (Get-CheckRequired -Check $_) }).Count
+    if ($requiredFailedChecks -gt 0) {
+        return "failed"
+    }
+
+    $optionalProblems = @($StableChecks | Where-Object { $_.status -eq "warning" -or ($_.status -eq "failed" -and -not (Get-CheckRequired -Check $_)) }).Count
+    if ($optionalProblems -gt 0) {
+        return "warning"
+    }
+
+    return "ok"
+}
+
+function New-LauncherArtifacts {
+    param(
+        [bool]$IncludeKindConfigs
+    )
+
+    $artifacts = [ordered]@{
+        status_path           = [string]$StatusPath
+        log_path              = [string]$LogPath
+        kind_config_directory = [string]$KindDir
+    }
+
+    if ($IncludeKindConfigs) {
+        $artifacts["management_kind_config"] = [string]$MgmtKindConfigPath
+        $artifacts["workload_kind_config"] = [string]$WorkloadKindConfigPath
+    }
+
+    return $artifacts
+}
+
+function New-NextActions {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$StableChecks,
+
+        [Parameter(Mandatory = $true)]
+        [string]$LauncherMode,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OverallStatus
+    )
+
+    $actions = New-Object System.Collections.Generic.List[string]
+
+    foreach ($check in @($StableChecks | Where-Object { $_.id -like "port_*" -and $_.status -eq "failed" })) {
+        $port = $null
+        try {
+            if ($null -ne $check.details -and $check.details.Contains("port")) {
+                $port = $check.details["port"]
+            }
+        }
+        catch {
+            $port = $null
+        }
+
+        if ($null -ne $port) {
+            $actions.Add(("Free port {0} on 127.0.0.1 before creating DevDeploy local clusters." -f $port)) | Out-Null
+        }
+    }
+
+    if ($OverallStatus -eq "ok" -and $LauncherMode -eq "preflight") {
+        $actions.Add("Run the launcher with -GenerateKindConfigs to preview deterministic kind cluster configuration.") | Out-Null
+    }
+    elseif ($OverallStatus -eq "ok" -and $LauncherMode -eq "kind_config_preview") {
+        $actions.Add("Kind config previews are ready. Proceed to the future cluster creation step when Phase 2C/2D implementation is available.") | Out-Null
+    }
+    elseif ($OverallStatus -eq "warning") {
+        $actions.Add("Review warning checks before continuing. Warnings are not currently blocking, but later setup steps may need attention.") | Out-Null
+    }
+
+    if ($actions.Count -eq 0) {
+        $actions.Add("Review failed required checks and rerun the launcher after resolving them.") | Out-Null
+    }
+
+    return @($actions | ForEach-Object { [string]$_ })
+}
+
 function Test-CommandAvailable {
     param(
         [Parameter(Mandatory = $true)]
@@ -132,7 +282,6 @@ function Test-CommandAvailable {
 
     Add-Check -Id ("tool_{0}" -f $Name) -Label $Label -Status "ok" -Message "$Label is available on PATH." -Details @{
         command  = $Name
-        path     = $command.Source
         required = $Required
     }
     return $true
@@ -340,11 +489,103 @@ function Test-KubectlContext {
     }
 }
 
+function New-KindConfigContent {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ClusterName,
+
+        [Parameter(Mandatory = $true)]
+        [int]$ApiServerPort,
+
+        [Parameter(Mandatory = $true)]
+        [int]$HttpHostPort,
+
+        [Parameter(Mandatory = $true)]
+        [int]$HttpsHostPort
+    )
+
+    $lines = @(
+        "kind: Cluster",
+        "apiVersion: kind.x-k8s.io/v1alpha4",
+        "name: $ClusterName",
+        "networking:",
+        "  apiServerAddress: `"127.0.0.1`"",
+        "  apiServerPort: $ApiServerPort",
+        "nodes:",
+        "  - role: control-plane",
+        "    extraPortMappings:",
+        "      - containerPort: 80",
+        "        hostPort: $HttpHostPort",
+        "        listenAddress: `"127.0.0.1`"",
+        "        protocol: TCP",
+        "      - containerPort: 443",
+        "        hostPort: $HttpsHostPort",
+        "        listenAddress: `"127.0.0.1`"",
+        "        protocol: TCP"
+    )
+
+    return [string]($lines -join [Environment]::NewLine)
+}
+
+function Write-KindConfigPreview {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Id,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Label,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ClusterName,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [int]$ApiServerPort,
+
+        [Parameter(Mandatory = $true)]
+        [int]$HttpHostPort,
+
+        [Parameter(Mandatory = $true)]
+        [int]$HttpsHostPort
+    )
+
+    try {
+        $content = New-KindConfigContent -ClusterName $ClusterName -ApiServerPort $ApiServerPort -HttpHostPort $HttpHostPort -HttpsHostPort $HttpsHostPort
+        Set-Content -LiteralPath $Path -Value $content -Encoding UTF8
+
+        Add-Check -Id $Id -Label $Label -Status "ok" -Message ("Generated deterministic kind config preview for {0}." -f $ClusterName) -Details @{
+            required           = $true
+            generated_path     = $Path
+            cluster_name       = $ClusterName
+            api_server_address = "127.0.0.1"
+            api_server_port    = $ApiServerPort
+            http_host_port     = $HttpHostPort
+            https_host_port    = $HttpsHostPort
+            creates_cluster    = $false
+        }
+    }
+    catch {
+        Add-Check -Id $Id -Label $Label -Status "failed" -Message ("Could not write kind config preview for {0}." -f $ClusterName) -Details @{
+            required       = $true
+            generated_path = $Path
+            cluster_name   = $ClusterName
+            error          = Protect-LogText $_.Exception.Message
+        }
+    }
+}
+
 New-LocalDirectory -Path $StatusDir
 New-LocalDirectory -Path $LogsDir
 New-LocalDirectory -Path $KindDir
 
-Write-LauncherLog "Starting DevDeploy Launcher read-only preflight."
+if ($GenerateKindConfigs) {
+    Write-LauncherLog "Starting DevDeploy Launcher read-only preflight with kind config preview generation."
+}
+else {
+    Write-LauncherLog "Starting DevDeploy Launcher read-only preflight."
+}
 
 $dockerAvailable = Test-CommandAvailable -Name "docker" -Label "Docker CLI" -Required $true
 $kindAvailable = Test-CommandAvailable -Name "kind" -Label "kind CLI" -Required $true
@@ -354,29 +595,41 @@ $kubectlAvailable = Test-CommandAvailable -Name "kubectl" -Label "kubectl CLI" -
 
 Test-DockerDaemon -DockerCliAvailable $dockerAvailable
 
-foreach ($port in $RequiredPorts) {
+foreach ($port in @($PortPlan.Values)) {
     Test-LocalPortAvailable -Port $port
 }
 
 Test-KindClusters -KindAvailable $kindAvailable
 Test-KubectlContext -KubectlAvailable $kubectlAvailable
 
-$overallStatus = "ok"
-if ($Checks | Where-Object { $_.status -eq "failed" }) {
-    $overallStatus = "failed"
-}
-elseif ($Checks | Where-Object { $_.status -eq "warning" }) {
-    $overallStatus = "warning"
+$launcherMode = if ($GenerateKindConfigs) { "kind_config_preview" } else { "preflight" }
+
+if ($GenerateKindConfigs) {
+    Write-KindConfigPreview -Id "kind_config_mgmt_preview" -Label "Management kind config preview" -ClusterName "devdeploy-mgmt" -Path $MgmtKindConfigPath -ApiServerPort 58080 -HttpHostPort 8080 -HttpsHostPort 8443
+    Write-KindConfigPreview -Id "kind_config_workload_preview" -Label "Workload kind config preview" -ClusterName "devdeploy-workload" -Path $WorkloadKindConfigPath -ApiServerPort 58081 -HttpHostPort 8081 -HttpsHostPort 8444
 }
 
+$stableChecks = @($Checks | ForEach-Object { $_ })
+$overallStatus = [string](Get-OverallStatus -StableChecks $stableChecks)
+$summary = New-LauncherSummary -StableChecks $stableChecks
+$artifacts = New-LauncherArtifacts -IncludeKindConfigs ([bool]$GenerateKindConfigs)
+$nextActions = New-NextActions -StableChecks $stableChecks -LauncherMode $launcherMode -OverallStatus $overallStatus
+
 $statusDocument = [ordered]@{
-    launcher_version = $LauncherVersion
+    schema_version   = "1"
+    contract         = "devdeploy-launcher-status"
+    mode             = [string]$launcherMode
     generated_at     = [string](Get-Timestamp)
+    launcher_version = $LauncherVersion
     host_os          = [string]([System.Runtime.InteropServices.RuntimeInformation]::OSDescription)
     shell            = [string]("{0} {1}" -f $PSVersionTable.PSEdition, $PSVersionTable.PSVersion.ToString())
     repo_root        = [string]$RepoRoot
     status           = $overallStatus
-    checks           = @($Checks | ForEach-Object { $_ })
+    summary          = $summary
+    checks           = $stableChecks
+    artifacts        = $artifacts
+    ports            = $PortPlan
+    next_actions     = $nextActions
 }
 
 $statusDocument | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $StatusPath -Encoding UTF8
@@ -384,6 +637,10 @@ Write-LauncherLog ("Wrote launcher status to {0}" -f $StatusPath)
 
 if (-not $Quiet) {
     Write-Host ("DevDeploy Launcher preflight status: {0}" -f $overallStatus)
+    if ($GenerateKindConfigs) {
+        Write-Host ("Management kind config: {0}" -f $MgmtKindConfigPath)
+        Write-Host ("Workload kind config: {0}" -f $WorkloadKindConfigPath)
+    }
     Write-Host ("Status: {0}" -f $StatusPath)
     Write-Host ("Log: {0}" -f $LogPath)
 }

@@ -18,6 +18,35 @@ To keep console output minimal:
 powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -Quiet
 ```
 
+This is the default read-only preflight mode. It checks the host and writes status, but it does not generate cluster configs unless requested.
+
+## Generate Kind Config Previews
+
+To run preflight and generate deterministic kind config previews:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -GenerateKindConfigs
+```
+
+The generated preview files are written to:
+
+```text
+.devdeploy/local/kind/devdeploy-mgmt.yaml
+.devdeploy/local/kind/devdeploy-workload.yaml
+```
+
+These files are local runtime previews under `.devdeploy/`. They are intentionally not committed.
+
+Preview mode still does not:
+
+- Create kind clusters.
+- Delete kind clusters.
+- Install ingress-nginx.
+- Install Argo CD.
+- Run `kubectl apply`.
+- Run `kubectl delete`.
+- Install Helm charts.
+
 ## What It Checks
 
 The launcher checks:
@@ -40,6 +69,8 @@ The launcher checks:
 
 Docker, Docker daemon, kind, kubectl, and required ports are treated as blocking checks. Git and Helm are warnings in this first read-only skeleton because the script does not yet perform repository or chart bootstrap.
 
+If a required port such as `8080` is busy, the launcher exits with a failed status. Preview mode still writes the deterministic kind config files so users can inspect the planned cluster configuration, but the configs cannot be used until the busy ports are freed.
+
 ## Status Output
 
 Structured status is written to:
@@ -48,15 +79,56 @@ Structured status is written to:
 .devdeploy/local/status/launcher-status.json
 ```
 
-The JSON includes:
+The status file is a stable contract intended for future backend and Setup Wizard integration.
 
-- `launcher_version`
+Top-level fields:
+
+- `schema_version`
+- `contract`
+- `mode`
 - `generated_at`
+- `launcher_version`
 - `host_os`
 - `shell`
 - `repo_root`
 - `status`
+- `summary`
 - `checks`
+- `artifacts`
+- `ports`
+- `next_actions`
+
+`schema_version` is currently `"1"`.
+
+`contract` is currently:
+
+```text
+devdeploy-launcher-status
+```
+
+`mode` is one of:
+
+- `preflight`
+- `kind_config_preview`
+
+`status` is one of:
+
+- `ok`
+- `warning`
+- `failed`
+
+Required failed checks make the overall status `failed`. Optional failed checks and warnings make the overall status `warning` unless a required check failed.
+
+The `summary` object includes:
+
+- `total_checks`
+- `ok_checks`
+- `warning_checks`
+- `failed_checks`
+- `required_failed_checks`
+- `optional_failed_checks`
+- `blocking`
+- `message`
 
 Each check includes:
 
@@ -67,12 +139,40 @@ Each check includes:
 - `details`
 - `checked_at`
 
+Check `details` include `required: true` or `required: false` where applicable.
+
 Stable check statuses are:
 
 - `ok`
 - `warning`
 - `failed`
 - `skipped`
+
+The `ports` object includes the selected default ports:
+
+- `management_api`: `58080`
+- `management_http`: `8080`
+- `management_https`: `8443`
+- `workload_api`: `58081`
+- `workload_http`: `8081`
+- `workload_https`: `8444`
+
+The `artifacts` object always includes:
+
+- `status_path`
+- `log_path`
+- `kind_config_directory`
+
+When `-GenerateKindConfigs` is used, it also includes:
+
+- `management_kind_config`
+- `workload_kind_config`
+
+The `next_actions` array contains safe, non-destructive guidance. For example:
+
+- If port `8080` is busy, it tells the user to free port `8080` before creating DevDeploy local clusters.
+- If all required preflight checks pass, it suggests running `-GenerateKindConfigs`.
+- If kind config previews are generated and all required checks pass, it points to the future cluster creation step.
 
 ## Logs
 
@@ -120,7 +220,6 @@ The Setup Wizard and backend should eventually consume this launcher status inst
 
 Future phases may extend the launcher to:
 
-- Generate deterministic kind config previews.
 - Create or verify `devdeploy-mgmt`.
 - Create or verify `devdeploy-workload`.
 - Register `devdeploy-workload` with Argo CD.
