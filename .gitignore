@@ -150,3 +150,6 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# DevDeploy local launcher runtime files
+.devdeploy/
