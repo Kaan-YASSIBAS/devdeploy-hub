@@ -155,7 +155,7 @@ Goal:
 
 - Bootstrap or verify DevDeploy platform components in `devdeploy-mgmt` through an explicit future Launcher mode.
 
-Phase 2D starts with a narrow ingress-only bootstrap step before PostgreSQL, backend, frontend, or Argo CD are installed.
+Phase 2D starts with narrow management ingress and PostgreSQL bootstrap steps before backend, frontend, or Argo CD are installed.
 
 Recommended tasks:
 

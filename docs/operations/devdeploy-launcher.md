@@ -2,7 +2,7 @@
 
 This document explains the DevDeploy Launcher skeleton for Windows PowerShell.
 
-The launcher writes sanitized structured status for future backend and Setup Wizard integration. Default preflight mode and kind config preview mode are read-only. Management cluster creation happens only when `-CreateManagementCluster` is explicitly passed. Workload cluster creation happens only when `-CreateWorkloadCluster` is explicitly passed. Management ingress bootstrap happens only when `-BootstrapManagementIngress` is explicitly passed.
+The launcher writes sanitized structured status for future backend and Setup Wizard integration. Default preflight mode and kind config preview mode are read-only. Management cluster creation happens only when `-CreateManagementCluster` is explicitly passed. Workload cluster creation happens only when `-CreateWorkloadCluster` is explicitly passed. Management ingress bootstrap happens only when `-BootstrapManagementIngress` is explicitly passed. Management PostgreSQL bootstrap happens only when `-BootstrapManagementPostgres` is explicitly passed.
 
 ## Run The Preflight
 
@@ -160,6 +160,53 @@ helm --kube-context kind-devdeploy-mgmt list -n ingress-nginx
 
 `http://devdeploy.localhost:8080` may still not serve the DevDeploy UI after this step. The frontend and backend are not installed by management ingress bootstrap.
 
+## Bootstrap Management PostgreSQL
+
+To explicitly create or verify the DevDeploy platform namespace and install or verify PostgreSQL only in `devdeploy-mgmt`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -BootstrapManagementPostgres
+```
+
+This explicit platform bootstrap mode:
+
+- Runs the preflight checks.
+- Verifies `devdeploy-mgmt` is Ready.
+- Creates or verifies namespace `devdeploy` in `devdeploy-mgmt`.
+- Uses Helm only in this explicit mode.
+- Installs or verifies the pinned Bitnami PostgreSQL chart in namespace `devdeploy`.
+- Uses release name `devdeploy-postgres`.
+- Configures local development database values:
+  - database: `devdeploy`
+  - username: `devdeploy`
+  - persistence: disabled
+- Waits for the PostgreSQL StatefulSet to become Ready.
+- Verifies the PostgreSQL service exists.
+- Writes `platform_bootstrap.components.postgres` status.
+
+This mode does not:
+
+- Install DevDeploy backend.
+- Install DevDeploy frontend.
+- Install Argo CD.
+- Register `devdeploy-workload` in Argo CD.
+- Install anything into `devdeploy-workload`.
+- Create user workloads.
+- Run `kubectl apply`.
+- Run `kubectl delete`.
+- Delete clusters or perform destructive cleanup.
+
+Manual verification commands:
+
+```powershell
+kubectl --context kind-devdeploy-mgmt get ns devdeploy
+kubectl --context kind-devdeploy-mgmt get pods -n devdeploy
+kubectl --context kind-devdeploy-mgmt get svc -n devdeploy
+helm --kube-context kind-devdeploy-mgmt list -n devdeploy
+```
+
+The DevDeploy UI is still not available after this step because backend and frontend are not installed yet.
+
 ## What It Checks
 
 The launcher checks:
@@ -243,6 +290,7 @@ devdeploy-launcher-status
 - `management_cluster_create`
 - `workload_cluster_create`
 - `management_ingress_bootstrap`
+- `management_postgres_bootstrap`
 
 `status` is one of:
 
@@ -305,7 +353,9 @@ Workload cluster status values are:
 
 This status contract does not mean platform components are installed. It does not install ingress-nginx, Argo CD, DevDeploy backend, DevDeploy frontend, PostgreSQL, Helm charts, or user workloads. Creating `devdeploy-workload` only prepares the empty workload cluster for future bootstrap phases.
 
-The `platform_bootstrap` object summarizes platform component bootstrap state. In this phase only `ingress_nginx` can become Ready. Other components remain `not_started`.
+The `platform_bootstrap` object summarizes platform component bootstrap state. In this phase `ingress_nginx` and `postgres` can become Ready. Backend, frontend, and Argo CD remain `not_started`.
+
+It also includes `devdeploy_namespace`, which reports whether the management `devdeploy` namespace exists.
 
 Current component keys:
 
@@ -374,6 +424,12 @@ When `-BootstrapManagementIngress` is used, the local status includes:
 - `platform_bootstrap`
 - `platform_bootstrap.components.ingress_nginx`
 
+When `-BootstrapManagementPostgres` is used, the local status includes:
+
+- `platform_bootstrap`
+- `platform_bootstrap.devdeploy_namespace`
+- `platform_bootstrap.components.postgres`
+
 The `next_actions` array contains safe, non-destructive guidance. For example:
 
 - If port `8080` is busy, it tells the user to free port `8080` before creating DevDeploy local clusters.
@@ -382,6 +438,7 @@ The `next_actions` array contains safe, non-destructive guidance. For example:
 - If `devdeploy-mgmt` is ready and `devdeploy-workload` is missing, it suggests running `-CreateWorkloadCluster`.
 - If both clusters are ready, it points to the future Argo CD and platform bootstrap step.
 - If management ingress-nginx is Ready, it points to future PostgreSQL, backend, frontend, and Argo CD bootstrap phases.
+- If PostgreSQL is Ready, it points to future backend and frontend bootstrap phases.
 
 ## Logs
 
@@ -426,6 +483,8 @@ They do not:
 `-CreateWorkloadCluster` may create only `devdeploy-workload`.
 
 `-BootstrapManagementIngress` may install or verify only ingress-nginx in `devdeploy-mgmt`.
+
+`-BootstrapManagementPostgres` may create or verify only the `devdeploy` namespace and PostgreSQL in `devdeploy-mgmt`.
 
 ## Phase 2B / 2C Role
 

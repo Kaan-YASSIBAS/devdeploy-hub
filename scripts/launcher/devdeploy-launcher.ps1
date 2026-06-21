@@ -18,6 +18,8 @@ param(
 
     [switch]$BootstrapManagementIngress,
 
+    [switch]$BootstrapManagementPostgres,
+
     [switch]$Quiet
 )
 
@@ -39,6 +41,12 @@ $Checks = New-Object System.Collections.Generic.List[object]
 $IngressNginxChartVersion = "4.15.1"
 $IngressNginxNamespace = "ingress-nginx"
 $IngressNginxRelease = "ingress-nginx"
+$PostgresChartVersion = "18.7.6"
+$PostgresNamespace = "devdeploy"
+$PostgresRelease = "devdeploy-postgres"
+$PostgresDatabase = "devdeploy"
+$PostgresUsername = "devdeploy"
+$PostgresPassword = "local-devdeploy-password"
 
 $PortPlan = [ordered]@{
     management_api   = 58080
@@ -307,6 +315,32 @@ function New-NextActions {
         }
     }
 
+    $postgresStatus = "not_started"
+    try {
+        if ($null -ne $PlatformBootstrap["components"] -and $null -ne $PlatformBootstrap["components"]["postgres"]) {
+            $postgresStatus = [string]$PlatformBootstrap["components"]["postgres"]["status"]
+        }
+    }
+    catch {
+        $postgresStatus = "unknown"
+    }
+
+    if ($LauncherMode -eq "management_postgres_bootstrap") {
+        if ($managementClusterStatus -eq "missing" -or $managementClusterStatus -eq "degraded") {
+            $actions.Add("Run the launcher with -CreateManagementCluster before retrying -BootstrapManagementPostgres.") | Out-Null
+        }
+        elseif ($ingressStatus -ne "ready") {
+            $actions.Add("Management ingress-nginx is not Ready. Run -BootstrapManagementIngress when you are ready; PostgreSQL does not strictly depend on it.") | Out-Null
+        }
+
+        if ($postgresStatus -eq "ready") {
+            $actions.Add("PostgreSQL is ready. Proceed to future backend and frontend bootstrap phases when available.") | Out-Null
+        }
+        elseif ($postgresStatus -eq "failed" -or $postgresStatus -eq "degraded" -or $postgresStatus -eq "unknown") {
+            $actions.Add("Check the launcher log and rerun -BootstrapManagementPostgres after resolving the PostgreSQL issue.") | Out-Null
+        }
+    }
+
     if ($OverallStatus -eq "ok" -and $LauncherMode -eq "preflight") {
         $actions.Add("Run the launcher with -GenerateKindConfigs to preview deterministic kind cluster configuration.") | Out-Null
     }
@@ -524,7 +558,9 @@ function Test-KindClusters {
 
         [bool]$WorkloadCreateMode = $false,
 
-        [bool]$ManagementIngressBootstrapMode = $false
+        [bool]$ManagementIngressBootstrapMode = $false,
+
+        [bool]$ManagementPostgresBootstrapMode = $false
     )
 
     if (-not $KindAvailable) {
@@ -577,6 +613,10 @@ function Test-KindClusters {
     elseif ($ManagementIngressBootstrapMode -and $mgmtExists) {
         $status = "ok"
         $message = "devdeploy-mgmt already exists. This mode will install or verify only management ingress-nginx."
+    }
+    elseif ($ManagementPostgresBootstrapMode -and $mgmtExists) {
+        $status = "ok"
+        $message = "devdeploy-mgmt already exists. This mode will install or verify only management PostgreSQL."
     }
 
     Add-Check -Id "kind_clusters" -Label "Existing kind clusters" -Status $status -Message $message -Details @{
@@ -1464,8 +1504,8 @@ function Get-ManagementIngressStatus {
         return New-PlatformComponentStatus -Installed $null -Ready $null -Namespace $IngressNginxNamespace -Release $IngressNginxRelease -Status "unknown" -Message "Management ingress status requires Helm and kubectl."
     }
 
-    $releaseResult = Invoke-ReadOnlyCommand -FileName "helm" -Arguments @("--kube-context", "kind-devdeploy-mgmt", "status", $IngressNginxRelease, "--namespace", $IngressNginxNamespace) -TimeoutSeconds 20
-    if ($releaseResult.exit_code -ne 0 -or $releaseResult.timed_out) {
+    $releaseResult = Invoke-ReadOnlyCommand -FileName "helm" -Arguments @("--kube-context", "kind-devdeploy-mgmt", "list", "--namespace", $IngressNginxNamespace, "--filter", "^$IngressNginxRelease$", "--deployed", "--short") -TimeoutSeconds 20
+    if ($releaseResult.exit_code -ne 0 -or $releaseResult.timed_out -or [string]::IsNullOrWhiteSpace($releaseResult.stdout)) {
         return New-PlatformComponentStatus -Installed $false -Ready $false -Namespace $IngressNginxNamespace -Release $IngressNginxRelease -Status "not_started" -Message "Management ingress-nginx Helm release is not installed yet."
     }
 
@@ -1492,6 +1532,94 @@ function Get-ManagementIngressStatus {
     }
 }
 
+function Get-DevDeployNamespaceStatus {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ManagementCluster,
+
+        [bool]$KubectlAvailable
+    )
+
+    $base = [ordered]@{
+        exists  = $false
+        status  = "unknown"
+        message = "DevDeploy namespace status could not be determined safely."
+    }
+
+    if ([string]$ManagementCluster["status"] -ne "ready") {
+        $base["message"] = "DevDeploy namespace status cannot be determined until devdeploy-mgmt is ready."
+        return $base
+    }
+
+    if (-not $KubectlAvailable) {
+        $base["message"] = "kubectl is required to verify the devdeploy namespace."
+        return $base
+    }
+
+    $namespaceResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "get", "namespace", $PostgresNamespace) -TimeoutSeconds 20
+    if ($namespaceResult.exit_code -eq 0 -and -not $namespaceResult.timed_out) {
+        $base["exists"] = $true
+        $base["status"] = "ready"
+        $base["message"] = "Namespace devdeploy exists in devdeploy-mgmt."
+        return $base
+    }
+
+    $base["status"] = "missing"
+    $base["message"] = "Namespace devdeploy does not exist yet."
+    return $base
+}
+
+function Get-ManagementPostgresStatus {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ManagementCluster,
+
+        [bool]$HelmAvailable,
+
+        [bool]$KubectlAvailable
+    )
+
+    if ([string]$ManagementCluster["status"] -ne "ready") {
+        return New-PlatformComponentStatus -Installed $null -Ready $null -Namespace $PostgresNamespace -Release $PostgresRelease -Status "unknown" -Message "PostgreSQL status cannot be determined until devdeploy-mgmt is ready."
+    }
+
+    if (-not $HelmAvailable -or -not $KubectlAvailable) {
+        return New-PlatformComponentStatus -Installed $null -Ready $null -Namespace $PostgresNamespace -Release $PostgresRelease -Status "unknown" -Message "PostgreSQL status requires Helm and kubectl."
+    }
+
+    $releaseResult = Invoke-ReadOnlyCommand -FileName "helm" -Arguments @("--kube-context", "kind-devdeploy-mgmt", "list", "--namespace", $PostgresNamespace, "--filter", "^$PostgresRelease$", "--deployed", "--short") -TimeoutSeconds 20
+    if ($releaseResult.exit_code -ne 0 -or $releaseResult.timed_out -or [string]::IsNullOrWhiteSpace($releaseResult.stdout)) {
+        return New-PlatformComponentStatus -Installed $false -Ready $false -Namespace $PostgresNamespace -Release $PostgresRelease -Status "not_started" -Message "PostgreSQL Helm release is not installed yet."
+    }
+
+    $podsResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "get", "pods", "--namespace", $PostgresNamespace, "-l", "app.kubernetes.io/instance=$PostgresRelease", "--no-headers") -TimeoutSeconds 20
+    if ($podsResult.exit_code -ne 0 -or $podsResult.timed_out -or [string]::IsNullOrWhiteSpace($podsResult.stdout)) {
+        return New-PlatformComponentStatus -Installed $true -Ready $false -Namespace $PostgresNamespace -Release $PostgresRelease -Status "degraded" -Message "PostgreSQL release exists, but pods are not readable."
+    }
+
+    $serviceResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "get", "svc", "--namespace", $PostgresNamespace, "-l", "app.kubernetes.io/instance=$PostgresRelease") -TimeoutSeconds 20
+    if ($serviceResult.exit_code -ne 0 -or $serviceResult.timed_out) {
+        return New-PlatformComponentStatus -Installed $true -Ready $false -Namespace $PostgresNamespace -Release $PostgresRelease -Status "degraded" -Message "PostgreSQL release exists, but service verification failed."
+    }
+
+    try {
+        $pods = @($podsResult.stdout -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $readyPods = @($pods | Where-Object {
+                $columns = @($_ -split "\s+" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                $columns.Count -ge 3 -and $columns[1] -match "^(\d+)/\1$" -and $columns[2] -eq "Running"
+            })
+
+        if ($readyPods.Count -gt 0) {
+            return New-PlatformComponentStatus -Installed $true -Ready $true -Namespace $PostgresNamespace -Release $PostgresRelease -Status "ready" -Message "PostgreSQL is installed and pod readiness is verified."
+        }
+
+        return New-PlatformComponentStatus -Installed $true -Ready $false -Namespace $PostgresNamespace -Release $PostgresRelease -Status "degraded" -Message "PostgreSQL is installed, but pods are not Ready yet."
+    }
+    catch {
+        return New-PlatformComponentStatus -Installed $true -Ready $null -Namespace $PostgresNamespace -Release $PostgresRelease -Status "unknown" -Message "PostgreSQL pod readiness could not be parsed safely."
+    }
+}
+
 function New-PlatformBootstrapStatus {
     param(
         [Parameter(Mandatory = $true)]
@@ -1503,10 +1631,13 @@ function New-PlatformBootstrapStatus {
     )
 
     $ingress = Get-ManagementIngressStatus -ManagementCluster $ManagementCluster -HelmAvailable $HelmAvailable -KubectlAvailable $KubectlAvailable
+    $postgres = Get-ManagementPostgresStatus -ManagementCluster $ManagementCluster -HelmAvailable $HelmAvailable -KubectlAvailable $KubectlAvailable
+    $devdeployNamespace = Get-DevDeployNamespaceStatus -ManagementCluster $ManagementCluster -KubectlAvailable $KubectlAvailable
     $status = "not_started"
     $message = "Management platform bootstrap has not started yet."
 
     $ingressFailedChecks = @($Checks | Where-Object { $_.id -like "management_ingress_*" -and $_.status -eq "failed" }).Count
+    $postgresFailedChecks = @($Checks | Where-Object { $_.id -like "management_postgres_*" -and $_.status -eq "failed" }).Count
 
     if ($ingressFailedChecks -gt 0 -and [string]$ingress["status"] -ne "ready") {
         $ingress["status"] = "failed"
@@ -1516,19 +1647,27 @@ function New-PlatformBootstrapStatus {
         $status = "failed"
         $message = "Management ingress-nginx bootstrap failed."
     }
-    elseif ([string]$ingress["status"] -eq "ready") {
-        $status = "partial"
-        $message = "Management ingress-nginx is ready. PostgreSQL, backend, frontend, and Argo CD bootstrap are not implemented yet."
-    }
-    elseif ([string]$ingress["status"] -eq "degraded") {
-        $status = "degraded"
-        $message = "Management ingress-nginx exists but is not fully ready."
-    }
-    elseif ([string]$ingress["status"] -eq "failed") {
+    elseif ($postgresFailedChecks -gt 0 -and [string]$postgres["status"] -ne "ready") {
+        $postgres["status"] = "failed"
+        $postgres["installed"] = $null
+        $postgres["ready"] = $false
+        $postgres["message"] = "PostgreSQL bootstrap failed. Check launcher logs and rerun the explicit bootstrap mode after resolving the issue."
         $status = "failed"
-        $message = "Management ingress-nginx bootstrap failed."
+        $message = "PostgreSQL bootstrap failed."
     }
-    elseif ([string]$ingress["status"] -eq "unknown") {
+    elseif ([string]$ingress["status"] -eq "ready" -or [string]$postgres["status"] -eq "ready") {
+        $status = "partial"
+        $message = "Management platform bootstrap is partially ready. Backend, frontend, and Argo CD bootstrap are not implemented yet."
+    }
+    elseif ([string]$ingress["status"] -eq "degraded" -or [string]$postgres["status"] -eq "degraded") {
+        $status = "degraded"
+        $message = "One or more management platform components exist but are not fully ready."
+    }
+    elseif ([string]$ingress["status"] -eq "failed" -or [string]$postgres["status"] -eq "failed") {
+        $status = "failed"
+        $message = "Management platform bootstrap failed."
+    }
+    elseif ([string]$ingress["status"] -eq "unknown" -or [string]$postgres["status"] -eq "unknown") {
         $status = "unknown"
         $message = "Management platform bootstrap status could not be determined safely."
     }
@@ -1537,9 +1676,10 @@ function New-PlatformBootstrapStatus {
         status     = $status
         checked_at = [string](Get-Timestamp)
         message    = $message
+        devdeploy_namespace = $devdeployNamespace
         components = [ordered]@{
             ingress_nginx = $ingress
-            postgres      = New-NotStartedPlatformComponent -Namespace "devdeploy" -Message "PostgreSQL bootstrap is not implemented yet."
+            postgres      = $postgres
             backend       = New-NotStartedPlatformComponent -Namespace "devdeploy" -Message "Backend bootstrap is not implemented yet."
             frontend      = New-NotStartedPlatformComponent -Namespace "devdeploy" -Message "Frontend bootstrap is not implemented yet."
             argocd        = New-NotStartedPlatformComponent -Namespace "argocd" -Message "Argo CD bootstrap is not implemented yet."
@@ -1558,6 +1698,7 @@ function New-PlatformBootstrapStatus {
         required       = $false
         status         = $status
         ingress_status = [string]$ingress["status"]
+        postgres_status = [string]$postgres["status"]
     }
 
     return $platform
@@ -1756,6 +1897,227 @@ function Invoke-ManagementIngressBootstrap {
     }
 }
 
+function Add-SkippedManagementPostgresStages {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Reason
+    )
+
+    Add-Check -Id "management_postgres_helm_available" -Label "Management PostgreSQL Helm availability" -Status "skipped" -Message $Reason -Details @{
+        required = $true
+    }
+    Add-Check -Id "management_devdeploy_namespace" -Label "DevDeploy namespace" -Status "skipped" -Message $Reason -Details @{
+        required  = $true
+        namespace = $PostgresNamespace
+    }
+    Add-Check -Id "management_postgres_release" -Label "Management PostgreSQL release" -Status "skipped" -Message $Reason -Details @{
+        required  = $true
+        namespace = $PostgresNamespace
+        release   = $PostgresRelease
+    }
+    Add-Check -Id "management_postgres_ready" -Label "Management PostgreSQL readiness" -Status "skipped" -Message $Reason -Details @{
+        required  = $true
+        namespace = $PostgresNamespace
+        release   = $PostgresRelease
+    }
+}
+
+function Invoke-ManagementPostgresBootstrap {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ManagementCluster,
+
+        [bool]$HelmAvailable,
+
+        [bool]$KubectlAvailable
+    )
+
+    if ([string]$ManagementCluster["status"] -ne "ready") {
+        Add-SkippedManagementPostgresStages -Reason "PostgreSQL bootstrap skipped because devdeploy-mgmt is not ready."
+        return
+    }
+
+    if (-not $HelmAvailable) {
+        Add-Check -Id "management_postgres_helm_available" -Label "Management PostgreSQL Helm availability" -Status "failed" -Message "Helm CLI is required for -BootstrapManagementPostgres." -Details @{
+            required = $true
+            command  = "helm"
+        }
+        Add-Check -Id "management_devdeploy_namespace" -Label "DevDeploy namespace" -Status "skipped" -Message "PostgreSQL bootstrap skipped because Helm CLI is missing." -Details @{
+            required  = $true
+            namespace = $PostgresNamespace
+        }
+        Add-Check -Id "management_postgres_release" -Label "Management PostgreSQL release" -Status "skipped" -Message "PostgreSQL bootstrap skipped because Helm CLI is missing." -Details @{
+            required  = $true
+            namespace = $PostgresNamespace
+            release   = $PostgresRelease
+        }
+        Add-Check -Id "management_postgres_ready" -Label "Management PostgreSQL readiness" -Status "skipped" -Message "PostgreSQL bootstrap skipped because Helm CLI is missing." -Details @{
+            required  = $true
+            namespace = $PostgresNamespace
+            release   = $PostgresRelease
+        }
+        return
+    }
+
+    if (-not $KubectlAvailable) {
+        Add-Check -Id "management_postgres_helm_available" -Label "Management PostgreSQL Helm availability" -Status "ok" -Message "Helm CLI is available." -Details @{
+            required = $true
+            command  = "helm"
+        }
+        Add-Check -Id "management_devdeploy_namespace" -Label "DevDeploy namespace" -Status "failed" -Message "kubectl is required to create or verify the devdeploy namespace." -Details @{
+            required  = $true
+            namespace = $PostgresNamespace
+        }
+        Add-Check -Id "management_postgres_release" -Label "Management PostgreSQL release" -Status "skipped" -Message "PostgreSQL bootstrap skipped because kubectl is missing." -Details @{
+            required  = $true
+            namespace = $PostgresNamespace
+            release   = $PostgresRelease
+        }
+        Add-Check -Id "management_postgres_ready" -Label "Management PostgreSQL readiness" -Status "skipped" -Message "PostgreSQL bootstrap skipped because kubectl is missing." -Details @{
+            required  = $true
+            namespace = $PostgresNamespace
+            release   = $PostgresRelease
+        }
+        return
+    }
+
+    Add-Check -Id "management_postgres_helm_available" -Label "Management PostgreSQL Helm availability" -Status "ok" -Message "Helm CLI is available for explicit management PostgreSQL bootstrap." -Details @{
+        required = $true
+        command  = "helm"
+    }
+
+    $namespaceResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "get", "namespace", $PostgresNamespace) -TimeoutSeconds 20
+    if ($namespaceResult.exit_code -eq 0 -and -not $namespaceResult.timed_out) {
+        Add-Check -Id "management_devdeploy_namespace" -Label "DevDeploy namespace" -Status "ok" -Message "Namespace devdeploy already exists in devdeploy-mgmt." -Details @{
+            required  = $true
+            namespace = $PostgresNamespace
+            created   = $false
+        }
+    }
+    else {
+        $createNamespace = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "create", "namespace", $PostgresNamespace) -TimeoutSeconds 30
+        if ($createNamespace.exit_code -eq 0 -and -not $createNamespace.timed_out) {
+            Add-Check -Id "management_devdeploy_namespace" -Label "DevDeploy namespace" -Status "ok" -Message "Created namespace devdeploy in devdeploy-mgmt." -Details @{
+                required  = $true
+                namespace = $PostgresNamespace
+                created   = $true
+            }
+        }
+        else {
+            Add-Check -Id "management_devdeploy_namespace" -Label "DevDeploy namespace" -Status "failed" -Message "Could not create namespace devdeploy in devdeploy-mgmt." -Details @{
+                required  = $true
+                namespace = $PostgresNamespace
+                error     = $createNamespace.stderr
+            }
+            Add-Check -Id "management_postgres_release" -Label "Management PostgreSQL release" -Status "skipped" -Message "PostgreSQL release skipped because namespace creation failed." -Details @{
+                required = $true
+            }
+            Add-Check -Id "management_postgres_ready" -Label "Management PostgreSQL readiness" -Status "skipped" -Message "Readiness check skipped because namespace creation failed." -Details @{
+                required = $true
+            }
+            return
+        }
+    }
+
+    $repoAdd = Invoke-ReadOnlyCommand -FileName "helm" -Arguments @("repo", "add", "bitnami", "https://charts.bitnami.com/bitnami", "--force-update") -TimeoutSeconds 60
+    if ($repoAdd.exit_code -ne 0 -or $repoAdd.timed_out) {
+        Add-Check -Id "management_postgres_release" -Label "Management PostgreSQL release" -Status "failed" -Message "Could not add or verify the Bitnami Helm repository." -Details @{
+            required = $true
+            error    = $repoAdd.stderr
+        }
+        Add-Check -Id "management_postgres_ready" -Label "Management PostgreSQL readiness" -Status "skipped" -Message "Readiness check skipped because Helm repository setup failed." -Details @{
+            required = $true
+        }
+        return
+    }
+
+    $repoUpdate = Invoke-ReadOnlyCommand -FileName "helm" -Arguments @("repo", "update", "bitnami") -TimeoutSeconds 120
+    if ($repoUpdate.exit_code -ne 0 -or $repoUpdate.timed_out) {
+        Add-Check -Id "management_postgres_release" -Label "Management PostgreSQL release" -Status "failed" -Message "Could not update the Bitnami Helm repository." -Details @{
+            required = $true
+            error    = $repoUpdate.stderr
+        }
+        Add-Check -Id "management_postgres_ready" -Label "Management PostgreSQL readiness" -Status "skipped" -Message "Readiness check skipped because Helm repository update failed." -Details @{
+            required = $true
+        }
+        return
+    }
+
+    $helmArgs = @(
+        "upgrade", "--install", $PostgresRelease, "bitnami/postgresql",
+        "--version", $PostgresChartVersion,
+        "--namespace", $PostgresNamespace,
+        "--kube-context", "kind-devdeploy-mgmt",
+        "--wait",
+        "--timeout", "5m",
+        "--set", "auth.database=$PostgresDatabase",
+        "--set", "auth.username=$PostgresUsername",
+        "--set-string", "auth.password=$PostgresPassword",
+        "--set", "primary.persistence.enabled=false"
+    )
+
+    Write-LauncherLog "Installing or verifying management PostgreSQL in devdeploy-mgmt with Helm."
+    $installResult = Invoke-ReadOnlyCommand -FileName "helm" -Arguments $helmArgs -TimeoutSeconds 420
+    if ($installResult.exit_code -ne 0 -or $installResult.timed_out) {
+        $message = "Helm failed to install or upgrade management PostgreSQL. No automatic cleanup was performed."
+        if ($installResult.timed_out) {
+            $message = "Helm timed out while installing or upgrading management PostgreSQL. No automatic cleanup was performed."
+        }
+
+        Add-Check -Id "management_postgres_release" -Label "Management PostgreSQL release" -Status "failed" -Message $message -Details @{
+            required      = $true
+            namespace     = $PostgresNamespace
+            release       = $PostgresRelease
+            chart         = "bitnami/postgresql"
+            chart_version = $PostgresChartVersion
+            error         = $installResult.stderr
+        }
+        Add-Check -Id "management_postgres_ready" -Label "Management PostgreSQL readiness" -Status "skipped" -Message "Readiness check skipped because Helm install or upgrade failed." -Details @{
+            required = $true
+        }
+        return
+    }
+
+    Add-Check -Id "management_postgres_release" -Label "Management PostgreSQL release" -Status "ok" -Message "PostgreSQL Helm release is installed or reconciled in devdeploy-mgmt." -Details @{
+        required      = $true
+        namespace     = $PostgresNamespace
+        release       = $PostgresRelease
+        chart         = "bitnami/postgresql"
+        chart_version = $PostgresChartVersion
+        database      = $PostgresDatabase
+        username      = $PostgresUsername
+        persistence   = "disabled"
+    }
+
+    $rolloutResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "rollout", "status", "statefulset/$PostgresRelease-postgresql", "--namespace", $PostgresNamespace, "--timeout=180s") -TimeoutSeconds 210
+    if ($rolloutResult.exit_code -ne 0 -or $rolloutResult.timed_out) {
+        Add-Check -Id "management_postgres_ready" -Label "Management PostgreSQL readiness" -Status "failed" -Message "PostgreSQL StatefulSet did not become Ready in devdeploy-mgmt." -Details @{
+            required  = $true
+            namespace = $PostgresNamespace
+            release   = $PostgresRelease
+            error     = $rolloutResult.stderr
+        }
+        return
+    }
+
+    $serviceResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "get", "svc", "--namespace", $PostgresNamespace, "-l", "app.kubernetes.io/instance=$PostgresRelease") -TimeoutSeconds 20
+    if ($serviceResult.exit_code -ne 0 -or $serviceResult.timed_out) {
+        Add-Check -Id "management_postgres_ready" -Label "Management PostgreSQL readiness" -Status "failed" -Message "PostgreSQL service could not be verified in devdeploy-mgmt." -Details @{
+            required  = $true
+            namespace = $PostgresNamespace
+            release   = $PostgresRelease
+            error     = $serviceResult.stderr
+        }
+        return
+    }
+
+    Add-Check -Id "management_postgres_ready" -Label "Management PostgreSQL readiness" -Status "ok" -Message "PostgreSQL is Ready and service exists in devdeploy-mgmt." -Details @{
+        required  = $true
+        namespace = $PostgresNamespace
+        release   = $PostgresRelease
+    }
+}
+
 New-LocalDirectory -Path $StatusDir
 New-LocalDirectory -Path $LogsDir
 New-LocalDirectory -Path $KindDir
@@ -1769,6 +2131,9 @@ elseif ($CreateWorkloadCluster) {
 elseif ($BootstrapManagementIngress) {
     Write-LauncherLog "Starting DevDeploy Launcher explicit management ingress bootstrap mode."
 }
+elseif ($BootstrapManagementPostgres) {
+    Write-LauncherLog "Starting DevDeploy Launcher explicit management PostgreSQL bootstrap mode."
+}
 elseif ($GenerateKindConfigs) {
     Write-LauncherLog "Starting DevDeploy Launcher read-only preflight with kind config preview generation."
 }
@@ -1780,7 +2145,7 @@ $dockerAvailable = Test-CommandAvailable -Name "docker" -Label "Docker CLI" -Req
 $kindAvailable = Test-CommandAvailable -Name "kind" -Label "kind CLI" -Required $true
 $kubectlAvailable = Test-CommandAvailable -Name "kubectl" -Label "kubectl CLI" -Required $true
 [void](Test-CommandAvailable -Name "git" -Label "git CLI" -Required $false)
-$helmAvailable = Test-CommandAvailable -Name "helm" -Label "Helm CLI" -Required ([bool]$BootstrapManagementIngress)
+$helmAvailable = Test-CommandAvailable -Name "helm" -Label "Helm CLI" -Required ([bool]($BootstrapManagementIngress -or $BootstrapManagementPostgres))
 
 Test-DockerDaemon -DockerCliAvailable $dockerAvailable
 
@@ -1803,7 +2168,7 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
     $expectedCluster = if ($isManagementPort) { "devdeploy-mgmt" } elseif ($isWorkloadPort) { "devdeploy-workload" } else { "" }
     $existingClusterDetected = [bool](($isManagementPort -and $managementClusterExistsBeforePortCheck) -or ($isWorkloadPort -and $workloadClusterExistsBeforePortCheck))
     $portRequired = [bool](-not $existingClusterDetected)
-    if ($BootstrapManagementIngress -and $isWorkloadPort) {
+    if (($BootstrapManagementIngress -or $BootstrapManagementPostgres) -and $isWorkloadPort) {
         $portRequired = $false
     }
     $allowBusyAsOk = [bool]$existingClusterDetected
@@ -1812,11 +2177,14 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
 }
 
 if ($workloadClusterExistsBeforePortCheck) {
-    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress) { "ok" } else { "warning" }
+    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres) { "ok" } else { "warning" }
     $detectedMessage = if ($CreateWorkloadCluster) {
         "devdeploy-workload already exists. This launcher mode will verify it instead of recreating it."
     }
     elseif ($BootstrapManagementIngress) {
+        "devdeploy-workload already exists. This launcher mode does not use, modify, or delete it."
+    }
+    elseif ($BootstrapManagementPostgres) {
         "devdeploy-workload already exists. This launcher mode does not use, modify, or delete it."
     }
     else {
@@ -1830,7 +2198,7 @@ if ($workloadClusterExistsBeforePortCheck) {
     }
 }
 
-Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress)
+Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres)
 Test-KubectlContext -KubectlAvailable $kubectlAvailable
 
 $launcherMode = "preflight"
@@ -1842,6 +2210,9 @@ elseif ($CreateWorkloadCluster) {
 }
 elseif ($BootstrapManagementIngress) {
     $launcherMode = "management_ingress_bootstrap"
+}
+elseif ($BootstrapManagementPostgres) {
+    $launcherMode = "management_postgres_bootstrap"
 }
 elseif ($GenerateKindConfigs) {
     $launcherMode = "kind_config_preview"
@@ -1905,6 +2276,17 @@ elseif ($BootstrapManagementIngress) {
         Invoke-ManagementIngressBootstrap -ManagementCluster $managementCluster -HelmAvailable $helmAvailable -KubectlAvailable $kubectlAvailable
     }
 }
+elseif ($BootstrapManagementPostgres) {
+    $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
+    $preBootstrapChecks = @($Checks | ForEach-Object { $_ })
+    $preBootstrapStatus = [string](Get-OverallStatus -StableChecks $preBootstrapChecks)
+    if ($preBootstrapStatus -eq "failed" -and [string]$managementCluster["status"] -eq "ready") {
+        Add-SkippedManagementPostgresStages -Reason "PostgreSQL bootstrap was skipped because required preflight checks failed."
+    }
+    else {
+        Invoke-ManagementPostgresBootstrap -ManagementCluster $managementCluster -HelmAvailable $helmAvailable -KubectlAvailable $kubectlAvailable
+    }
+}
 elseif ($GenerateKindConfigs) {
     Write-KindConfigPreview -Id "kind_config_mgmt_preview" -Label "Management kind config preview" -ClusterName "devdeploy-mgmt" -Path $MgmtKindConfigPath -ApiServerPort 58080 -HttpHostPort 8080 -HttpsHostPort 8443
     Write-KindConfigPreview -Id "kind_config_workload_preview" -Label "Workload kind config preview" -ClusterName "devdeploy-workload" -Path $WorkloadKindConfigPath -ApiServerPort 58081 -HttpHostPort 8081 -HttpsHostPort 8444
@@ -1956,6 +2338,9 @@ if (-not $Quiet) {
     }
     elseif ($BootstrapManagementIngress) {
         Write-Host ("Management ingress release: {0}/{1}" -f $IngressNginxNamespace, $IngressNginxRelease)
+    }
+    elseif ($BootstrapManagementPostgres) {
+        Write-Host ("Management PostgreSQL release: {0}/{1}" -f $PostgresNamespace, $PostgresRelease)
     }
     elseif ($GenerateKindConfigs) {
         Write-Host ("Management kind config: {0}" -f $MgmtKindConfigPath)
