@@ -5,6 +5,8 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+RUN apk upgrade --no-cache libcrypto3 libssl3 libexpat
+
 COPY requirements.txt constraints.txt ./
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt -c constraints.txt
