@@ -221,7 +221,10 @@ function New-NextActions {
         [string]$LauncherMode,
 
         [Parameter(Mandatory = $true)]
-        [string]$OverallStatus
+        [string]$OverallStatus,
+
+        [Parameter(Mandatory = $true)]
+        [object]$ManagementCluster
     )
 
     $actions = New-Object System.Collections.Generic.List[string]
@@ -242,14 +245,26 @@ function New-NextActions {
         }
     }
 
+    $managementClusterStatus = [string]$ManagementCluster["status"]
+
+    if ($managementClusterStatus -eq "missing") {
+        $actions.Add("Run the launcher with -CreateManagementCluster to create devdeploy-mgmt when you are ready.") | Out-Null
+    }
+    elseif ($managementClusterStatus -eq "ready") {
+        $actions.Add("devdeploy-mgmt is ready. Proceed to the future platform component bootstrap step when available.") | Out-Null
+    }
+    elseif ($managementClusterStatus -eq "degraded") {
+        $actions.Add("Check the launcher log and rerun -CreateManagementCluster to verify devdeploy-mgmt after resolving the issue.") | Out-Null
+    }
+    elseif ($managementClusterStatus -eq "unknown") {
+        $actions.Add("Review launcher status and logs; management cluster status could not be determined safely.") | Out-Null
+    }
+
     if ($OverallStatus -eq "ok" -and $LauncherMode -eq "preflight") {
         $actions.Add("Run the launcher with -GenerateKindConfigs to preview deterministic kind cluster configuration.") | Out-Null
     }
     elseif ($OverallStatus -eq "ok" -and $LauncherMode -eq "kind_config_preview") {
         $actions.Add("Kind config previews are ready. Proceed to the future cluster creation step when Phase 2C/2D implementation is available.") | Out-Null
-    }
-    elseif ($OverallStatus -eq "ok" -and $LauncherMode -eq "management_cluster_create") {
-        $actions.Add("devdeploy-mgmt is created or verified. Proceed to the future platform component bootstrap step when available.") | Out-Null
     }
     elseif ($OverallStatus -eq "warning") {
         $actions.Add("Review warning checks before continuing. Warnings are not currently blocking, but later setup steps may need attention.") | Out-Null
@@ -848,6 +863,147 @@ function Add-SkippedManagementClusterStages {
     }
 }
 
+function New-ManagementClusterStatus {
+    param(
+        [bool]$KindAvailable,
+
+        [bool]$KubectlAvailable
+    )
+
+    $checkedAt = [string](Get-Timestamp)
+    $base = [ordered]@{
+        name          = "devdeploy-mgmt"
+        context       = "kind-devdeploy-mgmt"
+        exists        = $false
+        api_reachable = $null
+        node_ready    = $null
+        ready_nodes   = 0
+        total_nodes   = 0
+        status        = "unknown"
+        message       = "Management cluster status could not be determined safely."
+        checked_at    = $checkedAt
+    }
+
+    if (-not $KindAvailable) {
+        $base["message"] = "kind CLI is not available, so management cluster status could not be determined."
+        Add-Check -Id "management_cluster_status" -Label "Management cluster status" -Status "warning" -Message ([string]$base["message"]) -Details @{
+            required     = $false
+            cluster_name = "devdeploy-mgmt"
+            status       = "unknown"
+        }
+        return $base
+    }
+
+    $clusterResult = Get-KindClusterNames -KindAvailable $KindAvailable
+    if (-not $clusterResult.success) {
+        $base["message"] = "Could not list kind clusters, so management cluster status is unknown."
+        Add-Check -Id "management_cluster_status" -Label "Management cluster status" -Status "warning" -Message ([string]$base["message"]) -Details @{
+            required     = $false
+            cluster_name = "devdeploy-mgmt"
+            status       = "unknown"
+            error        = Protect-LogText $clusterResult.error
+        }
+        return $base
+    }
+
+    $exists = @($clusterResult.clusters) -contains "devdeploy-mgmt"
+    if (-not $exists) {
+        $base["status"] = "missing"
+        $base["message"] = "Management cluster devdeploy-mgmt does not exist yet."
+        Add-Check -Id "management_cluster_status" -Label "Management cluster status" -Status "warning" -Message ([string]$base["message"]) -Details @{
+            required     = $false
+            cluster_name = "devdeploy-mgmt"
+            status       = "missing"
+        }
+        return $base
+    }
+
+    $base["exists"] = $true
+
+    if (-not $KubectlAvailable) {
+        $base["api_reachable"] = $false
+        $base["node_ready"] = $null
+        $base["status"] = "degraded"
+        $base["message"] = "devdeploy-mgmt exists, but kubectl is not available for API and node verification."
+        Add-Check -Id "management_cluster_status" -Label "Management cluster status" -Status "warning" -Message ([string]$base["message"]) -Details @{
+            required     = $false
+            cluster_name = "devdeploy-mgmt"
+            context      = "kind-devdeploy-mgmt"
+            status       = "degraded"
+        }
+        return $base
+    }
+
+    $nodesResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "get", "nodes", "--no-headers") -TimeoutSeconds 20
+    if ($nodesResult.exit_code -ne 0 -or $nodesResult.timed_out -or [string]::IsNullOrWhiteSpace($nodesResult.stdout)) {
+        $base["api_reachable"] = $false
+        $base["node_ready"] = $false
+        $base["status"] = "degraded"
+        $base["message"] = "devdeploy-mgmt exists, but kubectl could not read nodes from the cluster."
+        Add-Check -Id "management_cluster_status" -Label "Management cluster status" -Status "warning" -Message ([string]$base["message"]) -Details @{
+            required     = $false
+            cluster_name = "devdeploy-mgmt"
+            context      = "kind-devdeploy-mgmt"
+            status       = "degraded"
+            error        = $nodesResult.stderr
+        }
+        return $base
+    }
+
+    try {
+        $nodes = @($nodesResult.stdout -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $readyNodes = @($nodes | Where-Object {
+                $columns = @($_ -split "\s+" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                $columns.Count -ge 2 -and $columns[1] -eq "Ready"
+            })
+
+        $base["api_reachable"] = $true
+        $base["ready_nodes"] = [int]$readyNodes.Count
+        $base["total_nodes"] = [int]$nodes.Count
+        $base["node_ready"] = [bool]($readyNodes.Count -gt 0)
+
+        if ($nodes.Count -gt 0 -and $readyNodes.Count -gt 0) {
+            $base["status"] = "ready"
+            $base["message"] = "Management cluster devdeploy-mgmt is reachable and has Ready node capacity."
+            Add-Check -Id "management_cluster_status" -Label "Management cluster status" -Status "ok" -Message ([string]$base["message"]) -Details @{
+                required     = $false
+                cluster_name = "devdeploy-mgmt"
+                context      = "kind-devdeploy-mgmt"
+                status       = "ready"
+                ready_nodes  = [int]$readyNodes.Count
+                total_nodes  = [int]$nodes.Count
+            }
+            return $base
+        }
+
+        $base["status"] = "degraded"
+        $base["message"] = "devdeploy-mgmt is reachable, but no nodes are Ready."
+        Add-Check -Id "management_cluster_status" -Label "Management cluster status" -Status "warning" -Message ([string]$base["message"]) -Details @{
+            required     = $false
+            cluster_name = "devdeploy-mgmt"
+            context      = "kind-devdeploy-mgmt"
+            status       = "degraded"
+            ready_nodes  = [int]$readyNodes.Count
+            total_nodes  = [int]$nodes.Count
+        }
+        return $base
+    }
+    catch {
+        $base["api_reachable"] = $true
+        $base["node_ready"] = $null
+        $base["status"] = "unknown"
+        $base["message"] = "devdeploy-mgmt API is reachable, but node readiness could not be parsed safely."
+        Add-Check -Id "management_cluster_status" -Label "Management cluster status" -Status "warning" -Message ([string]$base["message"]) -Details @{
+            required     = $false
+            cluster_name = "devdeploy-mgmt"
+            context      = "kind-devdeploy-mgmt"
+            status       = "unknown"
+            error        = Protect-LogText $_.Exception.Message
+        }
+        return $base
+    }
+}
+
 New-LocalDirectory -Path $StatusDir
 New-LocalDirectory -Path $LogsDir
 New-LocalDirectory -Path $KindDir
@@ -940,11 +1096,12 @@ elseif ($GenerateKindConfigs) {
     Write-KindConfigPreview -Id "kind_config_workload_preview" -Label "Workload kind config preview" -ClusterName "devdeploy-workload" -Path $WorkloadKindConfigPath -ApiServerPort 58081 -HttpHostPort 8081 -HttpsHostPort 8444
 }
 
+$managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
 $stableChecks = @($Checks | ForEach-Object { $_ })
 $overallStatus = [string](Get-OverallStatus -StableChecks $stableChecks)
 $summary = New-LauncherSummary -StableChecks $stableChecks
 $artifacts = New-LauncherArtifacts -IncludeManagementKindConfig ([bool]($GenerateKindConfigs -or $CreateManagementCluster)) -IncludeWorkloadKindConfig ([bool]($GenerateKindConfigs -and -not $CreateManagementCluster))
-$nextActions = @(New-NextActions -StableChecks $stableChecks -LauncherMode $launcherMode -OverallStatus $overallStatus)
+$nextActions = @(New-NextActions -StableChecks $stableChecks -LauncherMode $launcherMode -OverallStatus $overallStatus -ManagementCluster $managementCluster)
 
 $statusDocument = [ordered]@{
     schema_version   = "1"
@@ -957,6 +1114,7 @@ $statusDocument = [ordered]@{
     repo_root        = [string]$RepoRoot
     status           = $overallStatus
     summary          = $summary
+    management_cluster = $managementCluster
     checks           = $stableChecks
     artifacts        = $artifacts
     ports            = $PortPlan

@@ -141,6 +141,7 @@ Top-level fields:
 - `repo_root`
 - `status`
 - `summary`
+- `management_cluster`
 - `checks`
 - `artifacts`
 - `ports`
@@ -178,6 +179,28 @@ The `summary` object includes:
 - `optional_failed_checks`
 - `blocking`
 - `message`
+
+The `management_cluster` object gives backend and Setup Wizard code a stable management cluster readiness summary without parsing individual check IDs. It includes:
+
+- `name`
+- `context`
+- `exists`
+- `api_reachable`
+- `node_ready`
+- `ready_nodes`
+- `total_nodes`
+- `status`
+- `message`
+- `checked_at`
+
+Management cluster status values are:
+
+- `missing`: `devdeploy-mgmt` does not exist yet.
+- `ready`: `devdeploy-mgmt` exists, the API is reachable, and at least one node is Ready.
+- `degraded`: `devdeploy-mgmt` exists, but API or node readiness checks failed.
+- `unknown`: status could not be determined safely.
+
+This status contract does not mean platform components are installed. It does not install ingress-nginx, Argo CD, DevDeploy backend, DevDeploy frontend, PostgreSQL, or Helm charts. `devdeploy-workload` remains out of scope until the workload cluster creation phase.
 
 Each check includes:
 
