@@ -13,6 +13,7 @@ The Phase 2 architecture baseline is defined in:
 - [Localhost Networking and Port Strategy](./localhost-networking-port-strategy.md)
 - [Workload Observability and Status Model](./workload-observability-status-model.md)
 - [Security Boundaries and Credentials Model](./security-credentials-boundaries.md)
+- [Management Platform Bootstrap Plan](./management-platform-bootstrap-plan.md)
 
 The target architecture uses:
 
@@ -152,16 +153,17 @@ Expected defaults:
 
 Goal:
 
-- Create or verify `devdeploy-mgmt` through the Launcher.
+- Bootstrap or verify DevDeploy platform components in `devdeploy-mgmt` through an explicit future Launcher mode.
 
 Recommended tasks:
 
-- Check whether `devdeploy-mgmt` already exists.
-- Verify API server reachability.
-- Verify expected port mappings.
-- Create the cluster only when explicitly requested.
-- Install or verify required platform bootstrap components.
+- Verify `devdeploy-mgmt` is Ready.
+- Install or verify management ingress-nginx.
+- Create or verify the `devdeploy` namespace.
+- Install or verify PostgreSQL.
 - Deploy or verify DevDeploy platform resources.
+- Install or verify Argo CD.
+- Write platform bootstrap status into the launcher status contract.
 - Keep bootstrap operations idempotent where possible.
 
 Expected output:
