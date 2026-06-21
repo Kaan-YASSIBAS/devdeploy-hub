@@ -16,6 +16,8 @@ param(
 
     [switch]$CreateWorkloadCluster,
 
+    [switch]$BootstrapManagementIngress,
+
     [switch]$Quiet
 )
 
@@ -34,6 +36,9 @@ $LogPath = Join-Path $LogsDir "devdeploy-launcher.log"
 $MgmtKindConfigPath = Join-Path $KindDir "devdeploy-mgmt.yaml"
 $WorkloadKindConfigPath = Join-Path $KindDir "devdeploy-workload.yaml"
 $Checks = New-Object System.Collections.Generic.List[object]
+$IngressNginxChartVersion = "4.15.1"
+$IngressNginxNamespace = "ingress-nginx"
+$IngressNginxRelease = "ingress-nginx"
 
 $PortPlan = [ordered]@{
     management_api   = 58080
@@ -229,7 +234,10 @@ function New-NextActions {
         [object]$ManagementCluster,
 
         [Parameter(Mandatory = $true)]
-        [object]$WorkloadCluster
+        [object]$WorkloadCluster,
+
+        [Parameter(Mandatory = $true)]
+        [object]$PlatformBootstrap
     )
 
     $actions = New-Object System.Collections.Generic.List[string]
@@ -275,6 +283,28 @@ function New-NextActions {
     }
     elseif ($managementClusterStatus -eq "unknown") {
         $actions.Add("Review launcher status and logs; management cluster status could not be determined safely.") | Out-Null
+    }
+
+    $ingressStatus = "not_started"
+    try {
+        if ($null -ne $PlatformBootstrap["components"] -and $null -ne $PlatformBootstrap["components"]["ingress_nginx"]) {
+            $ingressStatus = [string]$PlatformBootstrap["components"]["ingress_nginx"]["status"]
+        }
+    }
+    catch {
+        $ingressStatus = "unknown"
+    }
+
+    if ($LauncherMode -eq "management_ingress_bootstrap") {
+        if ($managementClusterStatus -eq "missing" -or $managementClusterStatus -eq "degraded") {
+            $actions.Add("Run the launcher with -CreateManagementCluster before retrying -BootstrapManagementIngress.") | Out-Null
+        }
+        elseif ($ingressStatus -eq "ready") {
+            $actions.Add("Management ingress-nginx is ready. Proceed to future PostgreSQL, backend, frontend, and Argo CD bootstrap phases when available.") | Out-Null
+        }
+        elseif ($ingressStatus -eq "failed" -or $ingressStatus -eq "degraded" -or $ingressStatus -eq "unknown") {
+            $actions.Add("Check the launcher log and rerun -BootstrapManagementIngress after resolving the ingress-nginx issue.") | Out-Null
+        }
     }
 
     if ($OverallStatus -eq "ok" -and $LauncherMode -eq "preflight") {
@@ -492,7 +522,9 @@ function Test-KindClusters {
 
         [bool]$ManagementCreateMode = $false,
 
-        [bool]$WorkloadCreateMode = $false
+        [bool]$WorkloadCreateMode = $false,
+
+        [bool]$ManagementIngressBootstrapMode = $false
     )
 
     if (-not $KindAvailable) {
@@ -541,6 +573,10 @@ function Test-KindClusters {
     elseif ($WorkloadCreateMode -and $mgmtExists) {
         $status = "ok"
         $message = "devdeploy-mgmt already exists. This mode will create or verify only devdeploy-workload."
+    }
+    elseif ($ManagementIngressBootstrapMode -and $mgmtExists) {
+        $status = "ok"
+        $message = "devdeploy-mgmt already exists. This mode will install or verify only management ingress-nginx."
     }
 
     Add-Check -Id "kind_clusters" -Label "Existing kind clusters" -Status $status -Message $message -Details @{
@@ -1363,6 +1399,363 @@ function New-WorkloadClusterStatus {
     }
 }
 
+function New-PlatformComponentStatus {
+    param(
+        [AllowNull()]
+        [object]$Installed,
+
+        [AllowNull()]
+        [object]$Ready,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Namespace,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Status,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Message,
+
+        [string]$Release = ""
+    )
+
+    $component = [ordered]@{
+        installed = $Installed
+        ready     = $Ready
+        namespace = $Namespace
+        status    = $Status
+        message   = $Message
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($Release)) {
+        $component["release"] = $Release
+    }
+
+    return $component
+}
+
+function New-NotStartedPlatformComponent {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Namespace,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
+
+    return New-PlatformComponentStatus -Installed $null -Ready $null -Namespace $Namespace -Status "not_started" -Message $Message
+}
+
+function Get-ManagementIngressStatus {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ManagementCluster,
+
+        [bool]$HelmAvailable,
+
+        [bool]$KubectlAvailable
+    )
+
+    if ([string]$ManagementCluster["status"] -ne "ready") {
+        return New-PlatformComponentStatus -Installed $null -Ready $null -Namespace $IngressNginxNamespace -Release $IngressNginxRelease -Status "unknown" -Message "Management ingress status cannot be determined until devdeploy-mgmt is ready."
+    }
+
+    if (-not $HelmAvailable -or -not $KubectlAvailable) {
+        return New-PlatformComponentStatus -Installed $null -Ready $null -Namespace $IngressNginxNamespace -Release $IngressNginxRelease -Status "unknown" -Message "Management ingress status requires Helm and kubectl."
+    }
+
+    $releaseResult = Invoke-ReadOnlyCommand -FileName "helm" -Arguments @("--kube-context", "kind-devdeploy-mgmt", "status", $IngressNginxRelease, "--namespace", $IngressNginxNamespace) -TimeoutSeconds 20
+    if ($releaseResult.exit_code -ne 0 -or $releaseResult.timed_out) {
+        return New-PlatformComponentStatus -Installed $false -Ready $false -Namespace $IngressNginxNamespace -Release $IngressNginxRelease -Status "not_started" -Message "Management ingress-nginx Helm release is not installed yet."
+    }
+
+    $podsResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "get", "pods", "--namespace", $IngressNginxNamespace, "-l", "app.kubernetes.io/component=controller", "--no-headers") -TimeoutSeconds 20
+    if ($podsResult.exit_code -ne 0 -or $podsResult.timed_out -or [string]::IsNullOrWhiteSpace($podsResult.stdout)) {
+        return New-PlatformComponentStatus -Installed $true -Ready $false -Namespace $IngressNginxNamespace -Release $IngressNginxRelease -Status "degraded" -Message "Management ingress-nginx release exists, but controller pods are not readable."
+    }
+
+    try {
+        $pods = @($podsResult.stdout -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $readyPods = @($pods | Where-Object {
+                $columns = @($_ -split "\s+" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                $columns.Count -ge 3 -and $columns[1] -match "^(\d+)/\1$" -and $columns[2] -eq "Running"
+            })
+
+        if ($readyPods.Count -gt 0) {
+            return New-PlatformComponentStatus -Installed $true -Ready $true -Namespace $IngressNginxNamespace -Release $IngressNginxRelease -Status "ready" -Message "Management ingress-nginx is installed and controller pods are Ready."
+        }
+
+        return New-PlatformComponentStatus -Installed $true -Ready $false -Namespace $IngressNginxNamespace -Release $IngressNginxRelease -Status "degraded" -Message "Management ingress-nginx is installed, but controller pods are not Ready yet."
+    }
+    catch {
+        return New-PlatformComponentStatus -Installed $true -Ready $null -Namespace $IngressNginxNamespace -Release $IngressNginxRelease -Status "unknown" -Message "Management ingress-nginx pod readiness could not be parsed safely."
+    }
+}
+
+function New-PlatformBootstrapStatus {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ManagementCluster,
+
+        [bool]$HelmAvailable,
+
+        [bool]$KubectlAvailable
+    )
+
+    $ingress = Get-ManagementIngressStatus -ManagementCluster $ManagementCluster -HelmAvailable $HelmAvailable -KubectlAvailable $KubectlAvailable
+    $status = "not_started"
+    $message = "Management platform bootstrap has not started yet."
+
+    $ingressFailedChecks = @($Checks | Where-Object { $_.id -like "management_ingress_*" -and $_.status -eq "failed" }).Count
+
+    if ($ingressFailedChecks -gt 0 -and [string]$ingress["status"] -ne "ready") {
+        $ingress["status"] = "failed"
+        $ingress["installed"] = $null
+        $ingress["ready"] = $false
+        $ingress["message"] = "Management ingress-nginx bootstrap failed. Check launcher logs and rerun the explicit bootstrap mode after resolving the issue."
+        $status = "failed"
+        $message = "Management ingress-nginx bootstrap failed."
+    }
+    elseif ([string]$ingress["status"] -eq "ready") {
+        $status = "partial"
+        $message = "Management ingress-nginx is ready. PostgreSQL, backend, frontend, and Argo CD bootstrap are not implemented yet."
+    }
+    elseif ([string]$ingress["status"] -eq "degraded") {
+        $status = "degraded"
+        $message = "Management ingress-nginx exists but is not fully ready."
+    }
+    elseif ([string]$ingress["status"] -eq "failed") {
+        $status = "failed"
+        $message = "Management ingress-nginx bootstrap failed."
+    }
+    elseif ([string]$ingress["status"] -eq "unknown") {
+        $status = "unknown"
+        $message = "Management platform bootstrap status could not be determined safely."
+    }
+
+    $platform = [ordered]@{
+        status     = $status
+        checked_at = [string](Get-Timestamp)
+        message    = $message
+        components = [ordered]@{
+            ingress_nginx = $ingress
+            postgres      = New-NotStartedPlatformComponent -Namespace "devdeploy" -Message "PostgreSQL bootstrap is not implemented yet."
+            backend       = New-NotStartedPlatformComponent -Namespace "devdeploy" -Message "Backend bootstrap is not implemented yet."
+            frontend      = New-NotStartedPlatformComponent -Namespace "devdeploy" -Message "Frontend bootstrap is not implemented yet."
+            argocd        = New-NotStartedPlatformComponent -Namespace "argocd" -Message "Argo CD bootstrap is not implemented yet."
+        }
+    }
+
+    $checkStatus = "warning"
+    if ($status -eq "partial") {
+        $checkStatus = "ok"
+    }
+    elseif ($status -eq "failed") {
+        $checkStatus = "failed"
+    }
+
+    Add-Check -Id "platform_bootstrap_status" -Label "Platform bootstrap status" -Status $checkStatus -Message $message -Details @{
+        required       = $false
+        status         = $status
+        ingress_status = [string]$ingress["status"]
+    }
+
+    return $platform
+}
+
+function Add-SkippedManagementIngressStages {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Reason
+    )
+
+    Add-Check -Id "management_ingress_helm_available" -Label "Management ingress Helm availability" -Status "skipped" -Message $Reason -Details @{
+        required = $true
+    }
+    Add-Check -Id "management_ingress_namespace" -Label "Management ingress namespace" -Status "skipped" -Message $Reason -Details @{
+        required  = $true
+        namespace = $IngressNginxNamespace
+    }
+    Add-Check -Id "management_ingress_release" -Label "Management ingress release" -Status "skipped" -Message $Reason -Details @{
+        required  = $true
+        namespace = $IngressNginxNamespace
+        release   = $IngressNginxRelease
+    }
+    Add-Check -Id "management_ingress_ready" -Label "Management ingress readiness" -Status "skipped" -Message $Reason -Details @{
+        required  = $true
+        namespace = $IngressNginxNamespace
+        release   = $IngressNginxRelease
+    }
+}
+
+function Invoke-ManagementIngressBootstrap {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ManagementCluster,
+
+        [bool]$HelmAvailable,
+
+        [bool]$KubectlAvailable
+    )
+
+    if ([string]$ManagementCluster["status"] -ne "ready") {
+        Add-Check -Id "management_ingress_helm_available" -Label "Management ingress Helm availability" -Status "skipped" -Message "Helm check skipped because devdeploy-mgmt is not ready." -Details @{
+            required = $true
+        }
+        Add-Check -Id "management_ingress_namespace" -Label "Management ingress namespace" -Status "skipped" -Message "Namespace check skipped because devdeploy-mgmt is not ready." -Details @{
+            required  = $true
+            namespace = $IngressNginxNamespace
+        }
+        Add-Check -Id "management_ingress_release" -Label "Management ingress release" -Status "failed" -Message "devdeploy-mgmt must be ready before installing management ingress-nginx." -Details @{
+            required     = $true
+            cluster_name = "devdeploy-mgmt"
+            status       = [string]$ManagementCluster["status"]
+        }
+        Add-Check -Id "management_ingress_ready" -Label "Management ingress readiness" -Status "skipped" -Message "Readiness check skipped because ingress-nginx was not installed." -Details @{
+            required = $true
+        }
+        return
+    }
+
+    if (-not $HelmAvailable) {
+        Add-Check -Id "management_ingress_helm_available" -Label "Management ingress Helm availability" -Status "failed" -Message "Helm CLI is required for -BootstrapManagementIngress." -Details @{
+            required = $true
+            command  = "helm"
+        }
+        Add-Check -Id "management_ingress_release" -Label "Management ingress release" -Status "skipped" -Message "Helm release step skipped because Helm CLI is missing." -Details @{
+            required = $true
+        }
+        Add-Check -Id "management_ingress_ready" -Label "Management ingress readiness" -Status "skipped" -Message "Readiness check skipped because Helm CLI is missing." -Details @{
+            required = $true
+        }
+        return
+    }
+
+    if (-not $KubectlAvailable) {
+        Add-Check -Id "management_ingress_helm_available" -Label "Management ingress Helm availability" -Status "ok" -Message "Helm CLI is available." -Details @{
+            required = $true
+            command  = "helm"
+        }
+        Add-Check -Id "management_ingress_release" -Label "Management ingress release" -Status "failed" -Message "kubectl is required to verify management ingress-nginx after Helm install." -Details @{
+            required = $true
+        }
+        Add-Check -Id "management_ingress_ready" -Label "Management ingress readiness" -Status "skipped" -Message "Readiness check skipped because kubectl is missing." -Details @{
+            required = $true
+        }
+        return
+    }
+
+    Add-Check -Id "management_ingress_helm_available" -Label "Management ingress Helm availability" -Status "ok" -Message "Helm CLI is available for explicit management ingress bootstrap." -Details @{
+        required = $true
+        command  = "helm"
+    }
+
+    $repoAdd = Invoke-ReadOnlyCommand -FileName "helm" -Arguments @("repo", "add", "ingress-nginx", "https://kubernetes.github.io/ingress-nginx") -TimeoutSeconds 60
+    if ($repoAdd.exit_code -ne 0 -or $repoAdd.timed_out) {
+        Add-Check -Id "management_ingress_release" -Label "Management ingress release" -Status "failed" -Message "Could not add or verify the ingress-nginx Helm repository." -Details @{
+            required = $true
+            error    = $repoAdd.stderr
+        }
+        Add-Check -Id "management_ingress_ready" -Label "Management ingress readiness" -Status "skipped" -Message "Readiness check skipped because Helm repository setup failed." -Details @{
+            required = $true
+        }
+        return
+    }
+
+    $repoUpdate = Invoke-ReadOnlyCommand -FileName "helm" -Arguments @("repo", "update", "ingress-nginx") -TimeoutSeconds 120
+    if ($repoUpdate.exit_code -ne 0 -or $repoUpdate.timed_out) {
+        Add-Check -Id "management_ingress_release" -Label "Management ingress release" -Status "failed" -Message "Could not update the ingress-nginx Helm repository." -Details @{
+            required = $true
+            error    = $repoUpdate.stderr
+        }
+        Add-Check -Id "management_ingress_ready" -Label "Management ingress readiness" -Status "skipped" -Message "Readiness check skipped because Helm repository update failed." -Details @{
+            required = $true
+        }
+        return
+    }
+
+    $helmArgs = @(
+        "upgrade", "--install", $IngressNginxRelease, "ingress-nginx/ingress-nginx",
+        "--version", $IngressNginxChartVersion,
+        "--namespace", $IngressNginxNamespace,
+        "--create-namespace",
+        "--kube-context", "kind-devdeploy-mgmt",
+        "--wait",
+        "--timeout", "5m",
+        "--set", "controller.hostPort.enabled=true",
+        "--set", "controller.service.type=NodePort",
+        "--set", "controller.ingressClassResource.default=true",
+        "--set", "controller.watchIngressWithoutClass=true",
+        "--set", "controller.admissionWebhooks.enabled=false"
+    )
+
+    Write-LauncherLog "Installing or verifying management ingress-nginx in devdeploy-mgmt with Helm."
+    $installResult = Invoke-ReadOnlyCommand -FileName "helm" -Arguments $helmArgs -TimeoutSeconds 420
+    if ($installResult.exit_code -ne 0 -or $installResult.timed_out) {
+        $message = "Helm failed to install or upgrade management ingress-nginx. No automatic cleanup was performed."
+        if ($installResult.timed_out) {
+            $message = "Helm timed out while installing or upgrading management ingress-nginx. No automatic cleanup was performed."
+        }
+
+        Add-Check -Id "management_ingress_release" -Label "Management ingress release" -Status "failed" -Message $message -Details @{
+            required      = $true
+            namespace     = $IngressNginxNamespace
+            release       = $IngressNginxRelease
+            chart         = "ingress-nginx/ingress-nginx"
+            chart_version = $IngressNginxChartVersion
+            error         = $installResult.stderr
+        }
+        Add-Check -Id "management_ingress_ready" -Label "Management ingress readiness" -Status "skipped" -Message "Readiness check skipped because Helm install or upgrade failed." -Details @{
+            required = $true
+        }
+        return
+    }
+
+    Add-Check -Id "management_ingress_release" -Label "Management ingress release" -Status "ok" -Message "ingress-nginx Helm release is installed or reconciled in devdeploy-mgmt." -Details @{
+        required      = $true
+        namespace     = $IngressNginxNamespace
+        release       = $IngressNginxRelease
+        chart         = "ingress-nginx/ingress-nginx"
+        chart_version = $IngressNginxChartVersion
+    }
+
+    $namespaceResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "get", "namespace", $IngressNginxNamespace) -TimeoutSeconds 20
+    if ($namespaceResult.exit_code -eq 0 -and -not $namespaceResult.timed_out) {
+        Add-Check -Id "management_ingress_namespace" -Label "Management ingress namespace" -Status "ok" -Message "ingress-nginx namespace exists in devdeploy-mgmt." -Details @{
+            required  = $true
+            namespace = $IngressNginxNamespace
+        }
+    }
+    else {
+        Add-Check -Id "management_ingress_namespace" -Label "Management ingress namespace" -Status "failed" -Message "ingress-nginx namespace could not be verified in devdeploy-mgmt." -Details @{
+            required  = $true
+            namespace = $IngressNginxNamespace
+            error     = $namespaceResult.stderr
+        }
+        Add-Check -Id "management_ingress_ready" -Label "Management ingress readiness" -Status "skipped" -Message "Readiness check skipped because namespace verification failed." -Details @{
+            required = $true
+        }
+        return
+    }
+
+    $rolloutResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "rollout", "status", "deployment/ingress-nginx-controller", "--namespace", $IngressNginxNamespace, "--timeout=180s") -TimeoutSeconds 210
+    if ($rolloutResult.exit_code -eq 0 -and -not $rolloutResult.timed_out) {
+        Add-Check -Id "management_ingress_ready" -Label "Management ingress readiness" -Status "ok" -Message "ingress-nginx controller is Ready in devdeploy-mgmt." -Details @{
+            required  = $true
+            namespace = $IngressNginxNamespace
+            release   = $IngressNginxRelease
+        }
+        return
+    }
+
+    Add-Check -Id "management_ingress_ready" -Label "Management ingress readiness" -Status "failed" -Message "ingress-nginx controller did not become Ready in devdeploy-mgmt." -Details @{
+        required  = $true
+        namespace = $IngressNginxNamespace
+        release   = $IngressNginxRelease
+        error     = $rolloutResult.stderr
+    }
+}
+
 New-LocalDirectory -Path $StatusDir
 New-LocalDirectory -Path $LogsDir
 New-LocalDirectory -Path $KindDir
@@ -1372,6 +1765,9 @@ if ($CreateManagementCluster) {
 }
 elseif ($CreateWorkloadCluster) {
     Write-LauncherLog "Starting DevDeploy Launcher guarded workload cluster create mode."
+}
+elseif ($BootstrapManagementIngress) {
+    Write-LauncherLog "Starting DevDeploy Launcher explicit management ingress bootstrap mode."
 }
 elseif ($GenerateKindConfigs) {
     Write-LauncherLog "Starting DevDeploy Launcher read-only preflight with kind config preview generation."
@@ -1384,7 +1780,7 @@ $dockerAvailable = Test-CommandAvailable -Name "docker" -Label "Docker CLI" -Req
 $kindAvailable = Test-CommandAvailable -Name "kind" -Label "kind CLI" -Required $true
 $kubectlAvailable = Test-CommandAvailable -Name "kubectl" -Label "kubectl CLI" -Required $true
 [void](Test-CommandAvailable -Name "git" -Label "git CLI" -Required $false)
-[void](Test-CommandAvailable -Name "helm" -Label "Helm CLI" -Required $false)
+$helmAvailable = Test-CommandAvailable -Name "helm" -Label "Helm CLI" -Required ([bool]$BootstrapManagementIngress)
 
 Test-DockerDaemon -DockerCliAvailable $dockerAvailable
 
@@ -1407,15 +1803,21 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
     $expectedCluster = if ($isManagementPort) { "devdeploy-mgmt" } elseif ($isWorkloadPort) { "devdeploy-workload" } else { "" }
     $existingClusterDetected = [bool](($isManagementPort -and $managementClusterExistsBeforePortCheck) -or ($isWorkloadPort -and $workloadClusterExistsBeforePortCheck))
     $portRequired = [bool](-not $existingClusterDetected)
+    if ($BootstrapManagementIngress -and $isWorkloadPort) {
+        $portRequired = $false
+    }
     $allowBusyAsOk = [bool]$existingClusterDetected
 
     Test-LocalPortAvailable -Port ([int]$entry.Value) -Required $portRequired -AllowBusyAsOk $allowBusyAsOk -ExpectedCluster $expectedCluster -ExistingClusterDetected $existingClusterDetected
 }
 
 if ($workloadClusterExistsBeforePortCheck) {
-    $detectedStatus = if ($CreateWorkloadCluster) { "ok" } else { "warning" }
+    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress) { "ok" } else { "warning" }
     $detectedMessage = if ($CreateWorkloadCluster) {
         "devdeploy-workload already exists. This launcher mode will verify it instead of recreating it."
+    }
+    elseif ($BootstrapManagementIngress) {
+        "devdeploy-workload already exists. This launcher mode does not use, modify, or delete it."
     }
     else {
         "devdeploy-workload already exists. This launcher mode will not create, modify, or delete it."
@@ -1428,7 +1830,7 @@ if ($workloadClusterExistsBeforePortCheck) {
     }
 }
 
-Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster)
+Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress)
 Test-KubectlContext -KubectlAvailable $kubectlAvailable
 
 $launcherMode = "preflight"
@@ -1438,9 +1840,15 @@ if ($CreateManagementCluster) {
 elseif ($CreateWorkloadCluster) {
     $launcherMode = "workload_cluster_create"
 }
+elseif ($BootstrapManagementIngress) {
+    $launcherMode = "management_ingress_bootstrap"
+}
 elseif ($GenerateKindConfigs) {
     $launcherMode = "kind_config_preview"
 }
+
+$managementCluster = $null
+$workloadCluster = $null
 
 if ($CreateManagementCluster) {
     Write-KindConfigPreview -Id "management_kind_config" -Label "Management kind config" -ClusterName "devdeploy-mgmt" -Path $MgmtKindConfigPath -ApiServerPort 58080 -HttpHostPort 8080 -HttpsHostPort 8443
@@ -1486,18 +1894,34 @@ elseif ($CreateWorkloadCluster) {
         }
     }
 }
+elseif ($BootstrapManagementIngress) {
+    $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
+    $preBootstrapChecks = @($Checks | ForEach-Object { $_ })
+    $preBootstrapStatus = [string](Get-OverallStatus -StableChecks $preBootstrapChecks)
+    if ($preBootstrapStatus -eq "failed" -and [string]$managementCluster["status"] -eq "ready") {
+        Add-SkippedManagementIngressStages -Reason "Management ingress bootstrap was skipped because required preflight checks failed."
+    }
+    else {
+        Invoke-ManagementIngressBootstrap -ManagementCluster $managementCluster -HelmAvailable $helmAvailable -KubectlAvailable $kubectlAvailable
+    }
+}
 elseif ($GenerateKindConfigs) {
     Write-KindConfigPreview -Id "kind_config_mgmt_preview" -Label "Management kind config preview" -ClusterName "devdeploy-mgmt" -Path $MgmtKindConfigPath -ApiServerPort 58080 -HttpHostPort 8080 -HttpsHostPort 8443
     Write-KindConfigPreview -Id "kind_config_workload_preview" -Label "Workload kind config preview" -ClusterName "devdeploy-workload" -Path $WorkloadKindConfigPath -ApiServerPort 58081 -HttpHostPort 8081 -HttpsHostPort 8444
 }
 
-$managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
-$workloadCluster = New-WorkloadClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
+if ($null -eq $managementCluster) {
+    $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
+}
+if ($null -eq $workloadCluster) {
+    $workloadCluster = New-WorkloadClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
+}
+$platformBootstrap = New-PlatformBootstrapStatus -ManagementCluster $managementCluster -HelmAvailable $helmAvailable -KubectlAvailable $kubectlAvailable
 $stableChecks = @($Checks | ForEach-Object { $_ })
 $overallStatus = [string](Get-OverallStatus -StableChecks $stableChecks)
 $summary = New-LauncherSummary -StableChecks $stableChecks
 $artifacts = New-LauncherArtifacts -IncludeManagementKindConfig ([bool]($GenerateKindConfigs -or $CreateManagementCluster)) -IncludeWorkloadKindConfig ([bool]($GenerateKindConfigs -or $CreateWorkloadCluster))
-$nextActions = @(New-NextActions -StableChecks $stableChecks -LauncherMode $launcherMode -OverallStatus $overallStatus -ManagementCluster $managementCluster -WorkloadCluster $workloadCluster)
+$nextActions = @(New-NextActions -StableChecks $stableChecks -LauncherMode $launcherMode -OverallStatus $overallStatus -ManagementCluster $managementCluster -WorkloadCluster $workloadCluster -PlatformBootstrap $platformBootstrap)
 
 $statusDocument = [ordered]@{
     schema_version   = "1"
@@ -1512,6 +1936,7 @@ $statusDocument = [ordered]@{
     summary          = $summary
     management_cluster = $managementCluster
     workload_cluster = $workloadCluster
+    platform_bootstrap = $platformBootstrap
     checks           = $stableChecks
     artifacts        = $artifacts
     ports            = $PortPlan
@@ -1528,6 +1953,9 @@ if (-not $Quiet) {
     }
     elseif ($CreateWorkloadCluster) {
         Write-Host ("Workload kind config: {0}" -f $WorkloadKindConfigPath)
+    }
+    elseif ($BootstrapManagementIngress) {
+        Write-Host ("Management ingress release: {0}/{1}" -f $IngressNginxNamespace, $IngressNginxRelease)
     }
     elseif ($GenerateKindConfigs) {
         Write-Host ("Management kind config: {0}" -f $MgmtKindConfigPath)

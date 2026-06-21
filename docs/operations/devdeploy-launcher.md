@@ -2,7 +2,7 @@
 
 This document explains the DevDeploy Launcher skeleton for Windows PowerShell.
 
-The launcher writes sanitized structured status for future backend and Setup Wizard integration. Default preflight mode and kind config preview mode are read-only. Management cluster creation happens only when `-CreateManagementCluster` is explicitly passed. Workload cluster creation happens only when `-CreateWorkloadCluster` is explicitly passed.
+The launcher writes sanitized structured status for future backend and Setup Wizard integration. Default preflight mode and kind config preview mode are read-only. Management cluster creation happens only when `-CreateManagementCluster` is explicitly passed. Workload cluster creation happens only when `-CreateWorkloadCluster` is explicitly passed. Management ingress bootstrap happens only when `-BootstrapManagementIngress` is explicitly passed.
 
 ## Run The Preflight
 
@@ -115,6 +115,51 @@ kubectl --context kind-devdeploy-workload get nodes
 
 If required preflight checks fail, the launcher does not create the workload cluster. If creation fails, the launcher records a failed status and does not perform automatic cleanup.
 
+## Bootstrap Management Ingress
+
+To explicitly install or verify only management ingress-nginx in `devdeploy-mgmt`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -BootstrapManagementIngress
+```
+
+This is the first explicit platform bootstrap mode. It:
+
+- Runs the preflight checks.
+- Verifies `devdeploy-mgmt` is Ready.
+- Uses Helm only in this explicit mode.
+- Installs or verifies the pinned `ingress-nginx` Helm chart in `devdeploy-mgmt`.
+- Uses namespace `ingress-nginx`.
+- Uses release name `ingress-nginx`.
+- Configures ingress-nginx for local kind host port mappings.
+- Waits for the ingress-nginx controller to become Ready.
+- Writes `platform_bootstrap.components.ingress_nginx` status.
+
+This mode does not:
+
+- Install Argo CD.
+- Install PostgreSQL.
+- Deploy DevDeploy backend.
+- Deploy DevDeploy frontend.
+- Register `devdeploy-workload` in Argo CD.
+- Install anything into `devdeploy-workload`.
+- Create user workloads.
+- Run `kubectl apply`.
+- Run `kubectl delete`.
+- Run `helm install` outside this explicit mode.
+- Delete clusters or perform destructive cleanup.
+
+Manual verification commands:
+
+```powershell
+kubectl --context kind-devdeploy-mgmt get ns
+kubectl --context kind-devdeploy-mgmt get pods -n ingress-nginx
+kubectl --context kind-devdeploy-mgmt get svc -n ingress-nginx
+helm --kube-context kind-devdeploy-mgmt list -n ingress-nginx
+```
+
+`http://devdeploy.localhost:8080` may still not serve the DevDeploy UI after this step. The frontend and backend are not installed by management ingress bootstrap.
+
 ## What It Checks
 
 The launcher checks:
@@ -177,6 +222,7 @@ Top-level fields:
 - `summary`
 - `management_cluster`
 - `workload_cluster`
+- `platform_bootstrap`
 - `checks`
 - `artifacts`
 - `ports`
@@ -196,6 +242,7 @@ devdeploy-launcher-status
 - `kind_config_preview`
 - `management_cluster_create`
 - `workload_cluster_create`
+- `management_ingress_bootstrap`
 
 `status` is one of:
 
@@ -258,6 +305,24 @@ Workload cluster status values are:
 
 This status contract does not mean platform components are installed. It does not install ingress-nginx, Argo CD, DevDeploy backend, DevDeploy frontend, PostgreSQL, Helm charts, or user workloads. Creating `devdeploy-workload` only prepares the empty workload cluster for future bootstrap phases.
 
+The `platform_bootstrap` object summarizes platform component bootstrap state. In this phase only `ingress_nginx` can become Ready. Other components remain `not_started`.
+
+Current component keys:
+
+- `ingress_nginx`
+- `postgres`
+- `backend`
+- `frontend`
+- `argocd`
+
+`platform_bootstrap.status` may be:
+
+- `not_started`: no platform bootstrap component is installed or verified yet.
+- `partial`: management ingress-nginx is Ready, but remaining platform components are not implemented yet.
+- `degraded`: a component exists but is not fully Ready.
+- `failed`: an explicit bootstrap step failed.
+- `unknown`: status could not be determined safely.
+
 Each check includes:
 
 - `id`
@@ -304,6 +369,11 @@ When `-CreateWorkloadCluster` is used, it includes:
 
 - `workload_kind_config`
 
+When `-BootstrapManagementIngress` is used, the local status includes:
+
+- `platform_bootstrap`
+- `platform_bootstrap.components.ingress_nginx`
+
 The `next_actions` array contains safe, non-destructive guidance. For example:
 
 - If port `8080` is busy, it tells the user to free port `8080` before creating DevDeploy local clusters.
@@ -311,6 +381,7 @@ The `next_actions` array contains safe, non-destructive guidance. For example:
 - If kind config previews are generated and all required checks pass, it points to the future cluster creation step.
 - If `devdeploy-mgmt` is ready and `devdeploy-workload` is missing, it suggests running `-CreateWorkloadCluster`.
 - If both clusters are ready, it points to the future Argo CD and platform bootstrap step.
+- If management ingress-nginx is Ready, it points to future PostgreSQL, backend, frontend, and Argo CD bootstrap phases.
 
 ## Logs
 
@@ -353,6 +424,8 @@ They do not:
 `-CreateManagementCluster` may create only `devdeploy-mgmt`.
 
 `-CreateWorkloadCluster` may create only `devdeploy-workload`.
+
+`-BootstrapManagementIngress` may install or verify only ingress-nginx in `devdeploy-mgmt`.
 
 ## Phase 2B / 2C Role
 
