@@ -2,7 +2,7 @@
 
 This document explains the DevDeploy Launcher skeleton for Windows PowerShell.
 
-The launcher writes sanitized structured status for future backend and Setup Wizard integration. Default preflight mode and kind config preview mode are read-only. Management cluster creation happens only when `-CreateManagementCluster` is explicitly passed.
+The launcher writes sanitized structured status for future backend and Setup Wizard integration. Default preflight mode and kind config preview mode are read-only. Management cluster creation happens only when `-CreateManagementCluster` is explicitly passed. Workload cluster creation happens only when `-CreateWorkloadCluster` is explicitly passed.
 
 ## Run The Preflight
 
@@ -81,6 +81,40 @@ kubectl --context kind-devdeploy-mgmt get nodes
 
 If required preflight checks fail, the launcher does not create the cluster. If creation fails, the launcher records a failed status and does not perform automatic cleanup.
 
+## Create Or Verify The Workload Cluster
+
+To explicitly create or verify only the workload cluster:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -CreateWorkloadCluster
+```
+
+This guarded mode:
+
+- Runs the preflight checks.
+- Generates or verifies `.devdeploy/local/kind/devdeploy-workload.yaml`.
+- Creates `devdeploy-workload` only if it does not already exist.
+- Verifies `devdeploy-workload` with safe read-only checks.
+- Does not recreate an existing `devdeploy-workload` cluster.
+- Does not modify or recreate `devdeploy-mgmt`.
+- Does not delete clusters.
+- Does not install ingress-nginx.
+- Does not install Argo CD.
+- Does not configure Argo CD cluster access.
+- Does not deploy DevDeploy backend, frontend, PostgreSQL, or user workloads.
+- Does not run `kubectl apply`.
+- Does not run `kubectl delete`.
+- Does not run `helm install`.
+
+Manual verification commands:
+
+```powershell
+kind get clusters
+kubectl --context kind-devdeploy-workload get nodes
+```
+
+If required preflight checks fail, the launcher does not create the workload cluster. If creation fails, the launcher records a failed status and does not perform automatic cleanup.
+
 ## What It Checks
 
 The launcher checks:
@@ -142,6 +176,7 @@ Top-level fields:
 - `status`
 - `summary`
 - `management_cluster`
+- `workload_cluster`
 - `checks`
 - `artifacts`
 - `ports`
@@ -160,6 +195,7 @@ devdeploy-launcher-status
 - `preflight`
 - `kind_config_preview`
 - `management_cluster_create`
+- `workload_cluster_create`
 
 `status` is one of:
 
@@ -200,7 +236,27 @@ Management cluster status values are:
 - `degraded`: `devdeploy-mgmt` exists, but API or node readiness checks failed.
 - `unknown`: status could not be determined safely.
 
-This status contract does not mean platform components are installed. It does not install ingress-nginx, Argo CD, DevDeploy backend, DevDeploy frontend, PostgreSQL, or Helm charts. `devdeploy-workload` remains out of scope until the workload cluster creation phase.
+The `workload_cluster` object gives backend and Setup Wizard code a stable workload cluster readiness summary without parsing individual check IDs. It includes:
+
+- `name`
+- `context`
+- `exists`
+- `api_reachable`
+- `node_ready`
+- `ready_nodes`
+- `total_nodes`
+- `status`
+- `message`
+- `checked_at`
+
+Workload cluster status values are:
+
+- `missing`: `devdeploy-workload` does not exist yet.
+- `ready`: `devdeploy-workload` exists, the API is reachable, and at least one node is Ready.
+- `degraded`: `devdeploy-workload` exists, but API or node readiness checks failed.
+- `unknown`: status could not be determined safely.
+
+This status contract does not mean platform components are installed. It does not install ingress-nginx, Argo CD, DevDeploy backend, DevDeploy frontend, PostgreSQL, Helm charts, or user workloads. Creating `devdeploy-workload` only prepares the empty workload cluster for future bootstrap phases.
 
 Each check includes:
 
@@ -244,11 +300,17 @@ When `-CreateManagementCluster` is used, it includes:
 
 - `management_kind_config`
 
+When `-CreateWorkloadCluster` is used, it includes:
+
+- `workload_kind_config`
+
 The `next_actions` array contains safe, non-destructive guidance. For example:
 
 - If port `8080` is busy, it tells the user to free port `8080` before creating DevDeploy local clusters.
 - If all required preflight checks pass, it suggests running `-GenerateKindConfigs`.
 - If kind config previews are generated and all required checks pass, it points to the future cluster creation step.
+- If `devdeploy-mgmt` is ready and `devdeploy-workload` is missing, it suggests running `-CreateWorkloadCluster`.
+- If both clusters are ready, it points to the future Argo CD and platform bootstrap step.
 
 ## Logs
 
@@ -288,18 +350,18 @@ They do not:
 - Deploy workloads.
 - Modify Kubernetes runtime resources.
 
-`-CreateManagementCluster` is the only current mode that may create a cluster, and it may create only `devdeploy-mgmt`.
+`-CreateManagementCluster` may create only `devdeploy-mgmt`.
+
+`-CreateWorkloadCluster` may create only `devdeploy-workload`.
 
 ## Phase 2B / 2C Role
 
-Phase 2B introduced the host-side launcher contract and kind config preview. Phase 2C adds guarded management cluster creation.
+Phase 2B introduced the host-side launcher contract and kind config preview. Phase 2C adds guarded management and workload cluster creation.
 
 The Setup Wizard and backend should eventually consume this launcher status instead of assuming that an in-cluster backend can verify host tools such as Docker, kind, kubectl, Helm, ports, kubeconfigs, or filesystem state.
 
 Future phases may extend the launcher to:
 
-- Create or verify `devdeploy-mgmt`.
-- Create or verify `devdeploy-workload`.
 - Register `devdeploy-workload` with Argo CD.
 
 Normal workload deployment must remain GitOps-only:

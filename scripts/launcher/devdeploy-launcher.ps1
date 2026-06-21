@@ -14,6 +14,8 @@ param(
 
     [switch]$CreateManagementCluster,
 
+    [switch]$CreateWorkloadCluster,
+
     [switch]$Quiet
 )
 
@@ -224,7 +226,10 @@ function New-NextActions {
         [string]$OverallStatus,
 
         [Parameter(Mandatory = $true)]
-        [object]$ManagementCluster
+        [object]$ManagementCluster,
+
+        [Parameter(Mandatory = $true)]
+        [object]$WorkloadCluster
     )
 
     $actions = New-Object System.Collections.Generic.List[string]
@@ -246,12 +251,24 @@ function New-NextActions {
     }
 
     $managementClusterStatus = [string]$ManagementCluster["status"]
+    $workloadClusterStatus = [string]$WorkloadCluster["status"]
 
     if ($managementClusterStatus -eq "missing") {
         $actions.Add("Run the launcher with -CreateManagementCluster to create devdeploy-mgmt when you are ready.") | Out-Null
     }
     elseif ($managementClusterStatus -eq "ready") {
-        $actions.Add("devdeploy-mgmt is ready. Proceed to the future platform component bootstrap step when available.") | Out-Null
+        if ($workloadClusterStatus -eq "missing") {
+            $actions.Add("devdeploy-mgmt is ready. Run the launcher with -CreateWorkloadCluster to create devdeploy-workload when you are ready.") | Out-Null
+        }
+        elseif ($workloadClusterStatus -eq "ready") {
+            $actions.Add("devdeploy-mgmt and devdeploy-workload are ready. Proceed to the future Argo CD and platform bootstrap step when available.") | Out-Null
+        }
+        elseif ($workloadClusterStatus -eq "degraded") {
+            $actions.Add("Check the launcher log and rerun -CreateWorkloadCluster to verify devdeploy-workload after resolving the issue.") | Out-Null
+        }
+        elseif ($workloadClusterStatus -eq "unknown") {
+            $actions.Add("Review launcher status and logs; workload cluster status could not be determined safely.") | Out-Null
+        }
     }
     elseif ($managementClusterStatus -eq "degraded") {
         $actions.Add("Check the launcher log and rerun -CreateManagementCluster to verify devdeploy-mgmt after resolving the issue.") | Out-Null
@@ -473,7 +490,9 @@ function Test-KindClusters {
     param(
         [bool]$KindAvailable,
 
-        [bool]$ManagementCreateMode = $false
+        [bool]$ManagementCreateMode = $false,
+
+        [bool]$WorkloadCreateMode = $false
     )
 
     if (-not $KindAvailable) {
@@ -514,6 +533,14 @@ function Test-KindClusters {
     elseif ($ManagementCreateMode -and $workloadExists) {
         $status = "warning"
         $message = "An existing devdeploy-workload cluster was detected. This mode will not create, modify, or delete it."
+    }
+    elseif ($WorkloadCreateMode -and $workloadExists) {
+        $status = "ok"
+        $message = "devdeploy-workload already exists and will be verified instead of recreated."
+    }
+    elseif ($WorkloadCreateMode -and $mgmtExists) {
+        $status = "ok"
+        $message = "devdeploy-mgmt already exists. This mode will create or verify only devdeploy-workload."
     }
 
     Add-Check -Id "kind_clusters" -Label "Existing kind clusters" -Status $status -Message $message -Details @{
@@ -863,6 +890,197 @@ function Add-SkippedManagementClusterStages {
     }
 }
 
+function Test-WorkloadClusterExists {
+    param(
+        [bool]$KindAvailable
+    )
+
+    $clusterResult = Get-KindClusterNames -KindAvailable $KindAvailable
+    if (-not $clusterResult.success) {
+        Add-Check -Id "workload_cluster_exists" -Label "Workload cluster exists" -Status "failed" -Message "Could not verify whether devdeploy-workload exists." -Details @{
+            required     = $true
+            cluster_name = "devdeploy-workload"
+            error        = Protect-LogText $clusterResult.error
+        }
+        return $false
+    }
+
+    $exists = @($clusterResult.clusters) -contains "devdeploy-workload"
+    if ($exists) {
+        Add-Check -Id "workload_cluster_exists" -Label "Workload cluster exists" -Status "ok" -Message "devdeploy-workload already exists." -Details @{
+            required     = $true
+            cluster_name = "devdeploy-workload"
+            exists       = $true
+        }
+        return $true
+    }
+
+    Add-Check -Id "workload_cluster_exists" -Label "Workload cluster exists" -Status "ok" -Message "devdeploy-workload does not exist yet and can be created by this explicit mode." -Details @{
+        required     = $true
+        cluster_name = "devdeploy-workload"
+        exists       = $false
+    }
+    return $false
+}
+
+function Invoke-WorkloadClusterCreate {
+    param(
+        [bool]$AlreadyExists
+    )
+
+    if ($AlreadyExists) {
+        Add-Check -Id "workload_cluster_create" -Label "Workload cluster create" -Status "skipped" -Message "devdeploy-workload already exists, so creation was skipped." -Details @{
+            required     = $false
+            cluster_name = "devdeploy-workload"
+            created      = $false
+            skipped      = "already_exists"
+        }
+        return $true
+    }
+
+    Write-LauncherLog "Creating devdeploy-workload with kind. No Kubernetes manifests or Helm charts will be installed."
+    $result = Invoke-ReadOnlyCommand -FileName "kind" -Arguments @("create", "cluster", "--config", $WorkloadKindConfigPath) -TimeoutSeconds 300
+    if ($result.exit_code -eq 0 -and -not $result.timed_out) {
+        Add-Check -Id "workload_cluster_create" -Label "Workload cluster create" -Status "ok" -Message "Created devdeploy-workload with kind." -Details @{
+            required     = $true
+            cluster_name = "devdeploy-workload"
+            config_path  = $WorkloadKindConfigPath
+            created      = $true
+        }
+        return $true
+    }
+
+    $message = "kind failed to create devdeploy-workload. No automatic cleanup was performed."
+    if ($result.timed_out) {
+        $message = "kind create cluster timed out for devdeploy-workload. No automatic cleanup was performed."
+    }
+
+    Add-Check -Id "workload_cluster_create" -Label "Workload cluster create" -Status "failed" -Message $message -Details @{
+        required     = $true
+        cluster_name = "devdeploy-workload"
+        config_path  = $WorkloadKindConfigPath
+        error        = $result.stderr
+    }
+    return $false
+}
+
+function Test-WorkloadClusterVerify {
+    param(
+        [bool]$KindAvailable,
+
+        [bool]$KubectlAvailable
+    )
+
+    $clusterResult = Get-KindClusterNames -KindAvailable $KindAvailable
+    if (-not $clusterResult.success -or -not (@($clusterResult.clusters) -contains "devdeploy-workload")) {
+        Add-Check -Id "workload_cluster_verify" -Label "Workload cluster verify" -Status "failed" -Message "devdeploy-workload could not be found during verification." -Details @{
+            required     = $true
+            cluster_name = "devdeploy-workload"
+            error        = Protect-LogText $clusterResult.error
+        }
+        return
+    }
+
+    if (-not $KubectlAvailable) {
+        Add-Check -Id "workload_cluster_verify" -Label "Workload cluster verify" -Status "failed" -Message "kubectl is required to verify devdeploy-workload nodes." -Details @{
+            required     = $true
+            cluster_name = "devdeploy-workload"
+            context      = "kind-devdeploy-workload"
+        }
+        return
+    }
+
+    $contextResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("config", "get-contexts", "kind-devdeploy-workload", "--no-headers") -TimeoutSeconds 8
+    if ($contextResult.exit_code -ne 0 -or $contextResult.timed_out -or [string]::IsNullOrWhiteSpace($contextResult.stdout)) {
+        Add-Check -Id "workload_cluster_verify" -Label "Workload cluster verify" -Status "failed" -Message "kubectl context kind-devdeploy-workload is not usable." -Details @{
+            required     = $true
+            cluster_name = "devdeploy-workload"
+            context      = "kind-devdeploy-workload"
+            error        = $contextResult.stderr
+        }
+        return
+    }
+
+    $lastError = ""
+    $lastNodeCount = 0
+    $lastReadyCount = 0
+
+    for ($attempt = 1; $attempt -le 12; $attempt++) {
+        $nodesResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-workload", "get", "nodes", "--no-headers") -TimeoutSeconds 20
+        if ($nodesResult.exit_code -eq 0 -and -not $nodesResult.timed_out -and -not [string]::IsNullOrWhiteSpace($nodesResult.stdout)) {
+            try {
+                $nodes = @($nodesResult.stdout -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                $readyNodes = @($nodes | Where-Object {
+                        $columns = @($_ -split "\s+" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                        $columns.Count -ge 2 -and $columns[1] -eq "Ready"
+                    })
+
+                $lastNodeCount = [int]$nodes.Count
+                $lastReadyCount = [int]$readyNodes.Count
+
+                if ($lastNodeCount -gt 0 -and $lastReadyCount -eq $lastNodeCount) {
+                    Add-Check -Id "workload_cluster_verify" -Label "Workload cluster verify" -Status "ok" -Message "devdeploy-workload exists and all nodes are Ready." -Details @{
+                        required     = $true
+                        cluster_name = "devdeploy-workload"
+                        context      = "kind-devdeploy-workload"
+                        node_count   = [int]$lastNodeCount
+                        ready_nodes  = [int]$lastReadyCount
+                    }
+                    return
+                }
+            }
+            catch {
+                $lastError = Protect-LogText $_.Exception.Message
+            }
+        }
+        else {
+            $lastError = $nodesResult.stderr
+        }
+
+        if ($attempt -lt 12) {
+            Start-Sleep -Seconds 5
+        }
+    }
+
+    if ($lastNodeCount -gt 0) {
+        Add-Check -Id "workload_cluster_verify" -Label "Workload cluster verify" -Status "warning" -Message "devdeploy-workload exists, but not all nodes are Ready yet." -Details @{
+            required     = $true
+            cluster_name = "devdeploy-workload"
+            context      = "kind-devdeploy-workload"
+            node_count   = [int]$lastNodeCount
+            ready_nodes  = [int]$lastReadyCount
+        }
+        return
+    }
+
+    Add-Check -Id "workload_cluster_verify" -Label "Workload cluster verify" -Status "failed" -Message "kubectl could not read nodes from devdeploy-workload." -Details @{
+        required     = $true
+        cluster_name = "devdeploy-workload"
+        context      = "kind-devdeploy-workload"
+        error        = Protect-LogText $lastError
+    }
+}
+
+function Add-SkippedWorkloadClusterStages {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Reason
+    )
+
+    Add-Check -Id "workload_cluster_exists" -Label "Workload cluster exists" -Status "skipped" -Message $Reason -Details @{
+        required     = $true
+        cluster_name = "devdeploy-workload"
+    }
+    Add-Check -Id "workload_cluster_create" -Label "Workload cluster create" -Status "skipped" -Message $Reason -Details @{
+        required     = $true
+        cluster_name = "devdeploy-workload"
+    }
+    Add-Check -Id "workload_cluster_verify" -Label "Workload cluster verify" -Status "skipped" -Message $Reason -Details @{
+        required     = $true
+        cluster_name = "devdeploy-workload"
+    }
+}
+
 function New-ManagementClusterStatus {
     param(
         [bool]$KindAvailable,
@@ -1004,12 +1222,156 @@ function New-ManagementClusterStatus {
     }
 }
 
+function New-WorkloadClusterStatus {
+    param(
+        [bool]$KindAvailable,
+
+        [bool]$KubectlAvailable
+    )
+
+    $checkedAt = [string](Get-Timestamp)
+    $base = [ordered]@{
+        name          = "devdeploy-workload"
+        context       = "kind-devdeploy-workload"
+        exists        = $false
+        api_reachable = $null
+        node_ready    = $null
+        ready_nodes   = 0
+        total_nodes   = 0
+        status        = "unknown"
+        message       = "Workload cluster status could not be determined safely."
+        checked_at    = $checkedAt
+    }
+
+    if (-not $KindAvailable) {
+        $base["message"] = "kind CLI is not available, so workload cluster status could not be determined."
+        Add-Check -Id "workload_cluster_status" -Label "Workload cluster status" -Status "warning" -Message ([string]$base["message"]) -Details @{
+            required     = $false
+            cluster_name = "devdeploy-workload"
+            status       = "unknown"
+        }
+        return $base
+    }
+
+    $clusterResult = Get-KindClusterNames -KindAvailable $KindAvailable
+    if (-not $clusterResult.success) {
+        $base["message"] = "Could not list kind clusters, so workload cluster status is unknown."
+        Add-Check -Id "workload_cluster_status" -Label "Workload cluster status" -Status "warning" -Message ([string]$base["message"]) -Details @{
+            required     = $false
+            cluster_name = "devdeploy-workload"
+            status       = "unknown"
+            error        = Protect-LogText $clusterResult.error
+        }
+        return $base
+    }
+
+    $exists = @($clusterResult.clusters) -contains "devdeploy-workload"
+    if (-not $exists) {
+        $base["status"] = "missing"
+        $base["message"] = "Workload cluster devdeploy-workload does not exist yet."
+        Add-Check -Id "workload_cluster_status" -Label "Workload cluster status" -Status "warning" -Message ([string]$base["message"]) -Details @{
+            required     = $false
+            cluster_name = "devdeploy-workload"
+            status       = "missing"
+        }
+        return $base
+    }
+
+    $base["exists"] = $true
+
+    if (-not $KubectlAvailable) {
+        $base["api_reachable"] = $false
+        $base["node_ready"] = $null
+        $base["status"] = "degraded"
+        $base["message"] = "devdeploy-workload exists, but kubectl is not available for API and node verification."
+        Add-Check -Id "workload_cluster_status" -Label "Workload cluster status" -Status "warning" -Message ([string]$base["message"]) -Details @{
+            required     = $false
+            cluster_name = "devdeploy-workload"
+            context      = "kind-devdeploy-workload"
+            status       = "degraded"
+        }
+        return $base
+    }
+
+    $nodesResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-workload", "get", "nodes", "--no-headers") -TimeoutSeconds 20
+    if ($nodesResult.exit_code -ne 0 -or $nodesResult.timed_out -or [string]::IsNullOrWhiteSpace($nodesResult.stdout)) {
+        $base["api_reachable"] = $false
+        $base["node_ready"] = $false
+        $base["status"] = "degraded"
+        $base["message"] = "devdeploy-workload exists, but kubectl could not read nodes from the cluster."
+        Add-Check -Id "workload_cluster_status" -Label "Workload cluster status" -Status "warning" -Message ([string]$base["message"]) -Details @{
+            required     = $false
+            cluster_name = "devdeploy-workload"
+            context      = "kind-devdeploy-workload"
+            status       = "degraded"
+            error        = $nodesResult.stderr
+        }
+        return $base
+    }
+
+    try {
+        $nodes = @($nodesResult.stdout -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $readyNodes = @($nodes | Where-Object {
+                $columns = @($_ -split "\s+" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                $columns.Count -ge 2 -and $columns[1] -eq "Ready"
+            })
+
+        $base["api_reachable"] = $true
+        $base["ready_nodes"] = [int]$readyNodes.Count
+        $base["total_nodes"] = [int]$nodes.Count
+        $base["node_ready"] = [bool]($readyNodes.Count -gt 0)
+
+        if ($nodes.Count -gt 0 -and $readyNodes.Count -gt 0) {
+            $base["status"] = "ready"
+            $base["message"] = "Workload cluster devdeploy-workload is reachable and has Ready node capacity."
+            Add-Check -Id "workload_cluster_status" -Label "Workload cluster status" -Status "ok" -Message ([string]$base["message"]) -Details @{
+                required     = $false
+                cluster_name = "devdeploy-workload"
+                context      = "kind-devdeploy-workload"
+                status       = "ready"
+                ready_nodes  = [int]$readyNodes.Count
+                total_nodes  = [int]$nodes.Count
+            }
+            return $base
+        }
+
+        $base["status"] = "degraded"
+        $base["message"] = "devdeploy-workload is reachable, but no nodes are Ready."
+        Add-Check -Id "workload_cluster_status" -Label "Workload cluster status" -Status "warning" -Message ([string]$base["message"]) -Details @{
+            required     = $false
+            cluster_name = "devdeploy-workload"
+            context      = "kind-devdeploy-workload"
+            status       = "degraded"
+            ready_nodes  = [int]$readyNodes.Count
+            total_nodes  = [int]$nodes.Count
+        }
+        return $base
+    }
+    catch {
+        $base["api_reachable"] = $true
+        $base["node_ready"] = $null
+        $base["status"] = "unknown"
+        $base["message"] = "devdeploy-workload API is reachable, but node readiness could not be parsed safely."
+        Add-Check -Id "workload_cluster_status" -Label "Workload cluster status" -Status "warning" -Message ([string]$base["message"]) -Details @{
+            required     = $false
+            cluster_name = "devdeploy-workload"
+            context      = "kind-devdeploy-workload"
+            status       = "unknown"
+            error        = Protect-LogText $_.Exception.Message
+        }
+        return $base
+    }
+}
+
 New-LocalDirectory -Path $StatusDir
 New-LocalDirectory -Path $LogsDir
 New-LocalDirectory -Path $KindDir
 
 if ($CreateManagementCluster) {
     Write-LauncherLog "Starting DevDeploy Launcher guarded management cluster create mode."
+}
+elseif ($CreateWorkloadCluster) {
+    Write-LauncherLog "Starting DevDeploy Launcher guarded workload cluster create mode."
 }
 elseif ($GenerateKindConfigs) {
     Write-LauncherLog "Starting DevDeploy Launcher read-only preflight with kind config preview generation."
@@ -1051,19 +1413,30 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
 }
 
 if ($workloadClusterExistsBeforePortCheck) {
-    Add-Check -Id "workload_cluster_detected" -Label "Workload cluster detected" -Status "warning" -Message "devdeploy-workload already exists. This launcher mode will not create, modify, or delete it." -Details @{
+    $detectedStatus = if ($CreateWorkloadCluster) { "ok" } else { "warning" }
+    $detectedMessage = if ($CreateWorkloadCluster) {
+        "devdeploy-workload already exists. This launcher mode will verify it instead of recreating it."
+    }
+    else {
+        "devdeploy-workload already exists. This launcher mode will not create, modify, or delete it."
+    }
+
+    Add-Check -Id "workload_cluster_detected" -Label "Workload cluster detected" -Status $detectedStatus -Message $detectedMessage -Details @{
         required     = $false
         cluster_name = "devdeploy-workload"
         exists       = $true
     }
 }
 
-Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster)
+Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster)
 Test-KubectlContext -KubectlAvailable $kubectlAvailable
 
 $launcherMode = "preflight"
 if ($CreateManagementCluster) {
     $launcherMode = "management_cluster_create"
+}
+elseif ($CreateWorkloadCluster) {
+    $launcherMode = "workload_cluster_create"
 }
 elseif ($GenerateKindConfigs) {
     $launcherMode = "kind_config_preview"
@@ -1091,17 +1464,40 @@ if ($CreateManagementCluster) {
         }
     }
 }
+elseif ($CreateWorkloadCluster) {
+    Write-KindConfigPreview -Id "workload_kind_config" -Label "Workload kind config" -ClusterName "devdeploy-workload" -Path $WorkloadKindConfigPath -ApiServerPort 58081 -HttpHostPort 8081 -HttpsHostPort 8444
+
+    $preCreateChecks = @($Checks | ForEach-Object { $_ })
+    $preCreateStatus = [string](Get-OverallStatus -StableChecks $preCreateChecks)
+    if ($preCreateStatus -eq "failed") {
+        Add-SkippedWorkloadClusterStages -Reason "Workload cluster create was skipped because required preflight or kind config checks failed."
+    }
+    else {
+        $workloadClusterExists = Test-WorkloadClusterExists -KindAvailable $kindAvailable
+        $workloadClusterCreatedOrPresent = Invoke-WorkloadClusterCreate -AlreadyExists $workloadClusterExists
+        if ($workloadClusterCreatedOrPresent) {
+            Test-WorkloadClusterVerify -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
+        }
+        else {
+            Add-Check -Id "workload_cluster_verify" -Label "Workload cluster verify" -Status "skipped" -Message "Workload cluster verification was skipped because creation failed." -Details @{
+                required     = $true
+                cluster_name = "devdeploy-workload"
+            }
+        }
+    }
+}
 elseif ($GenerateKindConfigs) {
     Write-KindConfigPreview -Id "kind_config_mgmt_preview" -Label "Management kind config preview" -ClusterName "devdeploy-mgmt" -Path $MgmtKindConfigPath -ApiServerPort 58080 -HttpHostPort 8080 -HttpsHostPort 8443
     Write-KindConfigPreview -Id "kind_config_workload_preview" -Label "Workload kind config preview" -ClusterName "devdeploy-workload" -Path $WorkloadKindConfigPath -ApiServerPort 58081 -HttpHostPort 8081 -HttpsHostPort 8444
 }
 
 $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
+$workloadCluster = New-WorkloadClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
 $stableChecks = @($Checks | ForEach-Object { $_ })
 $overallStatus = [string](Get-OverallStatus -StableChecks $stableChecks)
 $summary = New-LauncherSummary -StableChecks $stableChecks
-$artifacts = New-LauncherArtifacts -IncludeManagementKindConfig ([bool]($GenerateKindConfigs -or $CreateManagementCluster)) -IncludeWorkloadKindConfig ([bool]($GenerateKindConfigs -and -not $CreateManagementCluster))
-$nextActions = @(New-NextActions -StableChecks $stableChecks -LauncherMode $launcherMode -OverallStatus $overallStatus -ManagementCluster $managementCluster)
+$artifacts = New-LauncherArtifacts -IncludeManagementKindConfig ([bool]($GenerateKindConfigs -or $CreateManagementCluster)) -IncludeWorkloadKindConfig ([bool]($GenerateKindConfigs -or $CreateWorkloadCluster))
+$nextActions = @(New-NextActions -StableChecks $stableChecks -LauncherMode $launcherMode -OverallStatus $overallStatus -ManagementCluster $managementCluster -WorkloadCluster $workloadCluster)
 
 $statusDocument = [ordered]@{
     schema_version   = "1"
@@ -1115,6 +1511,7 @@ $statusDocument = [ordered]@{
     status           = $overallStatus
     summary          = $summary
     management_cluster = $managementCluster
+    workload_cluster = $workloadCluster
     checks           = $stableChecks
     artifacts        = $artifacts
     ports            = $PortPlan
@@ -1128,6 +1525,9 @@ if (-not $Quiet) {
     Write-Host ("DevDeploy Launcher preflight status: {0}" -f $overallStatus)
     if ($CreateManagementCluster) {
         Write-Host ("Management kind config: {0}" -f $MgmtKindConfigPath)
+    }
+    elseif ($CreateWorkloadCluster) {
+        Write-Host ("Workload kind config: {0}" -f $WorkloadKindConfigPath)
     }
     elseif ($GenerateKindConfigs) {
         Write-Host ("Management kind config: {0}" -f $MgmtKindConfigPath)
