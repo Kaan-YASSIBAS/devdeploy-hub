@@ -18,6 +18,7 @@ The Phase 2 architecture baseline is defined in:
 - [Backend Bootstrap Manifest Strategy](./backend-bootstrap-manifest-strategy.md)
 - [Backend Image Build and Load Strategy](./backend-image-build-load-strategy.md)
 - [Backend Runtime Secret Strategy](./backend-secret-runtime-strategy.md)
+- [Backend Bootstrap Launcher Design](./backend-bootstrap-launcher-design.md)
 
 The target architecture uses:
 
@@ -159,7 +160,7 @@ Goal:
 
 - Bootstrap or verify DevDeploy platform components in `devdeploy-mgmt` through an explicit future Launcher mode.
 
-Phase 2D starts with narrow management ingress and PostgreSQL bootstrap steps. Phases 2D.4-2D.7 define backend preparation, manifests, and local image handling. Phase 2D.8 defines the backend runtime Secret lifecycle without creating credentials or deploying the backend.
+Phase 2D starts with narrow management ingress and PostgreSQL bootstrap steps. Phases 2D.4-2D.8 define backend preparation, manifests, local image handling, and runtime Secrets. Phase 2D.9 consolidates those contracts into an explicit Launcher mode design without implementing or deploying it.
 
 Recommended tasks:
 
@@ -172,6 +173,7 @@ Recommended tasks:
 - Maintain the initial backend platform manifests under `platform/management/backend`.
 - Define the local backend image build and kind load strategy.
 - Define backend runtime Secret creation, verification, preservation, and sanitization rules.
+- Define backend Launcher modes, ordering, idempotency, verification, and safety boundaries.
 - Deploy or verify DevDeploy platform resources.
 - Install or verify Argo CD.
 - Write platform bootstrap status into the launcher status contract.
