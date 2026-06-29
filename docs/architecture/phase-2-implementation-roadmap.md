@@ -14,6 +14,7 @@ The Phase 2 architecture baseline is defined in:
 - [Workload Observability and Status Model](./workload-observability-status-model.md)
 - [Security Boundaries and Credentials Model](./security-credentials-boundaries.md)
 - [Management Platform Bootstrap Plan](./management-platform-bootstrap-plan.md)
+- [Backend Bootstrap Preparation](./backend-bootstrap-preparation.md)
 
 The target architecture uses:
 
@@ -155,7 +156,7 @@ Goal:
 
 - Bootstrap or verify DevDeploy platform components in `devdeploy-mgmt` through an explicit future Launcher mode.
 
-Phase 2D starts with narrow management ingress and PostgreSQL bootstrap steps before backend, frontend, or Argo CD are installed.
+Phase 2D starts with narrow management ingress and PostgreSQL bootstrap steps. Phase 2D.4 documents backend bootstrap preparation before backend, frontend, or Argo CD installation begins.
 
 Recommended tasks:
 
@@ -163,6 +164,7 @@ Recommended tasks:
 - Install or verify management ingress-nginx.
 - Create or verify the `devdeploy` namespace.
 - Install or verify PostgreSQL.
+- Prepare the backend runtime, configuration, secret, image, Service, and ingress contract.
 - Deploy or verify DevDeploy platform resources.
 - Install or verify Argo CD.
 - Write platform bootstrap status into the launcher status contract.
