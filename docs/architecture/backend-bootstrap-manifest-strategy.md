@@ -4,13 +4,13 @@
 
 This document defines the repository layout and manifest management strategy for a future DevDeploy backend deployment in `devdeploy-mgmt`.
 
-Phase 2D.5 does not add Kubernetes manifests and does not deploy the backend. It establishes where future resources will live, what each resource will contain, who owns their lifecycle, and how an explicit Launcher mode will use them.
+Phase 2D.5 established where backend platform resources should live, what each resource should contain, who owns their lifecycle, and how an explicit Launcher mode should use them. Phase 2D.6 adds the first manifest set under `platform/management/backend`, but it does not deploy the backend.
 
 ## 2. Relationship to Phase 2D.4
 
 [Backend Bootstrap Preparation](./backend-bootstrap-preparation.md) defines the backend runtime, configuration, secret, database, image, Service, ingress, and health contracts.
 
-Phase 2D.5 translates those contracts into a repository layout and manifest management strategy. It does not change the runtime contract or implement the manifests.
+Phase 2D.5 translates those contracts into a repository layout and manifest management strategy. Phase 2D.6 implements that initial repository-side manifest structure without adding deployment automation.
 
 The two documents serve different purposes:
 
@@ -19,7 +19,7 @@ The two documents serve different purposes:
 
 ## 3. Proposed Repository Layout
 
-Recommended future layout:
+Implemented Phase 2D.6 layout:
 
 ```text
 platform/
@@ -333,8 +333,8 @@ The status contract must not include database passwords, JWT secrets, GitHub tok
 
 ## 15. V1 Limitations
 
-- This phase does not add actual Kubernetes manifests.
-- This phase does not deploy the backend.
+- Phase 2D.6 adds the initial Kubernetes manifests but does not deploy them.
+- Backend deployment remains a future explicit Launcher step.
 - This phase does not run database migrations.
 - `/api/v1/ready` is not implemented yet.
 - Frontend and Argo CD are not installed yet.

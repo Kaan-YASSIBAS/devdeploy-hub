@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: devdeploy-backend
+  namespace: devdeploy
+  labels:
+    app.kubernetes.io/name: devdeploy-backend
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: devdeploy-hub
+    app.kubernetes.io/managed-by: devdeploy-launcher
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: devdeploy-backend
+    app.kubernetes.io/component: backend
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      protocol: TCP
+      appProtocol: http

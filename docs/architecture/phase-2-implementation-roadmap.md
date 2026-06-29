@@ -157,7 +157,7 @@ Goal:
 
 - Bootstrap or verify DevDeploy platform components in `devdeploy-mgmt` through an explicit future Launcher mode.
 
-Phase 2D starts with narrow management ingress and PostgreSQL bootstrap steps. Phase 2D.4 documents backend bootstrap preparation, and Phase 2D.5 defines the backend manifest layout and ownership strategy before backend, frontend, or Argo CD installation begins.
+Phase 2D starts with narrow management ingress and PostgreSQL bootstrap steps. Phase 2D.4 documents backend bootstrap preparation, Phase 2D.5 defines the backend manifest strategy, and Phase 2D.6 adds the initial manifests under `platform/management/backend` without deploying them.
 
 Recommended tasks:
 
@@ -167,6 +167,7 @@ Recommended tasks:
 - Install or verify PostgreSQL.
 - Prepare the backend runtime, configuration, secret, image, Service, and ingress contract.
 - Define the backend Kustomize layout and manifest ownership strategy.
+- Maintain the initial backend platform manifests under `platform/management/backend`.
 - Deploy or verify DevDeploy platform resources.
 - Install or verify Argo CD.
 - Write platform bootstrap status into the launcher status contract.

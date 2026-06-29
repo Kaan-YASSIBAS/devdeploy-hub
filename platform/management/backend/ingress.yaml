@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: devdeploy-backend
+  namespace: devdeploy
+  labels:
+    app.kubernetes.io/name: devdeploy-backend
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: devdeploy-hub
+    app.kubernetes.io/managed-by: devdeploy-launcher
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: devdeploy-backend
+                port:
+                  number: 8000

@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: devdeploy-backend-config
+  namespace: devdeploy
+data:
+  ENVIRONMENT: development
+  JWT_ALGORITHM: HS256
+  ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+  FRONTEND_ORIGIN: http://localhost:8080
+  KUBERNETES_IN_CLUSTER: "true"
+  PROMETHEUS_BASE_URL: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+  LOKI_BASE_URL: http://loki-gateway.monitoring.svc.cluster.local
+  GRAFANA_BASE_URL: ""
+  GITOPS_ENABLED: "false"
+  GITHUB_OWNER: Kaan-YASSIBAS
+  GITHUB_REPO: devdeploy-hub
+  GITOPS_WORKFLOW_FILE: gitops-workload-request.yml
+  GITOPS_DELETE_WORKFLOW_FILE: gitops-workload-delete.yml
+  GITOPS_TARGET_REF: main
