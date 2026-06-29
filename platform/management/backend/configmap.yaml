@@ -6,7 +6,6 @@ metadata:
 data:
   ENVIRONMENT: development
   JWT_ALGORITHM: HS256
-  ACCESS_TOKEN_EXPIRE_MINUTES: "60"
   FRONTEND_ORIGIN: http://localhost:8080
   KUBERNETES_IN_CLUSTER: "true"
   PROMETHEUS_BASE_URL: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090

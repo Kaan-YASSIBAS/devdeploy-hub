@@ -42,6 +42,9 @@ spec:
                 name: devdeploy-backend-config
             - secretRef:
                 name: devdeploy-backend-secret
+          env:
+            - name: ACCESS_TOKEN_EXPIRE_MINUTES
+              value: "60"
           livenessProbe:
             httpGet:
               path: /api/v1/health
