@@ -149,6 +149,8 @@ Unavailable integrations must remain explicitly disabled or not configured. The 
 
 ## 8. Secret Manifest Strategy
 
+The runtime lifecycle is defined in [Backend Runtime Secret Strategy](./backend-secret-runtime-strategy.md).
+
 The future backend Secret is expected to contain:
 
 - `DATABASE_URL`
