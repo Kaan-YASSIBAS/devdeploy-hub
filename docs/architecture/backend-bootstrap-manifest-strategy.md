@@ -250,6 +250,8 @@ The `/metrics` endpoint should remain cluster-internal unless external metrics e
 
 ## 12. Local Image Availability Strategy
 
+The detailed build/load contract is defined in [Backend Image Build and Load Strategy](./backend-image-build-load-strategy.md).
+
 The future backend bootstrap should require or perform:
 
 ```powershell
