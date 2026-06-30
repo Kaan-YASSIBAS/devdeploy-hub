@@ -20,6 +20,7 @@ The Phase 2 architecture baseline is defined in:
 - [Backend Runtime Secret Strategy](./backend-secret-runtime-strategy.md)
 - [Backend Bootstrap Launcher Design](./backend-bootstrap-launcher-design.md)
 - [Frontend Bootstrap Preparation](./frontend-bootstrap-preparation.md)
+- [Frontend Bootstrap Manifest Strategy](./frontend-bootstrap-manifest-strategy.md)
 
 The target architecture uses:
 
@@ -187,9 +188,13 @@ Goal:
 
 - Prepare, deploy, and verify the DevDeploy frontend in `devdeploy-mgmt`.
 
-Recommended tasks:
+Completed design baseline:
 
-- Document the frontend build, API routing, Nginx runtime, and security contract.
+- Phase 2E.1 documents the frontend build, Nginx runtime, API routing, image, and security requirements.
+- Phase 2E.2 defines the future manifest layout, hostless ingress model, Service port decision, status contract, and Launcher mode boundaries.
+
+Future implementation tasks:
+
 - Add deterministic frontend manifests under `platform/management/frontend`.
 - Build `devdeploy-frontend:local` with `VITE_API_BASE_URL=/api/v1`.
 - Load the local image only into `devdeploy-mgmt`.
