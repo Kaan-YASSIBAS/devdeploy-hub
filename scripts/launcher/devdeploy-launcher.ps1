@@ -32,6 +32,8 @@ param(
 
     [switch]$VerifyManagementBackend,
 
+    [switch]$BuildManagementFrontendImage,
+
     [switch]$Quiet
 )
 
@@ -68,6 +70,15 @@ $BackendSecretName = "devdeploy-backend-secret"
 $PostgresServiceHost = "devdeploy-postgres-postgresql.devdeploy.svc.cluster.local"
 $BackendManifestRelativePath = "platform/management/backend"
 $BackendManifestPath = Join-Path $RepoRoot "platform\management\backend"
+$FrontendImage = "devdeploy-frontend:local"
+$FrontendBuildApiBaseUrl = "/api/v1"
+$FrontendContextPath = Join-Path $RepoRoot "frontend"
+$FrontendDockerfilePath = Join-Path $FrontendContextPath "Dockerfile"
+$FrontendPackagePath = Join-Path $FrontendContextPath "package.json"
+$FrontendPackageLockPath = Join-Path $FrontendContextPath "package-lock.json"
+$FrontendManifestRelativePath = "platform/management/frontend"
+$FrontendManifestPath = Join-Path $RepoRoot "platform\management\frontend"
+$FrontendKustomizationPath = Join-Path $FrontendManifestPath "kustomization.yaml"
 
 $PortPlan = [ordered]@{
     management_api   = 58080
@@ -403,6 +414,25 @@ function New-NextActions {
         }
         else {
             $actions.Add("Review the sanitized launcher log and rerun -LoadManagementBackendImage after resolving the kind image-load issue.") | Out-Null
+        }
+    }
+
+    $frontendImageStatus = "not_checked"
+    try {
+        if ($null -ne $PlatformBootstrap["components"] -and $null -ne $PlatformBootstrap["components"]["frontend_image"]) {
+            $frontendImageStatus = [string]$PlatformBootstrap["components"]["frontend_image"]["status"]
+        }
+    }
+    catch {
+        $frontendImageStatus = "unknown"
+    }
+
+    if ($LauncherMode -eq "management_frontend_image_build") {
+        if ($frontendImageStatus -eq "ready") {
+            $actions.Add("The management frontend image is ready locally. Proceed to the future explicit image-load step when available.") | Out-Null
+        }
+        elseif ($frontendImageStatus -eq "error" -or $frontendImageStatus -eq "unknown") {
+            $actions.Add("Review the sanitized launcher log, resolve the Docker or frontend build input issue, and rerun -BuildManagementFrontendImage.") | Out-Null
         }
     }
 
@@ -848,6 +878,154 @@ function Invoke-ManagementBackendImageBuild {
     Add-Check -Id "backend_image_verify" -Label "Management backend image verification" -Status "ok" -Message ([string]$status["message"]) -Details @{
         required = $true
         image    = $BackendImage
+    }
+    return $status
+}
+
+function New-ManagementFrontendImageStatus {
+    return [ordered]@{
+        image                        = $FrontendImage
+        dockerfile                   = "frontend/Dockerfile"
+        context                      = "frontend"
+        build_api_base_url           = $FrontendBuildApiBaseUrl
+        local_image_present          = $false
+        build_attempted              = $false
+        build_succeeded              = $false
+        loaded_to_management_cluster = $false
+        target_cluster               = "devdeploy-mgmt"
+        status                       = "not_checked"
+        message                      = "Frontend image build has not been requested."
+        checked_at                   = [string](Get-Timestamp)
+    }
+}
+
+function Test-ManagementFrontendImagePresent {
+    param(
+        [bool]$DockerCliAvailable,
+
+        [bool]$DockerDaemonReachable
+    )
+
+    if (-not $DockerCliAvailable -or -not $DockerDaemonReachable) {
+        return $false
+    }
+
+    $result = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @("image", "inspect", "--format", "{{.Id}}", $FrontendImage) -TimeoutSeconds 30
+    return [bool]($result.exit_code -eq 0 -and -not $result.timed_out -and -not [string]::IsNullOrWhiteSpace($result.stdout))
+}
+
+function Invoke-ManagementFrontendImageBuild {
+    param(
+        [bool]$DockerCliAvailable,
+
+        [bool]$DockerDaemonReachable
+    )
+
+    $status = New-ManagementFrontendImageStatus
+
+    if (-not $DockerCliAvailable -or -not $DockerDaemonReachable) {
+        $status["status"] = "error"
+        $status["message"] = "Frontend image build requires an available Docker CLI and reachable Docker daemon."
+        $status["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "frontend_image_build" -Label "Management frontend image build" -Status "skipped" -Message ([string]$status["message"]) -Details @{
+            required = $true
+            image    = $FrontendImage
+        }
+        return $status
+    }
+
+    $requiredPaths = @(
+        [ordered]@{ id = "frontend_build_context"; label = "Frontend build context"; path = $FrontendContextPath; relative_path = "frontend"; path_type = "Container" },
+        [ordered]@{ id = "frontend_dockerfile"; label = "Frontend Dockerfile"; path = $FrontendDockerfilePath; relative_path = "frontend/Dockerfile"; path_type = "Leaf" },
+        [ordered]@{ id = "frontend_package"; label = "Frontend package manifest"; path = $FrontendPackagePath; relative_path = "frontend/package.json"; path_type = "Leaf" },
+        [ordered]@{ id = "frontend_package_lock"; label = "Frontend package lock"; path = $FrontendPackageLockPath; relative_path = "frontend/package-lock.json"; path_type = "Leaf" },
+        [ordered]@{ id = "frontend_platform_kustomization"; label = "Frontend platform kustomization"; path = $FrontendKustomizationPath; relative_path = "platform/management/frontend/kustomization.yaml"; path_type = "Leaf" }
+    )
+
+    $missingPath = $false
+    foreach ($pathCheck in $requiredPaths) {
+        $exists = Test-Path -LiteralPath ([string]$pathCheck["path"]) -PathType ([string]$pathCheck["path_type"])
+        if ($exists) {
+            Add-Check -Id ([string]$pathCheck["id"]) -Label ([string]$pathCheck["label"]) -Status "ok" -Message ("Required path {0} exists." -f [string]$pathCheck["relative_path"]) -Details @{
+                required      = $true
+                relative_path = [string]$pathCheck["relative_path"]
+            }
+        }
+        else {
+            $missingPath = $true
+            Add-Check -Id ([string]$pathCheck["id"]) -Label ([string]$pathCheck["label"]) -Status "failed" -Message ("Required path {0} was not found." -f [string]$pathCheck["relative_path"]) -Details @{
+                required      = $true
+                relative_path = [string]$pathCheck["relative_path"]
+            }
+        }
+    }
+
+    if ($missingPath) {
+        $status["status"] = "error"
+        $status["message"] = "Frontend image build was not attempted because one or more required repository paths are missing."
+        $status["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "frontend_image_build" -Label "Management frontend image build" -Status "skipped" -Message ([string]$status["message"]) -Details @{
+            required = $true
+            image    = $FrontendImage
+        }
+        return $status
+    }
+
+    $status["build_attempted"] = $true
+    Write-LauncherLog ("Building management frontend image {0} with VITE_API_BASE_URL={1}." -f $FrontendImage, $FrontendBuildApiBaseUrl)
+    if (-not $Quiet) {
+        Write-Host ("Building management frontend image {0}..." -f $FrontendImage)
+    }
+
+    # Quiet build output keeps launcher logs/status concise; the API base URL is a non-secret build setting.
+    $buildResult = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @("build", "--quiet", "--build-arg", "VITE_API_BASE_URL=$FrontendBuildApiBaseUrl", "--tag", $FrontendImage, "frontend") -TimeoutSeconds 1200 -WorkingDirectory $RepoRoot
+    if ($buildResult.exit_code -ne 0 -or $buildResult.timed_out) {
+        $status["local_image_present"] = Test-ManagementFrontendImagePresent -DockerCliAvailable $DockerCliAvailable -DockerDaemonReachable $DockerDaemonReachable
+        $status["status"] = "error"
+        $status["message"] = if ($buildResult.timed_out) {
+            "Frontend image build timed out. Review Docker availability and the sanitized launcher log before retrying."
+        }
+        else {
+            "Frontend image build failed. Review the sanitized launcher log and retry the explicit build mode."
+        }
+        $status["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "frontend_image_build" -Label "Management frontend image build" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required           = $true
+            image              = $FrontendImage
+            build_api_base_url = $FrontendBuildApiBaseUrl
+            error              = $buildResult.stderr
+        }
+        return $status
+    }
+
+    $status["build_succeeded"] = $true
+    Add-Check -Id "frontend_image_build" -Label "Management frontend image build" -Status "ok" -Message "Management frontend image build completed successfully." -Details @{
+        required           = $true
+        image              = $FrontendImage
+        context            = "frontend"
+        build_api_base_url = $FrontendBuildApiBaseUrl
+    }
+
+    $imagePresent = Test-ManagementFrontendImagePresent -DockerCliAvailable $DockerCliAvailable -DockerDaemonReachable $DockerDaemonReachable
+    $status["local_image_present"] = $imagePresent
+    if (-not $imagePresent) {
+        $status["status"] = "error"
+        $status["message"] = "Docker reported a successful build, but devdeploy-frontend:local could not be verified locally."
+        $status["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "frontend_image_verify" -Label "Management frontend image verification" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required = $true
+            image    = $FrontendImage
+        }
+        return $status
+    }
+
+    $status["status"] = "ready"
+    $status["message"] = "Frontend image devdeploy-frontend:local was built with /api/v1 and verified in the local Docker daemon."
+    $status["checked_at"] = [string](Get-Timestamp)
+    Add-Check -Id "frontend_image_verify" -Label "Management frontend image verification" -Status "ok" -Message ([string]$status["message"]) -Details @{
+        required           = $true
+        image              = $FrontendImage
+        build_api_base_url = $FrontendBuildApiBaseUrl
     }
     return $status
 }
@@ -2211,7 +2389,9 @@ function Test-KindClusters {
 
         [bool]$ManagementBackendBootstrapMode = $false,
 
-        [bool]$ManagementBackendVerifyMode = $false
+        [bool]$ManagementBackendVerifyMode = $false,
+
+        [bool]$ManagementFrontendImageBuildMode = $false
     )
 
     if (-not $KindAvailable) {
@@ -2292,6 +2472,10 @@ function Test-KindClusters {
     elseif ($ManagementBackendVerifyMode -and $mgmtExists) {
         $status = "ok"
         $message = "devdeploy-mgmt exists. Backend verify mode performs read-only checks only in this management cluster."
+    }
+    elseif ($ManagementFrontendImageBuildMode -and ($mgmtExists -or $workloadExists)) {
+        $status = "ok"
+        $message = "Existing DevDeploy clusters were detected. Frontend image build mode does not use, modify, or delete them."
     }
 
     Add-Check -Id "kind_clusters" -Label "Existing kind clusters" -Status $status -Message $message -Details @{
@@ -3313,6 +3497,9 @@ function New-PlatformBootstrapStatus {
         [Parameter(Mandatory = $true)]
         [object]$BackendStatus,
 
+        [Parameter(Mandatory = $true)]
+        [object]$FrontendImageStatus,
+
         [AllowNull()]
         [object]$IngressStatusOverride = $null,
 
@@ -3382,6 +3569,7 @@ function New-PlatformBootstrapStatus {
             backend_image = $BackendImageStatus
             backend_secret = $BackendSecretStatus
             backend       = $BackendStatus
+            frontend_image = $FrontendImageStatus
             frontend      = New-NotStartedPlatformComponent -Namespace "devdeploy" -Message "Frontend bootstrap is not implemented yet."
             argocd        = New-NotStartedPlatformComponent -Namespace "argocd" -Message "Argo CD bootstrap is not implemented yet."
         }
@@ -3403,6 +3591,7 @@ function New-PlatformBootstrapStatus {
         backend_image_status = [string]$BackendImageStatus["status"]
         backend_secret_status = [string]$BackendSecretStatus["status"]
         backend_status = [string]$BackendStatus["status"]
+        frontend_image_status = [string]$FrontendImageStatus["status"]
     }
 
     return $platform
@@ -3841,6 +4030,9 @@ elseif ($BootstrapManagementPostgres) {
 elseif ($BuildManagementBackendImage) {
     Write-LauncherLog "Starting DevDeploy Launcher explicit management backend image build mode."
 }
+elseif ($BuildManagementFrontendImage) {
+    Write-LauncherLog "Starting DevDeploy Launcher explicit management frontend image build mode."
+}
 elseif ($LoadManagementBackendImage) {
     Write-LauncherLog "Starting DevDeploy Launcher explicit management backend image load mode."
 }
@@ -3864,8 +4056,8 @@ else {
 }
 
 $dockerAvailable = Test-CommandAvailable -Name "docker" -Label "Docker CLI" -Required ([bool](-not ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend)))
-$kindAvailable = Test-CommandAvailable -Name "kind" -Label "kind CLI" -Required ([bool](-not $BuildManagementBackendImage))
-$kubectlAvailable = Test-CommandAvailable -Name "kubectl" -Label "kubectl CLI" -Required ([bool](-not $BuildManagementBackendImage))
+$kindAvailable = Test-CommandAvailable -Name "kind" -Label "kind CLI" -Required ([bool](-not ($BuildManagementBackendImage -or $BuildManagementFrontendImage)))
+$kubectlAvailable = Test-CommandAvailable -Name "kubectl" -Label "kubectl CLI" -Required ([bool](-not ($BuildManagementBackendImage -or $BuildManagementFrontendImage)))
 [void](Test-CommandAvailable -Name "git" -Label "git CLI" -Required $false)
 $helmAvailable = Test-CommandAvailable -Name "helm" -Label "Helm CLI" -Required ([bool]($BootstrapManagementIngress -or $BootstrapManagementPostgres))
 
@@ -3901,7 +4093,7 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
     if (($BootstrapManagementIngress -or $BootstrapManagementPostgres) -and $isWorkloadPort) {
         $portRequired = $false
     }
-    if ($BuildManagementBackendImage -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) {
+    if ($BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) {
         $portRequired = $false
     }
     $allowBusyAsOk = [bool]$existingClusterDetected
@@ -3910,7 +4102,7 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
 }
 
 if ($workloadClusterExistsBeforePortCheck) {
-    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BuildManagementBackendImage -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) { "ok" } else { "warning" }
+    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) { "ok" } else { "warning" }
     $detectedMessage = if ($CreateWorkloadCluster) {
         "devdeploy-workload already exists. This launcher mode will verify it instead of recreating it."
     }
@@ -3922,6 +4114,9 @@ if ($workloadClusterExistsBeforePortCheck) {
     }
     elseif ($BuildManagementBackendImage) {
         "devdeploy-workload already exists. Backend image build mode does not use, modify, or delete it."
+    }
+    elseif ($BuildManagementFrontendImage) {
+        "devdeploy-workload already exists. Frontend image build mode does not use, modify, or delete it."
     }
     elseif ($LoadManagementBackendImage) {
         "devdeploy-workload already exists. Backend image load mode targets only devdeploy-mgmt and does not modify devdeploy-workload."
@@ -3949,7 +4144,7 @@ if ($workloadClusterExistsBeforePortCheck) {
     }
 }
 
-Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres) -ManagementBackendImageBuildMode ([bool]$BuildManagementBackendImage) -ManagementBackendImageLoadMode ([bool]$LoadManagementBackendImage) -ManagementBackendSecretEnsureMode ([bool]$EnsureManagementBackendSecret) -ManagementBackendSecretVerifyMode ([bool]$VerifyManagementBackendSecret) -ManagementBackendBootstrapMode ([bool]$BootstrapManagementBackend) -ManagementBackendVerifyMode ([bool]$VerifyManagementBackend)
+Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres) -ManagementBackendImageBuildMode ([bool]$BuildManagementBackendImage) -ManagementBackendImageLoadMode ([bool]$LoadManagementBackendImage) -ManagementBackendSecretEnsureMode ([bool]$EnsureManagementBackendSecret) -ManagementBackendSecretVerifyMode ([bool]$VerifyManagementBackendSecret) -ManagementBackendBootstrapMode ([bool]$BootstrapManagementBackend) -ManagementBackendVerifyMode ([bool]$VerifyManagementBackend) -ManagementFrontendImageBuildMode ([bool]$BuildManagementFrontendImage)
 Test-KubectlContext -KubectlAvailable $kubectlAvailable
 
 $launcherMode = "preflight"
@@ -3967,6 +4162,9 @@ elseif ($BootstrapManagementPostgres) {
 }
 elseif ($BuildManagementBackendImage) {
     $launcherMode = "management_backend_image_build"
+}
+elseif ($BuildManagementFrontendImage) {
+    $launcherMode = "management_frontend_image_build"
 }
 elseif ($LoadManagementBackendImage) {
     $launcherMode = "management_backend_image_load"
@@ -3992,6 +4190,7 @@ $workloadCluster = $null
 $backendImageStatus = New-ManagementBackendImageStatus
 $backendSecretStatus = New-ManagementBackendSecretStatus
 $backendStatus = New-ManagementBackendStatus
+$frontendImageStatus = New-ManagementFrontendImageStatus
 $platformIngressOverride = $null
 $platformPostgresOverride = $null
 
@@ -4064,6 +4263,9 @@ elseif ($BootstrapManagementPostgres) {
 elseif ($BuildManagementBackendImage) {
     $backendImageStatus = Invoke-ManagementBackendImageBuild -DockerCliAvailable $dockerAvailable -DockerDaemonReachable $dockerDaemonReachable
 }
+elseif ($BuildManagementFrontendImage) {
+    $frontendImageStatus = Invoke-ManagementFrontendImageBuild -DockerCliAvailable $dockerAvailable -DockerDaemonReachable $dockerDaemonReachable
+}
 elseif ($LoadManagementBackendImage) {
     $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
     $backendImageStatus = Invoke-ManagementBackendImageLoad -DockerCliAvailable $dockerAvailable -DockerDaemonReachable $dockerDaemonReachable -KindAvailable $kindAvailable -ManagementCluster $managementCluster
@@ -4105,8 +4307,8 @@ if ($null -eq $managementCluster) {
 if ($null -eq $workloadCluster) {
     $workloadCluster = New-WorkloadClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
 }
-$platformHelmAvailable = [bool]($helmAvailable -and -not $BuildManagementBackendImage -and -not $LoadManagementBackendImage -and -not $EnsureManagementBackendSecret -and -not $VerifyManagementBackendSecret -and -not $BootstrapManagementBackend -and -not $VerifyManagementBackend)
-$platformBootstrap = New-PlatformBootstrapStatus -ManagementCluster $managementCluster -HelmAvailable $platformHelmAvailable -KubectlAvailable $kubectlAvailable -BackendImageStatus $backendImageStatus -BackendSecretStatus $backendSecretStatus -BackendStatus $backendStatus -IngressStatusOverride $platformIngressOverride -PostgresStatusOverride $platformPostgresOverride
+$platformHelmAvailable = [bool]($helmAvailable -and -not $BuildManagementBackendImage -and -not $BuildManagementFrontendImage -and -not $LoadManagementBackendImage -and -not $EnsureManagementBackendSecret -and -not $VerifyManagementBackendSecret -and -not $BootstrapManagementBackend -and -not $VerifyManagementBackend)
+$platformBootstrap = New-PlatformBootstrapStatus -ManagementCluster $managementCluster -HelmAvailable $platformHelmAvailable -KubectlAvailable $kubectlAvailable -BackendImageStatus $backendImageStatus -BackendSecretStatus $backendSecretStatus -BackendStatus $backendStatus -FrontendImageStatus $frontendImageStatus -IngressStatusOverride $platformIngressOverride -PostgresStatusOverride $platformPostgresOverride
 $stableChecks = @($Checks | ForEach-Object { $_ })
 $overallStatus = [string](Get-OverallStatus -StableChecks $stableChecks)
 $summary = New-LauncherSummary -StableChecks $stableChecks
@@ -4152,6 +4354,9 @@ if (-not $Quiet) {
     }
     elseif ($BuildManagementBackendImage) {
         Write-Host ("Management backend image: {0}" -f $BackendImage)
+    }
+    elseif ($BuildManagementFrontendImage) {
+        Write-Host ("Management frontend image: {0}" -f $FrontendImage)
     }
     elseif ($LoadManagementBackendImage) {
         Write-Host ("Management backend image target: {0} -> devdeploy-mgmt" -f $BackendImage)

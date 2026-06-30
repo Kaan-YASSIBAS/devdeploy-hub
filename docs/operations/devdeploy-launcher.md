@@ -2,7 +2,7 @@
 
 This document explains the DevDeploy Launcher skeleton for Windows PowerShell.
 
-The launcher writes sanitized structured status for future backend and Setup Wizard integration. Default preflight mode and kind config preview mode are read-only. Management cluster creation happens only when `-CreateManagementCluster` is explicitly passed. Workload cluster creation happens only when `-CreateWorkloadCluster` is explicitly passed. Management ingress bootstrap happens only when `-BootstrapManagementIngress` is explicitly passed. Management PostgreSQL bootstrap happens only when `-BootstrapManagementPostgres` is explicitly passed.
+The launcher writes sanitized structured status for future backend and Setup Wizard integration. Default preflight mode and kind config preview mode are read-only. Management cluster creation happens only when `-CreateManagementCluster` is explicitly passed. Workload cluster creation happens only when `-CreateWorkloadCluster` is explicitly passed. Management ingress bootstrap happens only when `-BootstrapManagementIngress` is explicitly passed. Management PostgreSQL bootstrap happens only when `-BootstrapManagementPostgres` is explicitly passed. Local frontend image build happens only when `-BuildManagementFrontendImage` is explicitly passed.
 
 ## Run The Preflight
 
@@ -207,6 +207,31 @@ helm --kube-context kind-devdeploy-mgmt list -n devdeploy
 
 The DevDeploy UI is still not available after this step because backend and frontend are not installed yet.
 
+## Build The Management Frontend Image
+
+To explicitly build and verify the local frontend image:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -BuildManagementFrontendImage
+```
+
+This mode:
+
+- Requires a reachable local Docker daemon.
+- Verifies the frontend Dockerfile, package files, and management frontend kustomization exist.
+- Builds `devdeploy-frontend:local` from the `frontend` context.
+- Passes the non-secret build argument `VITE_API_BASE_URL=/api/v1`.
+- Verifies the resulting image with `docker image inspect`.
+- Writes `platform_bootstrap.components.frontend_image` status.
+
+This mode does not load the image into kind, deploy frontend manifests, create or update Secrets, install Helm charts, create clusters, or mutate either DevDeploy cluster.
+
+Manual verification:
+
+```powershell
+docker image inspect devdeploy-frontend:local --format '{{.Id}} {{.Created}}'
+```
+
 ## What It Checks
 
 The launcher checks:
@@ -291,6 +316,7 @@ devdeploy-launcher-status
 - `workload_cluster_create`
 - `management_ingress_bootstrap`
 - `management_postgres_bootstrap`
+- `management_frontend_image_build`
 
 `status` is one of:
 
@@ -362,6 +388,7 @@ Current component keys:
 - `ingress_nginx`
 - `postgres`
 - `backend`
+- `frontend_image`
 - `frontend`
 - `argocd`
 
