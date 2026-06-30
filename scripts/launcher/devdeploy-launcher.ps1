@@ -22,6 +22,8 @@ param(
 
     [switch]$BuildManagementBackendImage,
 
+    [switch]$LoadManagementBackendImage,
+
     [switch]$Quiet
 )
 
@@ -366,6 +368,31 @@ function New-NextActions {
             $actions.Add("Review the sanitized launcher log, resolve the Docker or backend build input issue, and rerun -BuildManagementBackendImage.") | Out-Null
         }
     }
+    elseif ($LauncherMode -eq "management_backend_image_load") {
+        $localImagePresent = $false
+        $loadedToManagementCluster = $false
+        try {
+            $localImagePresent = [bool]$PlatformBootstrap["components"]["backend_image"]["local_image_present"]
+            $loadedToManagementCluster = [bool]$PlatformBootstrap["components"]["backend_image"]["loaded_to_management_cluster"]
+        }
+        catch {
+            $localImagePresent = $false
+            $loadedToManagementCluster = $false
+        }
+
+        if ($backendImageStatus -eq "ready" -and $loadedToManagementCluster) {
+            $actions.Add("The management backend image is loaded into devdeploy-mgmt. Proceed to the future explicit backend Secret and bootstrap steps when available.") | Out-Null
+        }
+        elseif (-not $localImagePresent) {
+            $actions.Add("Run -BuildManagementBackendImage before retrying -LoadManagementBackendImage.") | Out-Null
+        }
+        elseif ($managementClusterStatus -ne "ready") {
+            $actions.Add("Create or repair devdeploy-mgmt, then rerun -LoadManagementBackendImage.") | Out-Null
+        }
+        else {
+            $actions.Add("Review the sanitized launcher log and rerun -LoadManagementBackendImage after resolving the kind image-load issue.") | Out-Null
+        }
+    }
 
     if ($OverallStatus -eq "ok" -and $LauncherMode -eq "preflight") {
         $actions.Add("Run the launcher with -GenerateKindConfigs to preview deterministic kind cluster configuration.") | Out-Null
@@ -532,6 +559,8 @@ function New-ManagementBackendImageStatus {
         local_image_present          = $false
         build_attempted              = $false
         build_succeeded              = $false
+        load_attempted               = $false
+        load_succeeded               = $false
         loaded_to_management_cluster = $false
         target_cluster               = "devdeploy-mgmt"
         status                       = "not_checked"
@@ -667,6 +696,120 @@ function Invoke-ManagementBackendImageBuild {
     return $status
 }
 
+function Invoke-ManagementBackendImageLoad {
+    param(
+        [bool]$DockerCliAvailable,
+
+        [bool]$DockerDaemonReachable,
+
+        [bool]$KindAvailable,
+
+        [Parameter(Mandatory = $true)]
+        [object]$ManagementCluster
+    )
+
+    $status = New-ManagementBackendImageStatus
+
+    if (-not $DockerCliAvailable -or -not $DockerDaemonReachable) {
+        $status["status"] = "error"
+        $status["message"] = "Backend image load requires an available Docker CLI and reachable Docker daemon."
+        $status["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "backend_image_load" -Label "Management backend image load" -Status "skipped" -Message ([string]$status["message"]) -Details @{
+            required       = $true
+            image          = $BackendImage
+            target_cluster = "devdeploy-mgmt"
+        }
+        return $status
+    }
+
+    $imagePresent = Test-ManagementBackendImagePresent -DockerCliAvailable $DockerCliAvailable -DockerDaemonReachable $DockerDaemonReachable
+    $status["local_image_present"] = $imagePresent
+    if (-not $imagePresent) {
+        $status["status"] = "error"
+        $status["message"] = "Local image devdeploy-backend:local was not found. Run -BuildManagementBackendImage before loading it into devdeploy-mgmt."
+        $status["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "backend_image_local" -Label "Local management backend image" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required = $true
+            image    = $BackendImage
+        }
+        Add-Check -Id "backend_image_load" -Label "Management backend image load" -Status "skipped" -Message "Backend image load was skipped because the local image is missing." -Details @{
+            required       = $true
+            image          = $BackendImage
+            target_cluster = "devdeploy-mgmt"
+        }
+        return $status
+    }
+
+    Add-Check -Id "backend_image_local" -Label "Local management backend image" -Status "ok" -Message "Local image devdeploy-backend:local exists." -Details @{
+        required = $true
+        image    = $BackendImage
+    }
+
+    if (-not $KindAvailable) {
+        $status["status"] = "error"
+        $status["message"] = "kind CLI is required to load devdeploy-backend:local into devdeploy-mgmt."
+        $status["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "backend_image_load" -Label "Management backend image load" -Status "skipped" -Message ([string]$status["message"]) -Details @{
+            required       = $true
+            image          = $BackendImage
+            target_cluster = "devdeploy-mgmt"
+        }
+        return $status
+    }
+
+    if ([string]$ManagementCluster["status"] -ne "ready") {
+        $status["status"] = "error"
+        $status["message"] = "devdeploy-mgmt must exist, be API-reachable, and have a Ready node before loading the backend image."
+        $status["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "backend_image_load" -Label "Management backend image load" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required           = $true
+            image              = $BackendImage
+            target_cluster     = "devdeploy-mgmt"
+            management_status  = [string]$ManagementCluster["status"]
+            api_reachable      = $ManagementCluster["api_reachable"]
+            ready_nodes        = [int]$ManagementCluster["ready_nodes"]
+        }
+        return $status
+    }
+
+    $status["load_attempted"] = $true
+    Write-LauncherLog ("Loading management backend image {0} into devdeploy-mgmt." -f $BackendImage)
+    if (-not $Quiet) {
+        Write-Host ("Loading management backend image {0} into devdeploy-mgmt..." -f $BackendImage)
+    }
+
+    $loadResult = Invoke-ReadOnlyCommand -FileName "kind" -Arguments @("load", "docker-image", $BackendImage, "--name", "devdeploy-mgmt") -TimeoutSeconds 600
+    if ($loadResult.exit_code -ne 0 -or $loadResult.timed_out) {
+        $status["status"] = "error"
+        $status["message"] = if ($loadResult.timed_out) {
+            "Loading devdeploy-backend:local into devdeploy-mgmt timed out. Review the sanitized launcher log and retry."
+        }
+        else {
+            "kind failed to load devdeploy-backend:local into devdeploy-mgmt. Review the sanitized launcher log and retry."
+        }
+        $status["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "backend_image_load" -Label "Management backend image load" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required       = $true
+            image          = $BackendImage
+            target_cluster = "devdeploy-mgmt"
+            error          = $loadResult.stderr
+        }
+        return $status
+    }
+
+    $status["load_succeeded"] = $true
+    $status["loaded_to_management_cluster"] = $true
+    $status["status"] = "ready"
+    $status["message"] = "Backend image devdeploy-backend:local was loaded into devdeploy-mgmt."
+    $status["checked_at"] = [string](Get-Timestamp)
+    Add-Check -Id "backend_image_load" -Label "Management backend image load" -Status "ok" -Message ([string]$status["message"]) -Details @{
+        required       = $true
+        image          = $BackendImage
+        target_cluster = "devdeploy-mgmt"
+    }
+    return $status
+}
+
 function Test-LocalPortAvailable {
     param(
         [Parameter(Mandatory = $true)]
@@ -737,7 +880,9 @@ function Test-KindClusters {
 
         [bool]$ManagementPostgresBootstrapMode = $false,
 
-        [bool]$ManagementBackendImageBuildMode = $false
+        [bool]$ManagementBackendImageBuildMode = $false,
+
+        [bool]$ManagementBackendImageLoadMode = $false
     )
 
     if (-not $KindAvailable) {
@@ -798,6 +943,10 @@ function Test-KindClusters {
     elseif ($ManagementBackendImageBuildMode -and ($mgmtExists -or $workloadExists)) {
         $status = "ok"
         $message = "Existing DevDeploy clusters were detected. Backend image build mode does not use, modify, or delete them."
+    }
+    elseif ($ManagementBackendImageLoadMode -and $mgmtExists) {
+        $status = "ok"
+        $message = "devdeploy-mgmt exists. Backend image load mode targets only this management cluster."
     }
 
     Add-Check -Id "kind_clusters" -Label "Existing kind clusters" -Status $status -Message $message -Details @{
@@ -2323,6 +2472,9 @@ elseif ($BootstrapManagementPostgres) {
 elseif ($BuildManagementBackendImage) {
     Write-LauncherLog "Starting DevDeploy Launcher explicit management backend image build mode."
 }
+elseif ($LoadManagementBackendImage) {
+    Write-LauncherLog "Starting DevDeploy Launcher explicit management backend image load mode."
+}
 elseif ($GenerateKindConfigs) {
     Write-LauncherLog "Starting DevDeploy Launcher read-only preflight with kind config preview generation."
 }
@@ -2360,7 +2512,7 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
     if (($BootstrapManagementIngress -or $BootstrapManagementPostgres) -and $isWorkloadPort) {
         $portRequired = $false
     }
-    if ($BuildManagementBackendImage) {
+    if ($BuildManagementBackendImage -or $LoadManagementBackendImage) {
         $portRequired = $false
     }
     $allowBusyAsOk = [bool]$existingClusterDetected
@@ -2369,7 +2521,7 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
 }
 
 if ($workloadClusterExistsBeforePortCheck) {
-    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BuildManagementBackendImage) { "ok" } else { "warning" }
+    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BuildManagementBackendImage -or $LoadManagementBackendImage) { "ok" } else { "warning" }
     $detectedMessage = if ($CreateWorkloadCluster) {
         "devdeploy-workload already exists. This launcher mode will verify it instead of recreating it."
     }
@@ -2382,6 +2534,9 @@ if ($workloadClusterExistsBeforePortCheck) {
     elseif ($BuildManagementBackendImage) {
         "devdeploy-workload already exists. Backend image build mode does not use, modify, or delete it."
     }
+    elseif ($LoadManagementBackendImage) {
+        "devdeploy-workload already exists. Backend image load mode targets only devdeploy-mgmt and does not modify devdeploy-workload."
+    }
     else {
         "devdeploy-workload already exists. This launcher mode will not create, modify, or delete it."
     }
@@ -2393,7 +2548,7 @@ if ($workloadClusterExistsBeforePortCheck) {
     }
 }
 
-Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres) -ManagementBackendImageBuildMode ([bool]$BuildManagementBackendImage)
+Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres) -ManagementBackendImageBuildMode ([bool]$BuildManagementBackendImage) -ManagementBackendImageLoadMode ([bool]$LoadManagementBackendImage)
 Test-KubectlContext -KubectlAvailable $kubectlAvailable
 
 $launcherMode = "preflight"
@@ -2411,6 +2566,9 @@ elseif ($BootstrapManagementPostgres) {
 }
 elseif ($BuildManagementBackendImage) {
     $launcherMode = "management_backend_image_build"
+}
+elseif ($LoadManagementBackendImage) {
+    $launcherMode = "management_backend_image_load"
 }
 elseif ($GenerateKindConfigs) {
     $launcherMode = "kind_config_preview"
@@ -2489,6 +2647,10 @@ elseif ($BootstrapManagementPostgres) {
 elseif ($BuildManagementBackendImage) {
     $backendImageStatus = Invoke-ManagementBackendImageBuild -DockerCliAvailable $dockerAvailable -DockerDaemonReachable $dockerDaemonReachable
 }
+elseif ($LoadManagementBackendImage) {
+    $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
+    $backendImageStatus = Invoke-ManagementBackendImageLoad -DockerCliAvailable $dockerAvailable -DockerDaemonReachable $dockerDaemonReachable -KindAvailable $kindAvailable -ManagementCluster $managementCluster
+}
 elseif ($GenerateKindConfigs) {
     Write-KindConfigPreview -Id "kind_config_mgmt_preview" -Label "Management kind config preview" -ClusterName "devdeploy-mgmt" -Path $MgmtKindConfigPath -ApiServerPort 58080 -HttpHostPort 8080 -HttpsHostPort 8443
     Write-KindConfigPreview -Id "kind_config_workload_preview" -Label "Workload kind config preview" -ClusterName "devdeploy-workload" -Path $WorkloadKindConfigPath -ApiServerPort 58081 -HttpHostPort 8081 -HttpsHostPort 8444
@@ -2500,7 +2662,7 @@ if ($null -eq $managementCluster) {
 if ($null -eq $workloadCluster) {
     $workloadCluster = New-WorkloadClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
 }
-$platformHelmAvailable = [bool]($helmAvailable -and -not $BuildManagementBackendImage)
+$platformHelmAvailable = [bool]($helmAvailable -and -not $BuildManagementBackendImage -and -not $LoadManagementBackendImage)
 $platformBootstrap = New-PlatformBootstrapStatus -ManagementCluster $managementCluster -HelmAvailable $platformHelmAvailable -KubectlAvailable $kubectlAvailable -BackendImageStatus $backendImageStatus
 $stableChecks = @($Checks | ForEach-Object { $_ })
 $overallStatus = [string](Get-OverallStatus -StableChecks $stableChecks)
@@ -2547,6 +2709,9 @@ if (-not $Quiet) {
     }
     elseif ($BuildManagementBackendImage) {
         Write-Host ("Management backend image: {0}" -f $BackendImage)
+    }
+    elseif ($LoadManagementBackendImage) {
+        Write-Host ("Management backend image target: {0} -> devdeploy-mgmt" -f $BackendImage)
     }
     elseif ($GenerateKindConfigs) {
         Write-Host ("Management kind config: {0}" -f $MgmtKindConfigPath)
