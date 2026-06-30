@@ -30,6 +30,8 @@ param(
 
     [switch]$BootstrapManagementBackend,
 
+    [switch]$VerifyManagementBackend,
+
     [switch]$Quiet
 )
 
@@ -459,6 +461,17 @@ function New-NextActions {
         }
         else {
             $actions.Add("Review failed backend prerequisite or rollout checks and rerun -BootstrapManagementBackend after resolving them.") | Out-Null
+        }
+    }
+    elseif ($LauncherMode -eq "management_backend_verify") {
+        if ($backendStatus -eq "ready") {
+            $actions.Add("The management backend passed read-only verification.") | Out-Null
+        }
+        elseif ($backendStatus -eq "warning") {
+            $actions.Add("Backend resources are ready, but health verification needs review. Check the sanitized launcher log and rerun -VerifyManagementBackend.") | Out-Null
+        }
+        else {
+            $actions.Add("Review failed read-only backend checks. Run -BootstrapManagementBackend only when you intend to reconcile backend resources.") | Out-Null
         }
     }
 
@@ -982,6 +995,7 @@ function New-ManagementBackendStatus {
         manifests_path         = $BackendManifestRelativePath
         rollout_succeeded      = $false
         health_check_succeeded = $false
+        mode                   = "not_checked"
         status                 = "not_checked"
         message                = "Backend bootstrap has not been requested."
         checked_at             = [string](Get-Timestamp)
@@ -1595,6 +1609,7 @@ function Invoke-BootstrapManagementBackend {
     )
 
     $backend = New-ManagementBackendStatus
+    $backend["mode"] = "bootstrap"
     $backendImage = New-ManagementBackendImageStatus
     $backendSecret = New-ManagementBackendSecretStatus
     $ingress = New-PlatformComponentStatus -Installed $null -Ready $null -Namespace $IngressNginxNamespace -Release $IngressNginxRelease -Status "unknown" -Message "Management ingress status has not been checked."
@@ -1841,6 +1856,281 @@ function Invoke-BootstrapManagementBackend {
     return New-ManagementBackendBootstrapResult -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
 }
 
+function Invoke-VerifyManagementBackend {
+    param(
+        [bool]$KubectlAvailable,
+
+        [Parameter(Mandatory = $true)]
+        [object]$ManagementCluster
+    )
+
+    $backend = New-ManagementBackendStatus
+    $backend["mode"] = "verify"
+    $backendImage = New-ManagementBackendImageStatus
+    $backendSecret = New-ManagementBackendSecretStatus
+    $ingress = New-PlatformComponentStatus -Installed $null -Ready $null -Namespace $IngressNginxNamespace -Release $IngressNginxRelease -Status "unknown" -Message "Management ingress status has not been checked."
+    $postgres = New-PlatformComponentStatus -Installed $null -Ready $null -Namespace $PostgresNamespace -Release $PostgresRelease -Status "unknown" -Message "PostgreSQL status has not been checked."
+
+    if (-not $KubectlAvailable -or [string]$ManagementCluster["status"] -ne "ready") {
+        $backend["status"] = "error"
+        $backend["message"] = "kubectl and a Ready devdeploy-mgmt cluster are required to verify the backend."
+        $backend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_backend_verify_prerequisites" -Label "Management backend verify prerequisites" -Status "failed" -Message ([string]$backend["message"]) -Details @{
+            required          = $true
+            target_cluster    = "devdeploy-mgmt"
+            management_status = [string]$ManagementCluster["status"]
+            read_only         = $true
+        }
+        return New-ManagementBackendBootstrapResult -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+
+    $namespaceResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "get", "namespace", $PostgresNamespace, "--output", "name") -TimeoutSeconds 20
+    if ($namespaceResult.exit_code -ne 0 -or $namespaceResult.timed_out) {
+        $backend["status"] = "error"
+        $backend["message"] = "Namespace devdeploy does not exist in devdeploy-mgmt."
+        $backend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_backend_verify_namespace" -Label "Management backend namespace verification" -Status "failed" -Message ([string]$backend["message"]) -Details @{
+            required  = $true
+            namespace = $PostgresNamespace
+            read_only = $true
+        }
+        return New-ManagementBackendBootstrapResult -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+
+    Add-Check -Id "management_backend_verify_namespace" -Label "Management backend namespace verification" -Status "ok" -Message "Namespace devdeploy exists in devdeploy-mgmt." -Details @{
+        required  = $true
+        namespace = $PostgresNamespace
+        read_only = $true
+    }
+
+    $ingressControllerResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $IngressNginxNamespace, "get", "deployment", "ingress-nginx-controller", "--output", "jsonpath={.status.availableReplicas}") -TimeoutSeconds 20
+    $ingressAvailable = 0
+    [void][int]::TryParse(([string]$ingressControllerResult.stdout).Trim(), [ref]$ingressAvailable)
+    if ($ingressControllerResult.exit_code -eq 0 -and -not $ingressControllerResult.timed_out -and $ingressAvailable -ge 1) {
+        $ingress = New-PlatformComponentStatus -Installed $true -Ready $true -Namespace $IngressNginxNamespace -Release $IngressNginxRelease -Status "ready" -Message "Management ingress-nginx controller is Ready."
+    }
+    else {
+        $ingress = New-PlatformComponentStatus -Installed $null -Ready $false -Namespace $IngressNginxNamespace -Release $IngressNginxRelease -Status "degraded" -Message "Management ingress-nginx controller is not Ready."
+    }
+
+    $postgresStatefulSet = "$PostgresRelease-postgresql"
+    $postgresResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace, "get", "statefulset", $postgresStatefulSet, "--output", "jsonpath={.status.readyReplicas}") -TimeoutSeconds 20
+    $postgresServiceResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace, "get", "service", $postgresStatefulSet, "--output", "name") -TimeoutSeconds 20
+    $postgresReadyReplicas = 0
+    [void][int]::TryParse(([string]$postgresResult.stdout).Trim(), [ref]$postgresReadyReplicas)
+    if ($postgresResult.exit_code -eq 0 -and -not $postgresResult.timed_out -and $postgresReadyReplicas -ge 1 -and $postgresServiceResult.exit_code -eq 0 -and -not $postgresServiceResult.timed_out) {
+        $postgres = New-PlatformComponentStatus -Installed $true -Ready $true -Namespace $PostgresNamespace -Release $PostgresRelease -Status "ready" -Message "Management PostgreSQL is Ready."
+    }
+    else {
+        $postgres = New-PlatformComponentStatus -Installed $null -Ready $false -Namespace $PostgresNamespace -Release $PostgresRelease -Status "degraded" -Message "Management PostgreSQL is not Ready."
+    }
+
+    $backendSecret = Invoke-VerifyManagementBackendSecret -KubectlAvailable $KubectlAvailable -ManagementCluster $ManagementCluster
+    if ([string]$backendSecret["status"] -ne "ready") {
+        $backend["status"] = "error"
+        $backend["message"] = "Backend runtime Secret did not pass read-only verification."
+        $backend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_backend_verify_secret" -Label "Management backend Secret verification" -Status "failed" -Message ([string]$backend["message"]) -Details @{
+            required    = $true
+            namespace   = $PostgresNamespace
+            secret_name = $BackendSecretName
+            read_only   = $true
+        }
+        return New-ManagementBackendBootstrapResult -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+
+    Add-Check -Id "management_backend_verify_secret" -Label "Management backend Secret verification" -Status "ok" -Message "Backend runtime Secret passed read-only verification." -Details @{
+        required    = $true
+        namespace   = $PostgresNamespace
+        secret_name = $BackendSecretName
+        read_only   = $true
+    }
+
+    $deploymentJsonPath = "{.spec.replicas}|{.status.readyReplicas}|{.status.availableReplicas}|{.spec.template.spec.containers[0].image}"
+    $deploymentResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace, "get", "deployment", "devdeploy-backend", "--output", "jsonpath=$deploymentJsonPath") -TimeoutSeconds 20
+    if ($deploymentResult.exit_code -ne 0 -or $deploymentResult.timed_out -or [string]::IsNullOrWhiteSpace($deploymentResult.stdout)) {
+        $backend["status"] = "error"
+        $backend["message"] = "Deployment devdeploy-backend does not exist or could not be read."
+        $backend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_backend_verify_deployment" -Label "Management backend Deployment verification" -Status "failed" -Message ([string]$backend["message"]) -Details @{
+            required   = $true
+            namespace  = $PostgresNamespace
+            deployment = "devdeploy-backend"
+            read_only  = $true
+        }
+        return New-ManagementBackendBootstrapResult -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+
+    $deploymentParts = @(([string]$deploymentResult.stdout).Split('|'))
+    $desiredReplicas = 0
+    $readyReplicas = 0
+    $availableReplicas = 0
+    if ($deploymentParts.Count -ge 4) {
+        [void][int]::TryParse($deploymentParts[0], [ref]$desiredReplicas)
+        [void][int]::TryParse($deploymentParts[1], [ref]$readyReplicas)
+        [void][int]::TryParse($deploymentParts[2], [ref]$availableReplicas)
+    }
+    $deployedImage = if ($deploymentParts.Count -ge 4) { ([string]$deploymentParts[3]).Trim() } else { "" }
+    $deploymentReady = [bool]($desiredReplicas -ge 1 -and $readyReplicas -eq $desiredReplicas -and $availableReplicas -eq $desiredReplicas)
+    $imageMatches = [bool]($deployedImage -eq [string]$backendImage["image"])
+    $backend["deployed"] = $true
+    $backend["rollout_succeeded"] = $deploymentReady
+
+    if (-not $deploymentReady -or -not $imageMatches) {
+        $backend["status"] = "error"
+        $backend["message"] = if (-not $imageMatches) { "Backend Deployment image does not match devdeploy-backend:local." } else { "Backend Deployment is not fully Available." }
+        $backend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_backend_verify_deployment" -Label "Management backend Deployment verification" -Status "failed" -Message ([string]$backend["message"]) -Details @{
+            required           = $true
+            namespace          = $PostgresNamespace
+            deployment         = "devdeploy-backend"
+            desired_replicas   = $desiredReplicas
+            ready_replicas     = $readyReplicas
+            available_replicas = $availableReplicas
+            deployed_image     = $deployedImage
+            image_matches      = $imageMatches
+            read_only          = $true
+        }
+        return New-ManagementBackendBootstrapResult -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+
+    $backendImage["loaded_to_management_cluster"] = $true
+    $backendImage["target_cluster"] = "devdeploy-mgmt"
+    $backendImage["status"] = "ready"
+    $backendImage["message"] = "The running backend Deployment uses devdeploy-backend:local in devdeploy-mgmt."
+    $backendImage["checked_at"] = [string](Get-Timestamp)
+    Add-Check -Id "management_backend_verify_deployment" -Label "Management backend Deployment verification" -Status "ok" -Message "Backend Deployment is Available and uses devdeploy-backend:local." -Details @{
+        required           = $true
+        namespace          = $PostgresNamespace
+        deployment         = "devdeploy-backend"
+        desired_replicas   = $desiredReplicas
+        ready_replicas     = $readyReplicas
+        available_replicas = $availableReplicas
+        image_matches      = $true
+        read_only          = $true
+    }
+
+    $podJsonPath = '{range .items[*]}{.metadata.name}|{.status.phase}|{.status.containerStatuses[0].ready}|{.status.containerStatuses[0].restartCount};{end}'
+    $podsResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace, "get", "pods", "--selector", "app.kubernetes.io/name=devdeploy-backend,app.kubernetes.io/component=backend", "--output", "jsonpath=$podJsonPath") -TimeoutSeconds 20
+    $podSummaries = New-Object System.Collections.Generic.List[object]
+    if ($podsResult.exit_code -eq 0 -and -not $podsResult.timed_out) {
+        foreach ($podRecord in @(([string]$podsResult.stdout).Split(';') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+            $podParts = @(([string]$podRecord).Split('|'))
+            if ($podParts.Count -ge 4) {
+                $restartCount = 0
+                [void][int]::TryParse($podParts[3], [ref]$restartCount)
+                $podSummaries.Add([ordered]@{
+                        name          = [string]$podParts[0]
+                        phase         = [string]$podParts[1]
+                        ready         = [bool]([string]$podParts[2] -eq "true")
+                        restart_count = $restartCount
+                    }) | Out-Null
+            }
+        }
+    }
+    $readyPods = @($podSummaries | Where-Object { $_["phase"] -eq "Running" -and $_["ready"] })
+    if ($readyPods.Count -lt 1) {
+        $backend["status"] = "error"
+        $backend["message"] = "No Running and Ready backend Pod was found."
+        $backend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_backend_verify_pods" -Label "Management backend Pod verification" -Status "failed" -Message ([string]$backend["message"]) -Details @{
+            required  = $true
+            namespace = $PostgresNamespace
+            pods      = @($podSummaries | ForEach-Object { $_ })
+            read_only = $true
+        }
+        return New-ManagementBackendBootstrapResult -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+
+    Add-Check -Id "management_backend_verify_pods" -Label "Management backend Pod verification" -Status "ok" -Message "At least one backend Pod is Running and Ready." -Details @{
+        required  = $true
+        namespace = $PostgresNamespace
+        pods      = @($podSummaries | ForEach-Object { $_ })
+        read_only = $true
+    }
+
+    $serviceResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace, "get", "service", "devdeploy-backend", "--output", "jsonpath={.spec.ports[0].port}") -TimeoutSeconds 20
+    $servicePort = 0
+    [void][int]::TryParse(([string]$serviceResult.stdout).Trim(), [ref]$servicePort)
+    if ($serviceResult.exit_code -ne 0 -or $serviceResult.timed_out -or $servicePort -ne 8000) {
+        $backend["status"] = "error"
+        $backend["message"] = "Backend Service is missing or does not expose port 8000."
+        $backend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_backend_verify_service" -Label "Management backend Service verification" -Status "failed" -Message ([string]$backend["message"]) -Details @{
+            required     = $true
+            namespace    = $PostgresNamespace
+            service      = "devdeploy-backend"
+            service_port = $servicePort
+            read_only    = $true
+        }
+        return New-ManagementBackendBootstrapResult -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+
+    Add-Check -Id "management_backend_verify_service" -Label "Management backend Service verification" -Status "ok" -Message "Backend Service exists and exposes port 8000." -Details @{
+        required     = $true
+        namespace    = $PostgresNamespace
+        service      = "devdeploy-backend"
+        service_port = $servicePort
+        read_only    = $true
+    }
+
+    $ingressJsonPath = "{.spec.ingressClassName}|{.spec.rules[0].http.paths[0].path}"
+    $ingressResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace, "get", "ingress", "devdeploy-backend", "--output", "jsonpath=$ingressJsonPath") -TimeoutSeconds 20
+    $ingressParts = if ($ingressResult.exit_code -eq 0 -and -not $ingressResult.timed_out) { @(([string]$ingressResult.stdout).Split('|')) } else { @() }
+    $ingressClassValid = [bool]($ingressParts.Count -ge 2 -and ([string]$ingressParts[0]).Trim() -eq "nginx")
+    $ingressPathValid = [bool]($ingressParts.Count -ge 2 -and ([string]$ingressParts[1]).Trim() -eq "/api")
+    if (-not $ingressClassValid -or -not $ingressPathValid) {
+        $backend["status"] = "error"
+        $backend["message"] = "Backend Ingress is missing or its class/path does not match nginx and /api."
+        $backend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_backend_verify_ingress" -Label "Management backend Ingress verification" -Status "failed" -Message ([string]$backend["message"]) -Details @{
+            required            = $true
+            namespace           = $PostgresNamespace
+            ingress             = "devdeploy-backend"
+            ingress_class_valid = $ingressClassValid
+            ingress_path_valid  = $ingressPathValid
+            read_only           = $true
+        }
+        return New-ManagementBackendBootstrapResult -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+
+    Add-Check -Id "management_backend_verify_ingress" -Label "Management backend Ingress verification" -Status "ok" -Message "Backend Ingress uses class nginx and routes /api." -Details @{
+        required      = $true
+        namespace     = $PostgresNamespace
+        ingress       = "devdeploy-backend"
+        ingress_class = "nginx"
+        path          = "/api"
+        read_only     = $true
+    }
+
+    $healthResult = Test-ManagementBackendHealth -KubectlAvailable $KubectlAvailable
+    $backend["health_check_succeeded"] = [bool]$healthResult.success
+    $backend["ready"] = $true
+    $backend["checked_at"] = [string](Get-Timestamp)
+    if ($healthResult.success) {
+        $backend["status"] = "ready"
+        $backend["message"] = "DevDeploy backend passed read-only deployment, Pod, networking, Secret, and health verification."
+        Add-Check -Id "management_backend_verify_health" -Label "Management backend health verification" -Status "ok" -Message ([string]$healthResult.message) -Details @{
+            required  = $false
+            endpoint  = "/api/v1/health"
+            method    = "temporary_port_forward"
+            read_only = $true
+        }
+    }
+    else {
+        $backend["status"] = "warning"
+        $backend["message"] = "Backend resources are ready, but the read-only health endpoint check did not succeed."
+        Add-Check -Id "management_backend_verify_health" -Label "Management backend health verification" -Status "warning" -Message ([string]$healthResult.message) -Details @{
+            required  = $false
+            endpoint  = "/api/v1/health"
+            method    = "temporary_port_forward"
+            read_only = $true
+        }
+    }
+
+    return New-ManagementBackendBootstrapResult -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+}
+
 function Test-LocalPortAvailable {
     param(
         [Parameter(Mandatory = $true)]
@@ -1919,7 +2209,9 @@ function Test-KindClusters {
 
         [bool]$ManagementBackendSecretVerifyMode = $false,
 
-        [bool]$ManagementBackendBootstrapMode = $false
+        [bool]$ManagementBackendBootstrapMode = $false,
+
+        [bool]$ManagementBackendVerifyMode = $false
     )
 
     if (-not $KindAvailable) {
@@ -1996,6 +2288,10 @@ function Test-KindClusters {
     elseif ($ManagementBackendBootstrapMode -and $mgmtExists) {
         $status = "ok"
         $message = "devdeploy-mgmt exists. Backend bootstrap mode applies only management backend platform manifests to this cluster."
+    }
+    elseif ($ManagementBackendVerifyMode -and $mgmtExists) {
+        $status = "ok"
+        $message = "devdeploy-mgmt exists. Backend verify mode performs read-only checks only in this management cluster."
     }
 
     Add-Check -Id "kind_clusters" -Label "Existing kind clusters" -Status $status -Message $message -Details @{
@@ -3557,6 +3853,9 @@ elseif ($VerifyManagementBackendSecret) {
 elseif ($BootstrapManagementBackend) {
     Write-LauncherLog "Starting DevDeploy Launcher explicit management backend bootstrap mode."
 }
+elseif ($VerifyManagementBackend) {
+    Write-LauncherLog "Starting DevDeploy Launcher read-only management backend verify mode."
+}
 elseif ($GenerateKindConfigs) {
     Write-LauncherLog "Starting DevDeploy Launcher read-only preflight with kind config preview generation."
 }
@@ -3564,15 +3863,15 @@ else {
     Write-LauncherLog "Starting DevDeploy Launcher read-only preflight."
 }
 
-$dockerAvailable = Test-CommandAvailable -Name "docker" -Label "Docker CLI" -Required ([bool](-not ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret)))
+$dockerAvailable = Test-CommandAvailable -Name "docker" -Label "Docker CLI" -Required ([bool](-not ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend)))
 $kindAvailable = Test-CommandAvailable -Name "kind" -Label "kind CLI" -Required ([bool](-not $BuildManagementBackendImage))
 $kubectlAvailable = Test-CommandAvailable -Name "kubectl" -Label "kubectl CLI" -Required ([bool](-not $BuildManagementBackendImage))
 [void](Test-CommandAvailable -Name "git" -Label "git CLI" -Required $false)
 $helmAvailable = Test-CommandAvailable -Name "helm" -Label "Helm CLI" -Required ([bool]($BootstrapManagementIngress -or $BootstrapManagementPostgres))
 
-if ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret) {
+if ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend) {
     $dockerDaemonReachable = $false
-    Add-Check -Id "docker_daemon" -Label "Docker daemon" -Status "skipped" -Message "Docker daemon check is not required for backend Secret ensure or verify mode." -Details @{
+    Add-Check -Id "docker_daemon" -Label "Docker daemon" -Status "skipped" -Message "Docker daemon check is not required for backend Secret or backend read-only verification modes." -Details @{
         required = $false
     }
 }
@@ -3602,7 +3901,7 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
     if (($BootstrapManagementIngress -or $BootstrapManagementPostgres) -and $isWorkloadPort) {
         $portRequired = $false
     }
-    if ($BuildManagementBackendImage -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend) {
+    if ($BuildManagementBackendImage -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) {
         $portRequired = $false
     }
     $allowBusyAsOk = [bool]$existingClusterDetected
@@ -3611,7 +3910,7 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
 }
 
 if ($workloadClusterExistsBeforePortCheck) {
-    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BuildManagementBackendImage -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend) { "ok" } else { "warning" }
+    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BuildManagementBackendImage -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) { "ok" } else { "warning" }
     $detectedMessage = if ($CreateWorkloadCluster) {
         "devdeploy-workload already exists. This launcher mode will verify it instead of recreating it."
     }
@@ -3636,6 +3935,9 @@ if ($workloadClusterExistsBeforePortCheck) {
     elseif ($BootstrapManagementBackend) {
         "devdeploy-workload already exists. Backend bootstrap mode targets only devdeploy-mgmt and does not modify devdeploy-workload."
     }
+    elseif ($VerifyManagementBackend) {
+        "devdeploy-workload already exists. Backend verify mode is read-only and targets only devdeploy-mgmt."
+    }
     else {
         "devdeploy-workload already exists. This launcher mode will not create, modify, or delete it."
     }
@@ -3647,7 +3949,7 @@ if ($workloadClusterExistsBeforePortCheck) {
     }
 }
 
-Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres) -ManagementBackendImageBuildMode ([bool]$BuildManagementBackendImage) -ManagementBackendImageLoadMode ([bool]$LoadManagementBackendImage) -ManagementBackendSecretEnsureMode ([bool]$EnsureManagementBackendSecret) -ManagementBackendSecretVerifyMode ([bool]$VerifyManagementBackendSecret) -ManagementBackendBootstrapMode ([bool]$BootstrapManagementBackend)
+Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres) -ManagementBackendImageBuildMode ([bool]$BuildManagementBackendImage) -ManagementBackendImageLoadMode ([bool]$LoadManagementBackendImage) -ManagementBackendSecretEnsureMode ([bool]$EnsureManagementBackendSecret) -ManagementBackendSecretVerifyMode ([bool]$VerifyManagementBackendSecret) -ManagementBackendBootstrapMode ([bool]$BootstrapManagementBackend) -ManagementBackendVerifyMode ([bool]$VerifyManagementBackend)
 Test-KubectlContext -KubectlAvailable $kubectlAvailable
 
 $launcherMode = "preflight"
@@ -3677,6 +3979,9 @@ elseif ($VerifyManagementBackendSecret) {
 }
 elseif ($BootstrapManagementBackend) {
     $launcherMode = "management_backend_bootstrap"
+}
+elseif ($VerifyManagementBackend) {
+    $launcherMode = "management_backend_verify"
 }
 elseif ($GenerateKindConfigs) {
     $launcherMode = "kind_config_preview"
@@ -3780,6 +4085,15 @@ elseif ($BootstrapManagementBackend) {
     $platformIngressOverride = $backendBootstrapResult["ingress"]
     $platformPostgresOverride = $backendBootstrapResult["postgres"]
 }
+elseif ($VerifyManagementBackend) {
+    $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
+    $backendVerifyResult = Invoke-VerifyManagementBackend -KubectlAvailable $kubectlAvailable -ManagementCluster $managementCluster
+    $backendStatus = $backendVerifyResult["backend"]
+    $backendImageStatus = $backendVerifyResult["backend_image"]
+    $backendSecretStatus = $backendVerifyResult["backend_secret"]
+    $platformIngressOverride = $backendVerifyResult["ingress"]
+    $platformPostgresOverride = $backendVerifyResult["postgres"]
+}
 elseif ($GenerateKindConfigs) {
     Write-KindConfigPreview -Id "kind_config_mgmt_preview" -Label "Management kind config preview" -ClusterName "devdeploy-mgmt" -Path $MgmtKindConfigPath -ApiServerPort 58080 -HttpHostPort 8080 -HttpsHostPort 8443
     Write-KindConfigPreview -Id "kind_config_workload_preview" -Label "Workload kind config preview" -ClusterName "devdeploy-workload" -Path $WorkloadKindConfigPath -ApiServerPort 58081 -HttpHostPort 8081 -HttpsHostPort 8444
@@ -3791,7 +4105,7 @@ if ($null -eq $managementCluster) {
 if ($null -eq $workloadCluster) {
     $workloadCluster = New-WorkloadClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
 }
-$platformHelmAvailable = [bool]($helmAvailable -and -not $BuildManagementBackendImage -and -not $LoadManagementBackendImage -and -not $EnsureManagementBackendSecret -and -not $VerifyManagementBackendSecret -and -not $BootstrapManagementBackend)
+$platformHelmAvailable = [bool]($helmAvailable -and -not $BuildManagementBackendImage -and -not $LoadManagementBackendImage -and -not $EnsureManagementBackendSecret -and -not $VerifyManagementBackendSecret -and -not $BootstrapManagementBackend -and -not $VerifyManagementBackend)
 $platformBootstrap = New-PlatformBootstrapStatus -ManagementCluster $managementCluster -HelmAvailable $platformHelmAvailable -KubectlAvailable $kubectlAvailable -BackendImageStatus $backendImageStatus -BackendSecretStatus $backendSecretStatus -BackendStatus $backendStatus -IngressStatusOverride $platformIngressOverride -PostgresStatusOverride $platformPostgresOverride
 $stableChecks = @($Checks | ForEach-Object { $_ })
 $overallStatus = [string](Get-OverallStatus -StableChecks $stableChecks)
@@ -3850,6 +4164,9 @@ if (-not $Quiet) {
     }
     elseif ($BootstrapManagementBackend) {
         Write-Host ("Management backend deployment: {0}/devdeploy-backend" -f $PostgresNamespace)
+    }
+    elseif ($VerifyManagementBackend) {
+        Write-Host ("Verified management backend deployment: {0}/devdeploy-backend" -f $PostgresNamespace)
     }
     elseif ($GenerateKindConfigs) {
         Write-Host ("Management kind config: {0}" -f $MgmtKindConfigPath)
