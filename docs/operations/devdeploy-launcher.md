@@ -250,6 +250,24 @@ It updates `platform_bootstrap.components.frontend_image` with load attempt and 
 
 This mode does not build the image, deploy frontend manifests, run `kubectl apply` or `kubectl delete`, create or update Secrets, install Helm charts or Argo CD, create clusters, or mutate `devdeploy-workload`.
 
+## Bootstrap The Management Frontend
+
+To explicitly reconcile only the frontend platform manifests into `devdeploy-mgmt`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -BootstrapManagementFrontend
+```
+
+This mode verifies the management cluster, namespace, ingress-nginx, backend health, and frontend manifest resource kinds before applying only:
+
+```text
+platform/management/frontend
+```
+
+It waits for `deployment/devdeploy-frontend`, verifies the Service and hostless Ingress contracts, checks the page through a temporary Service port-forward, and attempts host ingress checks for `/` and `/api/v1/health`. Host ingress failures are reported as warnings when the rollout and in-cluster Service check are healthy.
+
+This explicit mode is the only frontend mode that may run `kubectl apply`, and it does so only against `platform/management/frontend` in `devdeploy-mgmt`. It does not build or load images, update Secrets, apply backend manifests, run `kubectl delete`, install Helm charts or Argo CD, create clusters, or mutate `devdeploy-workload`.
+
 ## What It Checks
 
 The launcher checks:
@@ -336,6 +354,7 @@ devdeploy-launcher-status
 - `management_postgres_bootstrap`
 - `management_frontend_image_build`
 - `management_frontend_image_load`
+- `management_frontend_bootstrap`
 
 `status` is one of:
 
