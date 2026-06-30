@@ -20,6 +20,8 @@ param(
 
     [switch]$BootstrapManagementPostgres,
 
+    [switch]$BuildManagementBackendImage,
+
     [switch]$Quiet
 )
 
@@ -47,6 +49,11 @@ $PostgresRelease = "devdeploy-postgres"
 $PostgresDatabase = "devdeploy"
 $PostgresUsername = "devdeploy"
 $PostgresPassword = "local-devdeploy-password"
+$BackendImage = "devdeploy-backend:local"
+$BackendContextPath = Join-Path $RepoRoot "backend"
+$BackendDockerfilePath = Join-Path $BackendContextPath "Dockerfile"
+$BackendRequirementsPath = Join-Path $BackendContextPath "requirements.txt"
+$BackendConstraintsPath = Join-Path $BackendContextPath "constraints.txt"
 
 $PortPlan = [ordered]@{
     management_api   = 58080
@@ -341,6 +348,25 @@ function New-NextActions {
         }
     }
 
+    $backendImageStatus = "not_checked"
+    try {
+        if ($null -ne $PlatformBootstrap["components"] -and $null -ne $PlatformBootstrap["components"]["backend_image"]) {
+            $backendImageStatus = [string]$PlatformBootstrap["components"]["backend_image"]["status"]
+        }
+    }
+    catch {
+        $backendImageStatus = "unknown"
+    }
+
+    if ($LauncherMode -eq "management_backend_image_build") {
+        if ($backendImageStatus -eq "ready") {
+            $actions.Add("The management backend image is ready locally. Proceed to the future explicit image-load step when available.") | Out-Null
+        }
+        elseif ($backendImageStatus -eq "error" -or $backendImageStatus -eq "unknown") {
+            $actions.Add("Review the sanitized launcher log, resolve the Docker or backend build input issue, and rerun -BuildManagementBackendImage.") | Out-Null
+        }
+    }
+
     if ($OverallStatus -eq "ok" -and $LauncherMode -eq "preflight") {
         $actions.Add("Run the launcher with -GenerateKindConfigs to preview deterministic kind cluster configuration.") | Out-Null
     }
@@ -400,7 +426,9 @@ function Invoke-ReadOnlyCommand {
 
         [string[]]$Arguments = @(),
 
-        [int]$TimeoutSeconds = 8
+        [int]$TimeoutSeconds = 8,
+
+        [string]$WorkingDirectory = ""
     )
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -417,6 +445,9 @@ function Invoke-ReadOnlyCommand {
     $psi.RedirectStandardError = $true
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
+    if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) {
+        $psi.WorkingDirectory = $WorkingDirectory
+    }
 
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $psi
@@ -470,7 +501,7 @@ function Test-DockerDaemon {
         Add-Check -Id "docker_daemon" -Label "Docker daemon" -Status "skipped" -Message "Docker daemon check was skipped because Docker CLI is missing." -Details @{
             required = $true
         }
-        return
+        return $false
     }
 
     $result = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @("info", "--format", "{{json .ServerVersion}}") -TimeoutSeconds 10
@@ -478,7 +509,7 @@ function Test-DockerDaemon {
         Add-Check -Id "docker_daemon" -Label "Docker daemon" -Status "ok" -Message "Docker daemon is reachable." -Details @{
             required = $true
         }
-        return
+        return $true
     }
 
     $message = "Docker daemon is not reachable. Start Docker Desktop and rerun the launcher preflight."
@@ -490,6 +521,150 @@ function Test-DockerDaemon {
         required = $true
         error    = $result.stderr
     }
+    return $false
+}
+
+function New-ManagementBackendImageStatus {
+    return [ordered]@{
+        image                        = $BackendImage
+        dockerfile                   = "backend/Dockerfile"
+        context                      = "backend"
+        local_image_present          = $false
+        build_attempted              = $false
+        build_succeeded              = $false
+        loaded_to_management_cluster = $false
+        target_cluster               = "devdeploy-mgmt"
+        status                       = "not_checked"
+        message                      = "Backend image build has not been requested."
+        checked_at                   = [string](Get-Timestamp)
+    }
+}
+
+function Test-ManagementBackendImagePresent {
+    param(
+        [bool]$DockerCliAvailable,
+
+        [bool]$DockerDaemonReachable
+    )
+
+    if (-not $DockerCliAvailable -or -not $DockerDaemonReachable) {
+        return $false
+    }
+
+    $result = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @("image", "inspect", "--format", "{{.Id}}", $BackendImage) -TimeoutSeconds 30
+    return [bool]($result.exit_code -eq 0 -and -not $result.timed_out -and -not [string]::IsNullOrWhiteSpace($result.stdout))
+}
+
+function Invoke-ManagementBackendImageBuild {
+    param(
+        [bool]$DockerCliAvailable,
+
+        [bool]$DockerDaemonReachable
+    )
+
+    $status = New-ManagementBackendImageStatus
+
+    if (-not $DockerCliAvailable -or -not $DockerDaemonReachable) {
+        $status["status"] = "error"
+        $status["message"] = "Backend image build requires an available Docker CLI and reachable Docker daemon."
+        $status["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "backend_image_build" -Label "Management backend image build" -Status "skipped" -Message ([string]$status["message"]) -Details @{
+            required = $true
+            image    = $BackendImage
+        }
+        return $status
+    }
+
+    $requiredPaths = @(
+        [ordered]@{ id = "backend_build_context"; label = "Backend build context"; path = $BackendContextPath; relative_path = "backend"; path_type = "Container" },
+        [ordered]@{ id = "backend_dockerfile"; label = "Backend Dockerfile"; path = $BackendDockerfilePath; relative_path = "backend/Dockerfile"; path_type = "Leaf" },
+        [ordered]@{ id = "backend_requirements"; label = "Backend requirements"; path = $BackendRequirementsPath; relative_path = "backend/requirements.txt"; path_type = "Leaf" },
+        [ordered]@{ id = "backend_constraints"; label = "Backend constraints"; path = $BackendConstraintsPath; relative_path = "backend/constraints.txt"; path_type = "Leaf" }
+    )
+
+    $missingPath = $false
+    foreach ($pathCheck in $requiredPaths) {
+        $exists = Test-Path -LiteralPath ([string]$pathCheck["path"]) -PathType ([string]$pathCheck["path_type"])
+        if ($exists) {
+            Add-Check -Id ([string]$pathCheck["id"]) -Label ([string]$pathCheck["label"]) -Status "ok" -Message ("Required path {0} exists." -f [string]$pathCheck["relative_path"]) -Details @{
+                required      = $true
+                relative_path = [string]$pathCheck["relative_path"]
+            }
+        }
+        else {
+            $missingPath = $true
+            Add-Check -Id ([string]$pathCheck["id"]) -Label ([string]$pathCheck["label"]) -Status "failed" -Message ("Required path {0} was not found." -f [string]$pathCheck["relative_path"]) -Details @{
+                required      = $true
+                relative_path = [string]$pathCheck["relative_path"]
+            }
+        }
+    }
+
+    if ($missingPath) {
+        $status["status"] = "error"
+        $status["message"] = "Backend image build was not attempted because one or more required repository paths are missing."
+        $status["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "backend_image_build" -Label "Management backend image build" -Status "skipped" -Message ([string]$status["message"]) -Details @{
+            required = $true
+            image    = $BackendImage
+        }
+        return $status
+    }
+
+    $status["build_attempted"] = $true
+    Write-LauncherLog ("Building management backend image {0} from backend build context." -f $BackendImage)
+    if (-not $Quiet) {
+        Write-Host ("Building management backend image {0}..." -f $BackendImage)
+    }
+
+    # Quiet build output keeps launcher logs/status concise and avoids leaking build environment details.
+    $buildResult = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @("build", "--quiet", "--tag", $BackendImage, "backend") -TimeoutSeconds 1200 -WorkingDirectory $RepoRoot
+    if ($buildResult.exit_code -ne 0 -or $buildResult.timed_out) {
+        $status["local_image_present"] = Test-ManagementBackendImagePresent -DockerCliAvailable $DockerCliAvailable -DockerDaemonReachable $DockerDaemonReachable
+        $status["status"] = "error"
+        $status["message"] = if ($buildResult.timed_out) {
+            "Backend image build timed out. Review Docker availability and the sanitized launcher log before retrying."
+        }
+        else {
+            "Backend image build failed. Review the sanitized launcher log and retry the explicit build mode."
+        }
+        $status["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "backend_image_build" -Label "Management backend image build" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required = $true
+            image    = $BackendImage
+            error    = $buildResult.stderr
+        }
+        return $status
+    }
+
+    $status["build_succeeded"] = $true
+    Add-Check -Id "backend_image_build" -Label "Management backend image build" -Status "ok" -Message "Management backend image build completed successfully." -Details @{
+        required = $true
+        image    = $BackendImage
+        context  = "backend"
+    }
+
+    $imagePresent = Test-ManagementBackendImagePresent -DockerCliAvailable $DockerCliAvailable -DockerDaemonReachable $DockerDaemonReachable
+    $status["local_image_present"] = $imagePresent
+    if (-not $imagePresent) {
+        $status["status"] = "error"
+        $status["message"] = "Docker reported a successful build, but devdeploy-backend:local could not be verified locally."
+        $status["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "backend_image_verify" -Label "Management backend image verification" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required = $true
+            image    = $BackendImage
+        }
+        return $status
+    }
+
+    $status["status"] = "ready"
+    $status["message"] = "Backend image devdeploy-backend:local was built and verified in the local Docker daemon."
+    $status["checked_at"] = [string](Get-Timestamp)
+    Add-Check -Id "backend_image_verify" -Label "Management backend image verification" -Status "ok" -Message ([string]$status["message"]) -Details @{
+        required = $true
+        image    = $BackendImage
+    }
+    return $status
 }
 
 function Test-LocalPortAvailable {
@@ -560,7 +735,9 @@ function Test-KindClusters {
 
         [bool]$ManagementIngressBootstrapMode = $false,
 
-        [bool]$ManagementPostgresBootstrapMode = $false
+        [bool]$ManagementPostgresBootstrapMode = $false,
+
+        [bool]$ManagementBackendImageBuildMode = $false
     )
 
     if (-not $KindAvailable) {
@@ -617,6 +794,10 @@ function Test-KindClusters {
     elseif ($ManagementPostgresBootstrapMode -and $mgmtExists) {
         $status = "ok"
         $message = "devdeploy-mgmt already exists. This mode will install or verify only management PostgreSQL."
+    }
+    elseif ($ManagementBackendImageBuildMode -and ($mgmtExists -or $workloadExists)) {
+        $status = "ok"
+        $message = "Existing DevDeploy clusters were detected. Backend image build mode does not use, modify, or delete them."
     }
 
     Add-Check -Id "kind_clusters" -Label "Existing kind clusters" -Status $status -Message $message -Details @{
@@ -1627,7 +1808,10 @@ function New-PlatformBootstrapStatus {
 
         [bool]$HelmAvailable,
 
-        [bool]$KubectlAvailable
+        [bool]$KubectlAvailable,
+
+        [Parameter(Mandatory = $true)]
+        [object]$BackendImageStatus
     )
 
     $ingress = Get-ManagementIngressStatus -ManagementCluster $ManagementCluster -HelmAvailable $HelmAvailable -KubectlAvailable $KubectlAvailable
@@ -1680,6 +1864,7 @@ function New-PlatformBootstrapStatus {
         components = [ordered]@{
             ingress_nginx = $ingress
             postgres      = $postgres
+            backend_image = $BackendImageStatus
             backend       = New-NotStartedPlatformComponent -Namespace "devdeploy" -Message "Backend bootstrap is not implemented yet."
             frontend      = New-NotStartedPlatformComponent -Namespace "devdeploy" -Message "Frontend bootstrap is not implemented yet."
             argocd        = New-NotStartedPlatformComponent -Namespace "argocd" -Message "Argo CD bootstrap is not implemented yet."
@@ -1699,6 +1884,7 @@ function New-PlatformBootstrapStatus {
         status         = $status
         ingress_status = [string]$ingress["status"]
         postgres_status = [string]$postgres["status"]
+        backend_image_status = [string]$BackendImageStatus["status"]
     }
 
     return $platform
@@ -2134,6 +2320,9 @@ elseif ($BootstrapManagementIngress) {
 elseif ($BootstrapManagementPostgres) {
     Write-LauncherLog "Starting DevDeploy Launcher explicit management PostgreSQL bootstrap mode."
 }
+elseif ($BuildManagementBackendImage) {
+    Write-LauncherLog "Starting DevDeploy Launcher explicit management backend image build mode."
+}
 elseif ($GenerateKindConfigs) {
     Write-LauncherLog "Starting DevDeploy Launcher read-only preflight with kind config preview generation."
 }
@@ -2142,12 +2331,12 @@ else {
 }
 
 $dockerAvailable = Test-CommandAvailable -Name "docker" -Label "Docker CLI" -Required $true
-$kindAvailable = Test-CommandAvailable -Name "kind" -Label "kind CLI" -Required $true
-$kubectlAvailable = Test-CommandAvailable -Name "kubectl" -Label "kubectl CLI" -Required $true
+$kindAvailable = Test-CommandAvailable -Name "kind" -Label "kind CLI" -Required ([bool](-not $BuildManagementBackendImage))
+$kubectlAvailable = Test-CommandAvailable -Name "kubectl" -Label "kubectl CLI" -Required ([bool](-not $BuildManagementBackendImage))
 [void](Test-CommandAvailable -Name "git" -Label "git CLI" -Required $false)
 $helmAvailable = Test-CommandAvailable -Name "helm" -Label "Helm CLI" -Required ([bool]($BootstrapManagementIngress -or $BootstrapManagementPostgres))
 
-Test-DockerDaemon -DockerCliAvailable $dockerAvailable
+$dockerDaemonReachable = Test-DockerDaemon -DockerCliAvailable $dockerAvailable
 
 $existingKindClusters = @()
 $managementClusterExistsBeforePortCheck = $false
@@ -2171,13 +2360,16 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
     if (($BootstrapManagementIngress -or $BootstrapManagementPostgres) -and $isWorkloadPort) {
         $portRequired = $false
     }
+    if ($BuildManagementBackendImage) {
+        $portRequired = $false
+    }
     $allowBusyAsOk = [bool]$existingClusterDetected
 
     Test-LocalPortAvailable -Port ([int]$entry.Value) -Required $portRequired -AllowBusyAsOk $allowBusyAsOk -ExpectedCluster $expectedCluster -ExistingClusterDetected $existingClusterDetected
 }
 
 if ($workloadClusterExistsBeforePortCheck) {
-    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres) { "ok" } else { "warning" }
+    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BuildManagementBackendImage) { "ok" } else { "warning" }
     $detectedMessage = if ($CreateWorkloadCluster) {
         "devdeploy-workload already exists. This launcher mode will verify it instead of recreating it."
     }
@@ -2186,6 +2378,9 @@ if ($workloadClusterExistsBeforePortCheck) {
     }
     elseif ($BootstrapManagementPostgres) {
         "devdeploy-workload already exists. This launcher mode does not use, modify, or delete it."
+    }
+    elseif ($BuildManagementBackendImage) {
+        "devdeploy-workload already exists. Backend image build mode does not use, modify, or delete it."
     }
     else {
         "devdeploy-workload already exists. This launcher mode will not create, modify, or delete it."
@@ -2198,7 +2393,7 @@ if ($workloadClusterExistsBeforePortCheck) {
     }
 }
 
-Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres)
+Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres) -ManagementBackendImageBuildMode ([bool]$BuildManagementBackendImage)
 Test-KubectlContext -KubectlAvailable $kubectlAvailable
 
 $launcherMode = "preflight"
@@ -2214,12 +2409,16 @@ elseif ($BootstrapManagementIngress) {
 elseif ($BootstrapManagementPostgres) {
     $launcherMode = "management_postgres_bootstrap"
 }
+elseif ($BuildManagementBackendImage) {
+    $launcherMode = "management_backend_image_build"
+}
 elseif ($GenerateKindConfigs) {
     $launcherMode = "kind_config_preview"
 }
 
 $managementCluster = $null
 $workloadCluster = $null
+$backendImageStatus = New-ManagementBackendImageStatus
 
 if ($CreateManagementCluster) {
     Write-KindConfigPreview -Id "management_kind_config" -Label "Management kind config" -ClusterName "devdeploy-mgmt" -Path $MgmtKindConfigPath -ApiServerPort 58080 -HttpHostPort 8080 -HttpsHostPort 8443
@@ -2287,6 +2486,9 @@ elseif ($BootstrapManagementPostgres) {
         Invoke-ManagementPostgresBootstrap -ManagementCluster $managementCluster -HelmAvailable $helmAvailable -KubectlAvailable $kubectlAvailable
     }
 }
+elseif ($BuildManagementBackendImage) {
+    $backendImageStatus = Invoke-ManagementBackendImageBuild -DockerCliAvailable $dockerAvailable -DockerDaemonReachable $dockerDaemonReachable
+}
 elseif ($GenerateKindConfigs) {
     Write-KindConfigPreview -Id "kind_config_mgmt_preview" -Label "Management kind config preview" -ClusterName "devdeploy-mgmt" -Path $MgmtKindConfigPath -ApiServerPort 58080 -HttpHostPort 8080 -HttpsHostPort 8443
     Write-KindConfigPreview -Id "kind_config_workload_preview" -Label "Workload kind config preview" -ClusterName "devdeploy-workload" -Path $WorkloadKindConfigPath -ApiServerPort 58081 -HttpHostPort 8081 -HttpsHostPort 8444
@@ -2298,7 +2500,8 @@ if ($null -eq $managementCluster) {
 if ($null -eq $workloadCluster) {
     $workloadCluster = New-WorkloadClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
 }
-$platformBootstrap = New-PlatformBootstrapStatus -ManagementCluster $managementCluster -HelmAvailable $helmAvailable -KubectlAvailable $kubectlAvailable
+$platformHelmAvailable = [bool]($helmAvailable -and -not $BuildManagementBackendImage)
+$platformBootstrap = New-PlatformBootstrapStatus -ManagementCluster $managementCluster -HelmAvailable $platformHelmAvailable -KubectlAvailable $kubectlAvailable -BackendImageStatus $backendImageStatus
 $stableChecks = @($Checks | ForEach-Object { $_ })
 $overallStatus = [string](Get-OverallStatus -StableChecks $stableChecks)
 $summary = New-LauncherSummary -StableChecks $stableChecks
@@ -2341,6 +2544,9 @@ if (-not $Quiet) {
     }
     elseif ($BootstrapManagementPostgres) {
         Write-Host ("Management PostgreSQL release: {0}/{1}" -f $PostgresNamespace, $PostgresRelease)
+    }
+    elseif ($BuildManagementBackendImage) {
+        Write-Host ("Management backend image: {0}" -f $BackendImage)
     }
     elseif ($GenerateKindConfigs) {
         Write-Host ("Management kind config: {0}" -f $MgmtKindConfigPath)
