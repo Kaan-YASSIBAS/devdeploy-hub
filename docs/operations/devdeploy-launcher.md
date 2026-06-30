@@ -2,7 +2,7 @@
 
 This document explains the DevDeploy Launcher skeleton for Windows PowerShell.
 
-The launcher writes sanitized structured status for future backend and Setup Wizard integration. Default preflight mode and kind config preview mode are read-only. Management cluster creation happens only when `-CreateManagementCluster` is explicitly passed. Workload cluster creation happens only when `-CreateWorkloadCluster` is explicitly passed. Management ingress bootstrap happens only when `-BootstrapManagementIngress` is explicitly passed. Management PostgreSQL bootstrap happens only when `-BootstrapManagementPostgres` is explicitly passed. Local frontend image build happens only when `-BuildManagementFrontendImage` is explicitly passed.
+The launcher writes sanitized structured status for future backend and Setup Wizard integration. Default preflight mode and kind config preview mode are read-only. Management cluster creation happens only when `-CreateManagementCluster` is explicitly passed. Workload cluster creation happens only when `-CreateWorkloadCluster` is explicitly passed. Management ingress bootstrap happens only when `-BootstrapManagementIngress` is explicitly passed. Management PostgreSQL bootstrap happens only when `-BootstrapManagementPostgres` is explicitly passed. Local frontend image build and management-cluster image load happen only when `-BuildManagementFrontendImage` or `-LoadManagementFrontendImage` is explicitly passed.
 
 ## Run The Preflight
 
@@ -232,6 +232,24 @@ Manual verification:
 docker image inspect devdeploy-frontend:local --format '{{.Id}} {{.Created}}'
 ```
 
+## Load The Management Frontend Image
+
+To explicitly load the existing local frontend image into `devdeploy-mgmt`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -LoadManagementFrontendImage
+```
+
+This guarded mode verifies Docker, kind, the local image, management API reachability, and Ready-node status before running:
+
+```text
+kind load docker-image devdeploy-frontend:local --name devdeploy-mgmt
+```
+
+It updates `platform_bootstrap.components.frontend_image` with load attempt and result fields. If the local image is missing, run `-BuildManagementFrontendImage` first.
+
+This mode does not build the image, deploy frontend manifests, run `kubectl apply` or `kubectl delete`, create or update Secrets, install Helm charts or Argo CD, create clusters, or mutate `devdeploy-workload`.
+
 ## What It Checks
 
 The launcher checks:
@@ -317,6 +335,7 @@ devdeploy-launcher-status
 - `management_ingress_bootstrap`
 - `management_postgres_bootstrap`
 - `management_frontend_image_build`
+- `management_frontend_image_load`
 
 `status` is one of:
 
