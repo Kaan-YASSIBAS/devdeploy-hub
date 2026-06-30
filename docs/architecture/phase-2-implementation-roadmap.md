@@ -19,6 +19,7 @@ The Phase 2 architecture baseline is defined in:
 - [Backend Image Build and Load Strategy](./backend-image-build-load-strategy.md)
 - [Backend Runtime Secret Strategy](./backend-secret-runtime-strategy.md)
 - [Backend Bootstrap Launcher Design](./backend-bootstrap-launcher-design.md)
+- [Frontend Bootstrap Preparation](./frontend-bootstrap-preparation.md)
 
 The target architecture uses:
 
@@ -100,14 +101,15 @@ Recommended sequence:
 2. Add deterministic kind config generation preview for `devdeploy-mgmt` and `devdeploy-workload`.
 3. Add or adjust host preflight to match the Launcher responsibility model.
 4. Implement management cluster creation and verification in the Launcher.
-5. Deploy or verify DevDeploy platform components in `devdeploy-mgmt`.
-6. Implement workload cluster creation and verification in the Launcher.
-7. Register `devdeploy-workload` in Argo CD running in `devdeploy-mgmt`.
-8. Create or verify parent Argo CD Application `devdeploy-workloads` targeting `devdeploy-workload`.
-9. Update Setup Wizard to show runtime, Launcher, management cluster, workload cluster, GitOps, Argo CD, and demo statuses.
-10. Run demo app deployment through the normal GitOps path.
-11. Add read-only workload observability and status mapping.
-12. Perform security, credential, and logging hardening pass.
+5. Deploy and verify ingress-nginx, PostgreSQL, and the backend in `devdeploy-mgmt`.
+6. Prepare, deploy, and verify the frontend in `devdeploy-mgmt`.
+7. Implement workload cluster creation and verification in the Launcher.
+8. Register `devdeploy-workload` in Argo CD running in `devdeploy-mgmt`.
+9. Create or verify parent Argo CD Application `devdeploy-workloads` targeting `devdeploy-workload`.
+10. Update Setup Wizard to show runtime, Launcher, management cluster, workload cluster, GitOps, Argo CD, and demo statuses.
+11. Run demo app deployment through the normal GitOps path.
+12. Add read-only workload observability and status mapping.
+13. Perform security, credential, and logging hardening pass.
 
 ## 7. Phase 2B - Bootstrapper Contract and Host Preflight
 
@@ -158,34 +160,51 @@ Expected defaults:
 
 Goal:
 
-- Bootstrap or verify DevDeploy platform components in `devdeploy-mgmt` through an explicit future Launcher mode.
+- Bootstrap and verify the initial management ingress, PostgreSQL, and backend components in `devdeploy-mgmt`.
 
-Phase 2D starts with narrow management ingress and PostgreSQL bootstrap steps. Phases 2D.4-2D.8 define backend preparation, manifests, local image handling, and runtime Secrets. Phase 2D.9 consolidates those contracts into an explicit Launcher mode design without implementing or deploying it.
+The Phase 2D backend baseline is complete. The Launcher can build and load `devdeploy-backend:local`, ensure and verify the runtime Secret, and bootstrap and verify backend resources through explicit modes.
 
-Recommended tasks:
+Completed baseline:
 
-- Verify `devdeploy-mgmt` is Ready.
-- Install or verify management ingress-nginx.
-- Create or verify the `devdeploy` namespace.
-- Install or verify PostgreSQL.
-- Prepare the backend runtime, configuration, secret, image, Service, and ingress contract.
-- Define the backend Kustomize layout and manifest ownership strategy.
-- Maintain the initial backend platform manifests under `platform/management/backend`.
-- Define the local backend image build and kind load strategy.
-- Define backend runtime Secret creation, verification, preservation, and sanitization rules.
-- Define backend Launcher modes, ordering, idempotency, verification, and safety boundaries.
-- Deploy or verify DevDeploy platform resources.
-- Install or verify Argo CD.
-- Write platform bootstrap status into the launcher status contract.
-- Keep bootstrap operations idempotent where possible.
+- `devdeploy-mgmt` is Ready.
+- Management ingress-nginx is installed and Ready.
+- Namespace `devdeploy` and PostgreSQL are installed and Ready.
+- Backend manifests live under `platform/management/backend`.
+- Backend image build/load and runtime Secret modes are implemented.
+- Backend Deployment, Service, and Ingress are deployed and verified.
+- Backend health verification succeeds.
+- Launcher status reports backend image, Secret, and runtime state without exposing credentials.
 
 Expected output:
 
-- DevDeploy Hub runs inside `devdeploy-mgmt`.
-- DevDeploy UI is reachable through `http://devdeploy.localhost:8080`.
-- Backend, frontend, PostgreSQL, and Argo CD are healthy.
+- Management ingress, PostgreSQL, and backend are healthy in `devdeploy-mgmt`.
+- `platform_bootstrap.status` remains `partial` until frontend and Argo CD bootstrap are complete.
+- `devdeploy-workload` remains isolated from management platform bootstrap.
 
-## 10. Phase 2E - Workload Cluster Creation
+## 10. Phase 2E - Management Frontend Bootstrap
+
+Goal:
+
+- Prepare, deploy, and verify the DevDeploy frontend in `devdeploy-mgmt`.
+
+Recommended tasks:
+
+- Document the frontend build, API routing, Nginx runtime, and security contract.
+- Add deterministic frontend manifests under `platform/management/frontend`.
+- Build `devdeploy-frontend:local` with `VITE_API_BASE_URL=/api/v1`.
+- Load the local image only into `devdeploy-mgmt`.
+- Add explicit frontend build, load, bootstrap, and read-only verify Launcher modes.
+- Route frontend `/` and backend `/api` through management ingress.
+- Verify the UI page through `http://devdeploy.localhost:8080/`.
+
+Expected output:
+
+- DevDeploy frontend is Running and Ready in `devdeploy-mgmt`.
+- Browser API calls use the same-origin `/api/v1` route.
+- The UI is reachable without routine port-forwarding.
+- Platform status remains `partial` until Argo CD is installed.
+
+## 11. Phase 2F - Workload Cluster Creation
 
 Goal:
 
@@ -206,7 +225,7 @@ Expected output:
 - Workload ingress is ready.
 - User app URLs can use `http://<app-name>.localhost:8081`.
 
-## 11. Phase 2F - Argo CD Workload Registration
+## 12. Phase 2G - Argo CD Workload Registration
 
 Goal:
 
@@ -226,7 +245,7 @@ Expected output:
 - Argo CD in `devdeploy-mgmt` can sync generated workloads to `devdeploy-workload`.
 - The parent Application exists and has the correct destination.
 
-## 12. Phase 2G - Setup Wizard Multi-Cluster UI Integration
+## 13. Phase 2H - Setup Wizard Multi-Cluster UI Integration
 
 Goal:
 
@@ -249,7 +268,7 @@ Expected output:
 - Setup Wizard guides users through the multi-cluster lifecycle without pretending to run host commands from the browser.
 - Setup completion reflects actual platform readiness.
 
-## 13. Phase 2H - GitOps Smoke Demo App
+## 14. Phase 2I - GitOps Smoke Demo App
 
 Goal:
 
@@ -275,7 +294,7 @@ Expected output:
 
 - The demo app is observable with the same status model as normal apps.
 
-## 14. Phase 2I - Observability and Status Integration
+## 15. Phase 2J - Observability and Status Integration
 
 Goal:
 
@@ -296,7 +315,7 @@ Expected output:
 - Dashboard and Deployments views can show whether a user app is pending, syncing, healthy, degraded, unavailable, unknown, or deleting.
 - Management health and workload health are not mixed.
 
-## 15. Phase 2J - Security Hardening Pass
+## 16. Phase 2K - Security Hardening Pass
 
 Goal:
 
@@ -319,7 +338,7 @@ Expected output:
 
 - Phase 2 runtime behavior matches the security and credential model.
 
-## 16. Commit and PR Strategy
+## 17. Commit and PR Strategy
 
 Recommended commit strategy:
 
@@ -338,7 +357,7 @@ Recommended PR strategy:
 - Keep Argo CD registration separate from Setup Wizard UI integration.
 - Keep security hardening as its own reviewable pass.
 
-## 17. Validation Checklist
+## 18. Validation Checklist
 
 Baseline validation:
 
@@ -368,7 +387,7 @@ Phase 2-specific validation:
 - No normal workload deployment occurs directly from GitHub Actions.
 - No secrets appear in Git, logs, API responses, or browser localStorage.
 
-## 18. Rollback and Recovery Strategy
+## 19. Rollback and Recovery Strategy
 
 Phase 2 should support safe recovery from partial setup.
 
@@ -391,7 +410,7 @@ If a runtime milestone fails:
 - Show actionable next steps.
 - Avoid leaving the UI in a fake completed state.
 
-## 19. Definition of Done for Phase 2
+## 20. Definition of Done for Phase 2
 
 Phase 2 is complete when:
 
@@ -420,7 +439,7 @@ Phase 2 is complete when:
 - Credentials and secrets follow the security boundaries.
 - Validation checklist passes.
 
-## 20. Future Phase Handoff
+## 21. Future Phase Handoff
 
 After Phase 2, future phases may add:
 
