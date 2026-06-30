@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: devdeploy-frontend
+  namespace: devdeploy
+  labels:
+    app.kubernetes.io/name: devdeploy-frontend
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/part-of: devdeploy
+    app.kubernetes.io/managed-by: devdeploy-launcher
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: devdeploy-frontend
+                port:
+                  number: 80

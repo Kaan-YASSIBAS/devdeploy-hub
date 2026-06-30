@@ -4,7 +4,9 @@
 
 Phase 2E.2 defines the Kubernetes manifest layout, routing model, runtime boundaries, and future Launcher contract for the DevDeploy frontend in the management cluster.
 
-This phase is documentation-only. It does not create manifests, modify frontend or Launcher code, build an image, or mutate Kubernetes resources.
+Phase 2E.2 was documentation-only and did not create manifests, modify frontend or Launcher code, build an image, or mutate Kubernetes resources.
+
+Phase 2E.3 implements the manifest portion of this strategy under `platform/management/frontend`. The manifests render locally but have not been applied to a cluster. Image build/load and Launcher bootstrap/verify modes remain future work.
 
 ## 2. Target Placement
 
@@ -24,7 +26,7 @@ Frontend bootstrap must never create or modify resources in `devdeploy-workload`
 
 ## 3. Manifest Directory Layout
 
-Future frontend platform manifests should live under:
+Frontend platform manifests now live under:
 
 ```text
 platform/management/frontend/
@@ -34,11 +36,11 @@ platform/management/frontend/
   ingress.yaml
 ```
 
-`configmap.yaml` should be added only if a concrete Nginx runtime configuration need appears. It is not required for the initial V1 design.
+`configmap.yaml` should be added only if a concrete Nginx runtime configuration need appears. It is not included in the initial V1 manifests.
 
 No Kubernetes Secret is expected for frontend V1. There should be no `secret.yaml`, `secret.example.yaml`, or Secret reference in the frontend Deployment.
 
-The future `kustomization.yaml` should list only the resources that exist and should apply namespace `devdeploy` deterministically.
+The `kustomization.yaml` lists only Deployment, Service, and Ingress resources and applies namespace `devdeploy` deterministically.
 
 ## 4. Image Contract
 
@@ -267,7 +269,7 @@ The verify mode remains read-only. It checks Deployment replicas and image, Runn
 
 ## 13. Definition of Done for Future Implementation
 
-Frontend manifest and Launcher implementation is complete when:
+The manifest portion is complete. Full frontend manifest and Launcher implementation is complete when:
 
 - `platform/management/frontend` contains deterministic Deployment, Service, Ingress, and Kustomization resources.
 - `kubectl kustomize platform/management/frontend` succeeds.

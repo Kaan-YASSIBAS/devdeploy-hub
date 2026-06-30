@@ -192,10 +192,10 @@ Completed design baseline:
 
 - Phase 2E.1 documents the frontend build, Nginx runtime, API routing, image, and security requirements.
 - Phase 2E.2 defines the future manifest layout, hostless ingress model, Service port decision, status contract, and Launcher mode boundaries.
+- Phase 2E.3 adds renderable Deployment, Service, Ingress, and Kustomization resources under `platform/management/frontend`; they are not deployed yet.
 
 Future implementation tasks:
 
-- Add deterministic frontend manifests under `platform/management/frontend`.
 - Build `devdeploy-frontend:local` with `VITE_API_BASE_URL=/api/v1`.
 - Load the local image only into `devdeploy-mgmt`.
 - Add explicit frontend build, load, bootstrap, and read-only verify Launcher modes.

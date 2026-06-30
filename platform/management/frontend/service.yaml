@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: devdeploy-frontend
+  namespace: devdeploy
+  labels:
+    app.kubernetes.io/name: devdeploy-frontend
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/part-of: devdeploy
+    app.kubernetes.io/managed-by: devdeploy-launcher
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: devdeploy-frontend
+    app.kubernetes.io/component: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+      appProtocol: http
