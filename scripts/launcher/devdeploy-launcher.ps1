@@ -26,6 +26,8 @@ param(
 
     [switch]$EnsureManagementBackendSecret,
 
+    [switch]$VerifyManagementBackendSecret,
+
     [switch]$Quiet
 )
 
@@ -420,6 +422,17 @@ function New-NextActions {
         }
         else {
             $actions.Add("Review the sanitized launcher log and rerun -EnsureManagementBackendSecret after resolving the Secret verification issue.") | Out-Null
+        }
+    }
+    elseif ($LauncherMode -eq "management_backend_secret_verify") {
+        if ($backendSecretStatus -eq "ready") {
+            $actions.Add("The management backend runtime Secret passed read-only verification.") | Out-Null
+        }
+        elseif ($managementClusterStatus -ne "ready") {
+            $actions.Add("Create or repair devdeploy-mgmt, then rerun -VerifyManagementBackendSecret.") | Out-Null
+        }
+        else {
+            $actions.Add("Review the sanitized status and run -EnsureManagementBackendSecret only when you intend to reconcile the Secret.") | Out-Null
         }
     }
 
@@ -924,6 +937,7 @@ function New-ManagementBackendSecretStatus {
         database_url_configured          = $false
         jwt_secret_configured            = $false
         github_workflow_token_configured = $false
+        mode                             = "not_checked"
         status                           = "not_checked"
         message                          = "Backend runtime Secret has not been checked."
         checked_at                       = [string](Get-Timestamp)
@@ -1012,6 +1026,7 @@ function Invoke-EnsureManagementBackendSecret {
     )
 
     $status = New-ManagementBackendSecretStatus
+    $status["mode"] = "ensure"
 
     if (-not $KubectlAvailable) {
         $status["status"] = "error"
@@ -1265,6 +1280,145 @@ function Invoke-EnsureManagementBackendSecret {
     return $status
 }
 
+function Invoke-VerifyManagementBackendSecret {
+    param(
+        [bool]$KubectlAvailable,
+
+        [Parameter(Mandatory = $true)]
+        [object]$ManagementCluster
+    )
+
+    $status = New-ManagementBackendSecretStatus
+    $status["mode"] = "verify"
+
+    if (-not $KubectlAvailable) {
+        $status["status"] = "error"
+        $status["message"] = "kubectl CLI is required to verify the management backend Secret."
+        $status["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "backend_secret_verify" -Label "Management backend Secret verification" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required    = $true
+            namespace   = $PostgresNamespace
+            secret_name = $BackendSecretName
+            read_only   = $true
+        }
+        return $status
+    }
+
+    if ([string]$ManagementCluster["status"] -ne "ready") {
+        $status["status"] = "error"
+        $status["message"] = "devdeploy-mgmt must exist, be API-reachable, and have a Ready node before verifying the backend Secret."
+        $status["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "backend_secret_verify" -Label "Management backend Secret verification" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required          = $true
+            namespace         = $PostgresNamespace
+            secret_name       = $BackendSecretName
+            management_status = [string]$ManagementCluster["status"]
+            read_only         = $true
+        }
+        return $status
+    }
+
+    $namespaceResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "get", "namespace", $PostgresNamespace, "--output", "name") -TimeoutSeconds 20
+    if ($namespaceResult.exit_code -ne 0 -or $namespaceResult.timed_out) {
+        $status["status"] = "error"
+        $status["message"] = "Namespace devdeploy was not found in devdeploy-mgmt."
+        $status["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "backend_secret_namespace" -Label "Backend Secret namespace" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required  = $true
+            namespace = $PostgresNamespace
+            read_only = $true
+        }
+        return $status
+    }
+
+    Add-Check -Id "backend_secret_namespace" -Label "Backend Secret namespace" -Status "ok" -Message "Namespace devdeploy exists in devdeploy-mgmt." -Details @{
+        required  = $true
+        namespace = $PostgresNamespace
+        read_only = $true
+    }
+
+    $secretResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace, "get", "secret", $BackendSecretName, "--output", "name") -TimeoutSeconds 20
+    if ($secretResult.exit_code -ne 0 -or $secretResult.timed_out) {
+        $status["status"] = "error"
+        $status["message"] = "devdeploy-backend-secret does not exist. Run -EnsureManagementBackendSecret first."
+        $status["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "backend_secret_verify" -Label "Management backend Secret verification" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required    = $true
+            namespace   = $PostgresNamespace
+            secret_name = $BackendSecretName
+            read_only   = $true
+        }
+        return $status
+    }
+
+    $status["exists"] = $true
+    $keysResult = Get-SecretKeyNames -SecretName $BackendSecretName
+    $requiredKeys = @("DATABASE_URL", "JWT_SECRET_KEY", "GITHUB_WORKFLOW_TOKEN")
+    $requiredKeysPresent = [bool]($keysResult.success -and @($requiredKeys | Where-Object { @($keysResult.keys) -notcontains $_ }).Count -eq 0)
+
+    $databaseResult = [ordered]@{ success = $false; value = "" }
+    $jwtResult = [ordered]@{ success = $false; value = "" }
+    $tokenResult = [ordered]@{ success = $false; value = "" }
+
+    if ($keysResult.success -and @($keysResult.keys) -contains "DATABASE_URL") {
+        $databaseResult = Get-DecodedSecretValue -SecretName $BackendSecretName -Key "DATABASE_URL"
+    }
+    if ($keysResult.success -and @($keysResult.keys) -contains "JWT_SECRET_KEY") {
+        $jwtResult = Get-DecodedSecretValue -SecretName $BackendSecretName -Key "JWT_SECRET_KEY"
+    }
+    if ($keysResult.success -and @($keysResult.keys) -contains "GITHUB_WORKFLOW_TOKEN") {
+        $tokenResult = Get-DecodedSecretValue -SecretName $BackendSecretName -Key "GITHUB_WORKFLOW_TOKEN"
+    }
+
+    $expectedDatabasePrefix = "postgresql://{0}:" -f $PostgresUsername
+    $expectedDatabaseSuffix = "@{0}:5432/{1}" -f $PostgresServiceHost, $PostgresDatabase
+    $databaseConfigured = [bool]($databaseResult.success -and ([string]$databaseResult.value).StartsWith($expectedDatabasePrefix) -and ([string]$databaseResult.value).EndsWith($expectedDatabaseSuffix))
+    $jwtConfigured = [bool]($jwtResult.success -and ([string]$jwtResult.value).Length -ge 32)
+    $githubTokenConfigured = [bool]($tokenResult.success -and -not [string]::IsNullOrWhiteSpace([string]$tokenResult.value))
+    $ready = [bool]($requiredKeysPresent -and $databaseConfigured -and $jwtConfigured -and $tokenResult.success)
+
+    $status["required_keys_present"] = $requiredKeysPresent
+    $status["database_url_configured"] = $databaseConfigured
+    $status["jwt_secret_configured"] = $jwtConfigured
+    $status["github_workflow_token_configured"] = $githubTokenConfigured
+    $status["ready"] = $ready
+    $status["checked_at"] = [string](Get-Timestamp)
+
+    if ($ready) {
+        $status["status"] = "ready"
+        $status["message"] = "Backend runtime Secret exists and required configuration is valid. GitHub workflow token may remain empty for V1."
+        Add-Check -Id "backend_secret_verify" -Label "Management backend Secret verification" -Status "ok" -Message ([string]$status["message"]) -Details @{
+            required                         = $true
+            namespace                        = $PostgresNamespace
+            secret_name                      = $BackendSecretName
+            required_keys_present            = $requiredKeysPresent
+            database_url_configured          = $databaseConfigured
+            jwt_secret_configured            = $jwtConfigured
+            github_workflow_token_configured = $githubTokenConfigured
+            read_only                        = $true
+        }
+    }
+    else {
+        $status["status"] = "error"
+        $status["message"] = "Backend runtime Secret verification failed. Run -EnsureManagementBackendSecret to reconcile it after reviewing the sanitized status."
+        Add-Check -Id "backend_secret_verify" -Label "Management backend Secret verification" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required                         = $true
+            namespace                        = $PostgresNamespace
+            secret_name                      = $BackendSecretName
+            required_keys_present            = $requiredKeysPresent
+            database_url_configured          = $databaseConfigured
+            jwt_secret_configured            = $jwtConfigured
+            github_workflow_token_configured = $githubTokenConfigured
+            read_only                        = $true
+        }
+    }
+
+    $databaseResult = $null
+    $jwtResult = $null
+    $tokenResult = $null
+    return $status
+}
+
 function Test-LocalPortAvailable {
     param(
         [Parameter(Mandatory = $true)]
@@ -1339,7 +1493,9 @@ function Test-KindClusters {
 
         [bool]$ManagementBackendImageLoadMode = $false,
 
-        [bool]$ManagementBackendSecretEnsureMode = $false
+        [bool]$ManagementBackendSecretEnsureMode = $false,
+
+        [bool]$ManagementBackendSecretVerifyMode = $false
     )
 
     if (-not $KindAvailable) {
@@ -1408,6 +1564,10 @@ function Test-KindClusters {
     elseif ($ManagementBackendSecretEnsureMode -and $mgmtExists) {
         $status = "ok"
         $message = "devdeploy-mgmt exists. Backend Secret ensure mode targets only this management cluster."
+    }
+    elseif ($ManagementBackendSecretVerifyMode -and $mgmtExists) {
+        $status = "ok"
+        $message = "devdeploy-mgmt exists. Backend Secret verify mode performs read-only checks only in this management cluster."
     }
 
     Add-Check -Id "kind_clusters" -Label "Existing kind clusters" -Status $status -Message $message -Details @{
@@ -2944,6 +3104,9 @@ elseif ($LoadManagementBackendImage) {
 elseif ($EnsureManagementBackendSecret) {
     Write-LauncherLog "Starting DevDeploy Launcher explicit management backend Secret ensure mode."
 }
+elseif ($VerifyManagementBackendSecret) {
+    Write-LauncherLog "Starting DevDeploy Launcher read-only management backend Secret verify mode."
+}
 elseif ($GenerateKindConfigs) {
     Write-LauncherLog "Starting DevDeploy Launcher read-only preflight with kind config preview generation."
 }
@@ -2951,15 +3114,15 @@ else {
     Write-LauncherLog "Starting DevDeploy Launcher read-only preflight."
 }
 
-$dockerAvailable = Test-CommandAvailable -Name "docker" -Label "Docker CLI" -Required ([bool](-not $EnsureManagementBackendSecret))
+$dockerAvailable = Test-CommandAvailable -Name "docker" -Label "Docker CLI" -Required ([bool](-not ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret)))
 $kindAvailable = Test-CommandAvailable -Name "kind" -Label "kind CLI" -Required ([bool](-not $BuildManagementBackendImage))
 $kubectlAvailable = Test-CommandAvailable -Name "kubectl" -Label "kubectl CLI" -Required ([bool](-not $BuildManagementBackendImage))
 [void](Test-CommandAvailable -Name "git" -Label "git CLI" -Required $false)
 $helmAvailable = Test-CommandAvailable -Name "helm" -Label "Helm CLI" -Required ([bool]($BootstrapManagementIngress -or $BootstrapManagementPostgres))
 
-if ($EnsureManagementBackendSecret) {
+if ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret) {
     $dockerDaemonReachable = $false
-    Add-Check -Id "docker_daemon" -Label "Docker daemon" -Status "skipped" -Message "Docker daemon check is not required for backend Secret ensure mode." -Details @{
+    Add-Check -Id "docker_daemon" -Label "Docker daemon" -Status "skipped" -Message "Docker daemon check is not required for backend Secret ensure or verify mode." -Details @{
         required = $false
     }
 }
@@ -2989,7 +3152,7 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
     if (($BootstrapManagementIngress -or $BootstrapManagementPostgres) -and $isWorkloadPort) {
         $portRequired = $false
     }
-    if ($BuildManagementBackendImage -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret) {
+    if ($BuildManagementBackendImage -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret) {
         $portRequired = $false
     }
     $allowBusyAsOk = [bool]$existingClusterDetected
@@ -2998,7 +3161,7 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
 }
 
 if ($workloadClusterExistsBeforePortCheck) {
-    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BuildManagementBackendImage -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret) { "ok" } else { "warning" }
+    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BuildManagementBackendImage -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret) { "ok" } else { "warning" }
     $detectedMessage = if ($CreateWorkloadCluster) {
         "devdeploy-workload already exists. This launcher mode will verify it instead of recreating it."
     }
@@ -3017,6 +3180,9 @@ if ($workloadClusterExistsBeforePortCheck) {
     elseif ($EnsureManagementBackendSecret) {
         "devdeploy-workload already exists. Backend Secret ensure mode targets only devdeploy-mgmt and does not modify devdeploy-workload."
     }
+    elseif ($VerifyManagementBackendSecret) {
+        "devdeploy-workload already exists. Backend Secret verify mode is read-only and targets only devdeploy-mgmt."
+    }
     else {
         "devdeploy-workload already exists. This launcher mode will not create, modify, or delete it."
     }
@@ -3028,7 +3194,7 @@ if ($workloadClusterExistsBeforePortCheck) {
     }
 }
 
-Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres) -ManagementBackendImageBuildMode ([bool]$BuildManagementBackendImage) -ManagementBackendImageLoadMode ([bool]$LoadManagementBackendImage) -ManagementBackendSecretEnsureMode ([bool]$EnsureManagementBackendSecret)
+Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres) -ManagementBackendImageBuildMode ([bool]$BuildManagementBackendImage) -ManagementBackendImageLoadMode ([bool]$LoadManagementBackendImage) -ManagementBackendSecretEnsureMode ([bool]$EnsureManagementBackendSecret) -ManagementBackendSecretVerifyMode ([bool]$VerifyManagementBackendSecret)
 Test-KubectlContext -KubectlAvailable $kubectlAvailable
 
 $launcherMode = "preflight"
@@ -3052,6 +3218,9 @@ elseif ($LoadManagementBackendImage) {
 }
 elseif ($EnsureManagementBackendSecret) {
     $launcherMode = "management_backend_secret_ensure"
+}
+elseif ($VerifyManagementBackendSecret) {
+    $launcherMode = "management_backend_secret_verify"
 }
 elseif ($GenerateKindConfigs) {
     $launcherMode = "kind_config_preview"
@@ -3139,6 +3308,10 @@ elseif ($EnsureManagementBackendSecret) {
     $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
     $backendSecretStatus = Invoke-EnsureManagementBackendSecret -KubectlAvailable $kubectlAvailable -ManagementCluster $managementCluster
 }
+elseif ($VerifyManagementBackendSecret) {
+    $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
+    $backendSecretStatus = Invoke-VerifyManagementBackendSecret -KubectlAvailable $kubectlAvailable -ManagementCluster $managementCluster
+}
 elseif ($GenerateKindConfigs) {
     Write-KindConfigPreview -Id "kind_config_mgmt_preview" -Label "Management kind config preview" -ClusterName "devdeploy-mgmt" -Path $MgmtKindConfigPath -ApiServerPort 58080 -HttpHostPort 8080 -HttpsHostPort 8443
     Write-KindConfigPreview -Id "kind_config_workload_preview" -Label "Workload kind config preview" -ClusterName "devdeploy-workload" -Path $WorkloadKindConfigPath -ApiServerPort 58081 -HttpHostPort 8081 -HttpsHostPort 8444
@@ -3150,7 +3323,7 @@ if ($null -eq $managementCluster) {
 if ($null -eq $workloadCluster) {
     $workloadCluster = New-WorkloadClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
 }
-$platformHelmAvailable = [bool]($helmAvailable -and -not $BuildManagementBackendImage -and -not $LoadManagementBackendImage -and -not $EnsureManagementBackendSecret)
+$platformHelmAvailable = [bool]($helmAvailable -and -not $BuildManagementBackendImage -and -not $LoadManagementBackendImage -and -not $EnsureManagementBackendSecret -and -not $VerifyManagementBackendSecret)
 $platformBootstrap = New-PlatformBootstrapStatus -ManagementCluster $managementCluster -HelmAvailable $platformHelmAvailable -KubectlAvailable $kubectlAvailable -BackendImageStatus $backendImageStatus -BackendSecretStatus $backendSecretStatus
 $stableChecks = @($Checks | ForEach-Object { $_ })
 $overallStatus = [string](Get-OverallStatus -StableChecks $stableChecks)
@@ -3203,6 +3376,9 @@ if (-not $Quiet) {
     }
     elseif ($EnsureManagementBackendSecret) {
         Write-Host ("Management backend Secret: {0}/{1}" -f $PostgresNamespace, $BackendSecretName)
+    }
+    elseif ($VerifyManagementBackendSecret) {
+        Write-Host ("Verified management backend Secret: {0}/{1}" -f $PostgresNamespace, $BackendSecretName)
     }
     elseif ($GenerateKindConfigs) {
         Write-Host ("Management kind config: {0}" -f $MgmtKindConfigPath)
