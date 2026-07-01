@@ -2,7 +2,7 @@
 
 This document explains the DevDeploy Launcher skeleton for Windows PowerShell.
 
-The launcher writes sanitized structured status for future backend and Setup Wizard integration. Default preflight mode and kind config preview mode are read-only. Management cluster creation happens only when `-CreateManagementCluster` is explicitly passed. Workload cluster creation happens only when `-CreateWorkloadCluster` is explicitly passed. Management ingress bootstrap happens only when `-BootstrapManagementIngress` is explicitly passed. Management PostgreSQL bootstrap happens only when `-BootstrapManagementPostgres` is explicitly passed. Local frontend image build and management-cluster image load happen only when `-BuildManagementFrontendImage` or `-LoadManagementFrontendImage` is explicitly passed.
+The launcher writes sanitized structured status for future backend and Setup Wizard integration. Default preflight mode and kind config preview mode are read-only. Management cluster creation happens only when `-CreateManagementCluster` is explicitly passed. Workload cluster creation happens only when `-CreateWorkloadCluster` is explicitly passed. Management ingress, PostgreSQL, and Argo CD bootstrap happen only through their explicit switches. Local frontend image build and management-cluster image load happen only when `-BuildManagementFrontendImage` or `-LoadManagementFrontendImage` is explicitly passed.
 
 ## Run The Preflight
 
@@ -268,6 +268,43 @@ It waits for `deployment/devdeploy-frontend`, verifies the Service and hostless 
 
 This explicit mode is the only frontend mode that may run `kubectl apply`, and it does so only against `platform/management/frontend` in `devdeploy-mgmt`. It does not build or load images, update Secrets, apply backend manifests, run `kubectl delete`, install Helm charts or Argo CD, create clusters, or mutate `devdeploy-workload`.
 
+## Bootstrap Management Argo CD
+
+To explicitly install or upgrade Argo CD only in `devdeploy-mgmt`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -BootstrapManagementArgoCD
+```
+
+This guarded mode:
+
+- Verifies Helm, kubectl, `devdeploy-mgmt`, Ready node capacity, and management ingress-nginx.
+- Adds or refreshes the official `https://argoproj.github.io/argo-helm` repository.
+- Installs or upgrades release `argocd` in namespace `argocd`.
+- Pins chart `argo/argo-cd` to version `10.1.0`.
+- Configures host-specific HTTP ingress at `http://argocd.localhost:8080/` using ingress class `nginx`.
+- Waits for the server, repo-server, application-controller, Redis, and optional ApplicationSet workloads.
+- Verifies the server Service, Ingress, local UI route, and initial admin Secret metadata.
+- Writes sanitized status under `platform_bootstrap.components.argocd`.
+
+The launcher does not read or print the Argo CD admin password. It checks only whether `argocd-initial-admin-secret` exists; Secret data is not written to console output, logs, or `launcher-status.json`.
+
+This phase does not register `devdeploy-workload`, create Argo CD cluster Secrets or Applications, configure a GitOps repository, or deploy user workloads. Those remain separate later phases.
+
+Manual verification:
+
+```powershell
+kubectl --context kind-devdeploy-mgmt -n argocd get pods,svc,ingress
+helm --kube-context kind-devdeploy-mgmt -n argocd list
+Invoke-WebRequest http://argocd.localhost:8080/ -UseBasicParsing
+```
+
+If Windows PowerShell cannot resolve the reserved `.localhost` subdomain, verify the same host-specific ingress route without changing cluster resources:
+
+```powershell
+Invoke-WebRequest http://localhost:8080/ -Headers @{ Host = "argocd.localhost" } -UseBasicParsing
+```
+
 ## Verify The Management Frontend
 
 To run strict read-only verification of the deployed frontend:
@@ -380,6 +417,7 @@ devdeploy-launcher-status
 - `management_frontend_image_load`
 - `management_frontend_bootstrap`
 - `management_frontend_verify`
+- `management_argocd_bootstrap`
 - `management_backend_database_initialize`
 
 `status` is one of:
@@ -441,9 +479,9 @@ Workload cluster status values are:
 - `degraded`: `devdeploy-workload` exists, but API or node readiness checks failed.
 - `unknown`: status could not be determined safely.
 
-This status contract does not mean platform components are installed. It does not install ingress-nginx, Argo CD, DevDeploy backend, DevDeploy frontend, PostgreSQL, Helm charts, or user workloads. Creating `devdeploy-workload` only prepares the empty workload cluster for future bootstrap phases.
+The default status contract does not install platform components. Mutating operations require explicit switches. Creating `devdeploy-workload` only prepares the empty workload cluster for future bootstrap phases.
 
-The `platform_bootstrap` object summarizes platform component bootstrap state. In this phase `ingress_nginx` and `postgres` can become Ready. Backend, frontend, and Argo CD remain `not_started`.
+The `platform_bootstrap` object summarizes platform component bootstrap state. Its `argocd` component reports the pinned chart, release, namespace, core resource readiness, ingress host, UI access, and initial admin Secret presence without exposing credentials.
 
 It also includes `devdeploy_namespace`, which reports whether the management `devdeploy` namespace exists.
 
