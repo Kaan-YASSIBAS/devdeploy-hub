@@ -53,29 +53,30 @@ No chart version is selected in this preparation phase. The implementation must 
 
 ## 3. Argo CD Access Model
 
-V1 uses a host-specific management ingress:
+V1 uses a hostless path-based management ingress:
 
 ```text
-http://argocd.localhost:8080/
+http://localhost:8080/argocd
 ```
 
 Existing management routes remain unchanged:
 
 ```text
-http://localhost:8080/      -> DevDeploy frontend
-http://localhost:8080/api   -> DevDeploy backend
+http://localhost:8080/         -> DevDeploy frontend
+http://localhost:8080/api      -> DevDeploy backend
+http://localhost:8080/argocd   -> Argo CD
 ```
 
-Argo CD must not use a hostless `/` ingress because the DevDeploy frontend already owns that route. V1 also avoids `/argocd` path-based routing because Argo CD path prefix, base href, redirects, and callback configuration add unnecessary local setup complexity.
+Argo CD must not claim hostless `/` because the DevDeploy frontend owns that route. The pinned chart and Argo CD server support a dedicated `/argocd` path when ingress path, base href, and root path are configured together. This avoids port-forwarding and manual operating-system hosts-file changes.
 
 Implementation requirements:
 
 - Use ingress-nginx in `devdeploy-mgmt`.
-- Set ingress host to `argocd.localhost`.
+- Leave the ingress host empty and set path `/argocd` with `Prefix` matching.
 - Use HTTP only for V1.
 - Do not require routine port-forwarding for normal UI access.
-- Configure the Argo CD server for an HTTP ingress backend, including insecure server mode when required by the selected chart values.
-- Verify both the Argo CD server Service and host-specific ingress route.
+- Configure the Argo CD server for an HTTP ingress backend with `/argocd` base href and root path.
+- Verify both the Argo CD server Service and hostless `/argocd` ingress route.
 
 Port-forwarding may remain a troubleshooting tool, but it is not the normal access model.
 
@@ -203,7 +204,9 @@ Proposed shape:
   "repo_server_deployment": "argocd-repo-server",
   "application_controller_statefulset": "argocd-application-controller",
   "ingress_enabled": true,
-  "ui_access": "http://argocd.localhost:8080/",
+  "ingress_host": "",
+  "ingress_path": "/argocd",
+  "ui_access": "http://localhost:8080/argocd",
   "status": "not_started",
   "message": "Argo CD bootstrap has not been requested.",
   "checked_at": "<ISO-8601 timestamp>"
@@ -265,7 +268,7 @@ Status must contain only sanitized metadata and booleans. It must not contain ad
 - Namespace `argocd` exists in `devdeploy-mgmt`.
 - A pinned Argo CD Helm release named `argocd` exists.
 - Required Argo CD server, repository server, and application controller workloads are Ready.
-- Argo CD UI is reachable at `http://argocd.localhost:8080/`.
+- Argo CD UI is reachable at `http://localhost:8080/argocd` without port-forwarding or hosts-file changes.
 - Initial admin credential availability is verifiable without exposing its value.
 - `platform_bootstrap.components.argocd` is sanitized and reports `ready`.
 - Overall platform status remains `partial` until workload registration and the GitOps Application model are ready.

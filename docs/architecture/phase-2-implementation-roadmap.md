@@ -220,11 +220,11 @@ Completed baseline:
 - `devdeploy-workload` exists and is Ready.
 - Phase 2F.1 documents the Argo CD installation, access, credential, registration, status, and safety decisions.
 - Phase 2F.2 defines the explicit management Argo CD bootstrap and read-only verification Launcher contracts.
-- Phase 2F.3 implements explicit, pinned Argo CD Helm bootstrap in `devdeploy-mgmt/argocd` with host-specific local ingress and sanitized Launcher status.
+- Phase 2F.3 implements explicit, pinned Argo CD Helm bootstrap in `devdeploy-mgmt/argocd` with hostless `/argocd` local ingress and sanitized Launcher status.
+- Phase 2F.4 implements strict read-only management Argo CD verification, including release metadata, component readiness, ingress access, credential Secret presence, and Application inventory.
 
 Future runtime tasks:
 
-- Phase 2F.4: implement `-VerifyManagementArgoCD`.
 - Add explicit workload registration and read-only verification Launcher modes.
 - Register `devdeploy-workload` with narrowly scoped credentials where practical.
 - Keep registration separate from root Application creation and workload deployment.

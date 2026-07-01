@@ -34,8 +34,9 @@ Both future modes target:
 | Namespace | `argocd` |
 | Helm release | `argocd` |
 | Helm chart | `argo/argo-cd` |
-| Ingress host | `argocd.localhost` |
-| UI URL | `http://argocd.localhost:8080/` |
+| Ingress host | Hostless |
+| Ingress path | `/argocd` |
+| UI URL | `http://localhost:8080/argocd` |
 
 Shared rules:
 
@@ -137,32 +138,36 @@ Required checks should include:
 
 ### 3.5 Ingress and Reachability
 
-The bootstrap mode should configure host-specific ingress:
+The bootstrap mode should configure hostless path-based ingress:
 
 ```text
-host:             argocd.localhost
+host:             empty
 ingressClassName: nginx
+path:             /argocd
+pathType:         Prefix
 TLS:              disabled for V1
-URL:              http://argocd.localhost:8080/
+URL:              http://localhost:8080/argocd
 ```
 
 The DevDeploy hostless routes remain unchanged:
 
 ```text
-http://localhost:8080/      -> DevDeploy frontend
-http://localhost:8080/api   -> DevDeploy backend
+http://localhost:8080/         -> DevDeploy frontend
+http://localhost:8080/api      -> DevDeploy backend
+http://localhost:8080/argocd   -> Argo CD
 ```
 
-Argo CD server-side TLS behavior must match ingress configuration. If the pinned chart requires it, the Launcher values should enable Argo CD server insecure mode so ingress-nginx can use an HTTP backend. Exact value keys must be verified against the pinned chart.
+Argo CD server-side TLS and path behavior must match ingress configuration. The pinned chart values must enable HTTP/insecure mode and configure `server.basehref` plus `server.rootpath` as `/argocd`, ensuring login redirects and static assets retain the prefix.
 
 After rollout, the Launcher should verify:
 
 - Ingress exists in namespace `argocd`.
-- Host is exactly `argocd.localhost`.
+- The rule is hostless.
 - Ingress class is `nginx`.
+- Path is exactly `/argocd` with `Prefix` matching.
 - TLS is absent for V1.
 - Backend Service is `argocd-server` on the expected port.
-- `http://argocd.localhost:8080/` returns the Argo CD UI or an expected Argo CD redirect.
+- `http://localhost:8080/argocd` returns the Argo CD UI or an expected Argo CD redirect.
 - A safe, unauthenticated API/version endpoint is checked only if the pinned Argo CD version exposes one reliably.
 
 Normal access must not depend on port-forwarding. Port-forward remains a troubleshooting tool only.
@@ -194,7 +199,7 @@ This mode is strictly read-only.
 - `kind get clusters`.
 - kubectl context, node, namespace, workload, Pod, Service, Ingress, and Secret metadata reads.
 - `helm list` or `helm status` when Helm is available and release verification requires it.
-- HTTP GET requests to the host-specific Argo CD URL.
+- HTTP GET requests to the hostless `/argocd` Argo CD URL.
 - Sanitized Launcher status and log writes under `.devdeploy/local`.
 
 The mode must not invoke any helper that performs Helm install/upgrade, namespace creation, kubectl apply/patch/delete, rollout restart, Secret mutation, image build/load, or cluster creation.
@@ -208,8 +213,8 @@ The mode must not invoke any helper that performs Helm install/upgrade, namespac
 5. Verify Helm release `argocd` exists and reports deployed.
 6. Verify expected Argo CD workloads and required Pods are Ready.
 7. Verify Service `argocd-server` exists and exposes the expected port.
-8. Verify Ingress host `argocd.localhost`, class `nginx`, and V1 HTTP configuration.
-9. Verify `http://argocd.localhost:8080/` returns an expected Argo CD page or redirect.
+8. Verify the Ingress is hostless, uses class `nginx`, and routes `/argocd` with `Prefix` matching.
+9. Verify `http://localhost:8080/argocd` returns an expected Argo CD page or redirect.
 10. Verify initial admin credential Secret and expected key metadata exist without reading the value.
 11. Write sanitized `platform_bootstrap.components.argocd` status.
 
@@ -223,11 +228,14 @@ V1 values must express these decisions:
 | --- | --- |
 | Namespace | `argocd` |
 | Release | `argocd` |
-| Host | `argocd.localhost` |
+| Host | Hostless |
+| Path | `/argocd` |
 | Ingress | Enabled |
 | Ingress class | `nginx` |
 | TLS | Disabled |
-| Server transport | HTTP/insecure mode when required |
+| Server transport | HTTP/insecure mode |
+| Server base href | `/argocd` |
+| Server root path | `/argocd` |
 | HA | Disabled |
 
 Exact value keys are deliberately not fixed in this design document. They must be verified against the pinned chart version during Phase 2F.3 because chart schemas can change.
@@ -267,8 +275,9 @@ Proposed shape:
   "repo_server_deployment": "argocd-repo-server",
   "application_controller_statefulset": "argocd-application-controller",
   "ingress_enabled": true,
-  "ingress_host": "argocd.localhost",
-  "ui_access": "http://argocd.localhost:8080/",
+  "ingress_host": "",
+  "ingress_path": "/argocd",
+  "ui_access": "http://localhost:8080/argocd",
   "admin_secret_present": false,
   "mode": "not_checked",
   "status": "not_started",
@@ -366,7 +375,7 @@ Read-only inspection:
 ```powershell
 kubectl --context kind-devdeploy-mgmt -n argocd get pods,svc,ingress
 helm --kube-context kind-devdeploy-mgmt -n argocd list
-Invoke-WebRequest http://argocd.localhost:8080/ -UseBasicParsing
+Invoke-WebRequest http://localhost:8080/argocd -UseBasicParsing
 ```
 
 Status inspection:

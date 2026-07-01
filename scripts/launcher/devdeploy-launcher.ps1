@@ -42,6 +42,8 @@ param(
 
     [switch]$BootstrapManagementArgoCD,
 
+    [switch]$VerifyManagementArgoCD,
+
     [switch]$InitializeManagementBackendDatabase,
 
     [switch]$Quiet
@@ -95,8 +97,9 @@ $ArgoCDChartVersion = "10.1.0"
 $ArgoCDNamespace = "argocd"
 $ArgoCDRelease = "argocd"
 $ArgoCDChart = "argo/argo-cd"
-$ArgoCDIngressHost = "argocd.localhost"
-$ArgoCDUiAccess = "http://argocd.localhost:8080/"
+$ArgoCDIngressHost = ""
+$ArgoCDIngressPath = "/argocd"
+$ArgoCDUiAccess = "http://localhost:8080/argocd"
 
 $PortPlan = [ordered]@{
     management_api   = 58080
@@ -623,6 +626,17 @@ function New-NextActions {
         }
         else {
             $actions.Add("Review the sanitized launcher log and rerun -BootstrapManagementArgoCD after resolving the Argo CD bootstrap issue.") | Out-Null
+        }
+    }
+    elseif ($LauncherMode -eq "management_argocd_verify") {
+        if ($argocdStatus -eq "ready") {
+            $actions.Add("Management Argo CD passed read-only verification. Workload registration and GitOps Application creation remain separate future steps.") | Out-Null
+        }
+        elseif ($argocdStatus -eq "warning") {
+            $actions.Add("Management Argo CD core resources are Ready, but one or more optional verification checks need review.") | Out-Null
+        }
+        else {
+            $actions.Add("Review the sanitized launcher status and logs. Run -BootstrapManagementArgoCD only when you intend to reconcile Argo CD resources.") | Out-Null
         }
     }
 
@@ -3699,7 +3713,9 @@ function Test-KindClusters {
 
         [bool]$ManagementFrontendVerifyMode = $false,
 
-        [bool]$ManagementArgoCDBootstrapMode = $false
+        [bool]$ManagementArgoCDBootstrapMode = $false,
+
+        [bool]$ManagementArgoCDVerifyMode = $false
     )
 
     if (-not $KindAvailable) {
@@ -3804,6 +3820,10 @@ function Test-KindClusters {
     elseif ($ManagementArgoCDBootstrapMode -and $mgmtExists) {
         $status = "ok"
         $message = "devdeploy-mgmt exists. Argo CD bootstrap mode targets only the management cluster and does not register or modify devdeploy-workload."
+    }
+    elseif ($ManagementArgoCDVerifyMode -and $mgmtExists) {
+        $status = "ok"
+        $message = "devdeploy-mgmt exists. Argo CD verify mode performs read-only checks only in this management cluster."
     }
 
     Add-Check -Id "kind_clusters" -Label "Existing kind clusters" -Status $status -Message $message -Details @{
@@ -4820,8 +4840,11 @@ function New-ManagementArgoCDStatus {
         application_controller_statefulset  = "argocd-application-controller"
         ingress_enabled                     = $false
         ingress_host                        = $ArgoCDIngressHost
+        ingress_path                        = $ArgoCDIngressPath
         ui_access                           = $ArgoCDUiAccess
         admin_secret_present                = $false
+        application_count                   = $null
+        mode                                = "status"
         status                              = "not_started"
         message                             = "Management Argo CD is not installed yet."
         checked_at                          = [string](Get-Timestamp)
@@ -4850,17 +4873,6 @@ function Test-ManagementArgoCDUi {
             $response = Invoke-WebRequest -Uri $ArgoCDUiAccess -UseBasicParsing -TimeoutSec 5
             $content = [string]$response.Content
             if ([int]$response.StatusCode -eq 200 -and $content -match '(?i)<!doctype\s+html|<html|argo\s*cd') {
-                return $true
-            }
-        }
-        catch {
-            # Some Windows PowerShell/.NET combinations do not resolve *.localhost.
-        }
-
-        try {
-            $fallbackResponse = Invoke-WebRequest -Uri "http://localhost:8080/" -Headers @{ Host = $ArgoCDIngressHost } -UseBasicParsing -TimeoutSec 5
-            $fallbackContent = [string]$fallbackResponse.Content
-            if ([int]$fallbackResponse.StatusCode -eq 200 -and $fallbackContent -match '(?i)<!doctype\s+html|<html|argo\s*cd') {
                 return $true
             }
         }
@@ -4912,14 +4924,20 @@ function Get-ManagementArgoCDStatus {
     $serviceResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $ArgoCDNamespace, "get", "service", "argocd-server", "--output", "name") -TimeoutSeconds 20
     $serviceReady = [bool]($serviceResult.exit_code -eq 0 -and -not $serviceResult.timed_out)
 
-    $ingressJsonPath = "{.spec.ingressClassName}|{.spec.rules[0].host}"
+    $ingressJsonPath = "{.spec.ingressClassName}|{.spec.rules[0].host}|{.spec.rules[0].http.paths[0].path}"
     $ingressResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $ArgoCDNamespace, "get", "ingress", "argocd-server", "--output", "jsonpath=$ingressJsonPath") -TimeoutSeconds 20
     $ingressParts = if ($ingressResult.exit_code -eq 0 -and -not $ingressResult.timed_out) { @(([string]$ingressResult.stdout).Split('|')) } else { @() }
-    $ingressReady = [bool]($ingressParts.Count -ge 2 -and ([string]$ingressParts[0]).Trim() -eq "nginx" -and ([string]$ingressParts[1]).Trim() -eq $ArgoCDIngressHost)
+    $ingressReady = [bool]($ingressParts.Count -ge 3 -and ([string]$ingressParts[0]).Trim() -eq "nginx" -and [string]::IsNullOrWhiteSpace(([string]$ingressParts[1]).Trim()) -and ([string]$ingressParts[2]).Trim() -eq $ArgoCDIngressPath)
     $status["ingress_enabled"] = $ingressReady
 
     $adminSecretResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $ArgoCDNamespace, "get", "secret", "argocd-initial-admin-secret", "--output", "name") -TimeoutSeconds 20
     $status["admin_secret_present"] = [bool]($adminSecretResult.exit_code -eq 0 -and -not $adminSecretResult.timed_out)
+
+    $applicationsResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $ArgoCDNamespace, "get", "applications.argoproj.io", "--output", "jsonpath={.items[*].metadata.name}") -TimeoutSeconds 20
+    if ($applicationsResult.exit_code -eq 0 -and -not $applicationsResult.timed_out) {
+        $applicationNames = @(([string]$applicationsResult.stdout) -split "\s+" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $status["application_count"] = [int]$applicationNames.Count
+    }
 
     if ($serverReady -and $repoServerReady -and $controllerReady -and $serviceReady -and $ingressReady) {
         $uiReady = Test-ManagementArgoCDUi
@@ -5347,6 +5365,7 @@ function Invoke-BootstrapManagementArgoCD {
     )
 
     $status = New-ManagementArgoCDStatus
+    $status["mode"] = "bootstrap"
 
     if ([string]$ManagementCluster["status"] -ne "ready") {
         $status["status"] = "error"
@@ -5437,11 +5456,14 @@ function Invoke-BootstrapManagementArgoCD {
         "--timeout", "10m",
         "--set", "server.ingress.enabled=true",
         "--set", "server.ingress.ingressClassName=nginx",
-        "--set", "server.ingress.hostname=$ArgoCDIngressHost",
-        "--set", "server.ingress.path=/",
+        "--set-string", "global.domain=",
+        "--set-string", "server.ingress.hostname=",
+        "--set", "server.ingress.path=$ArgoCDIngressPath",
         "--set", "server.ingress.pathType=Prefix",
         "--set", "server.ingress.tls=false",
-        "--set", "configs.params.server\.insecure=true"
+        "--set", "configs.params.server\.insecure=true",
+        "--set-string", "configs.params.server\.basehref=$ArgoCDIngressPath",
+        "--set-string", "configs.params.server\.rootpath=$ArgoCDIngressPath"
     )
 
     Write-LauncherLog "Installing or upgrading management Argo CD in devdeploy-mgmt/argocd with the pinned official Helm chart."
@@ -5507,17 +5529,18 @@ function Invoke-BootstrapManagementArgoCD {
         service   = "argocd-server"
     }
 
-    $ingressJsonPath = "{.spec.ingressClassName}|{.spec.rules[0].host}"
+    $ingressJsonPath = "{.spec.ingressClassName}|{.spec.rules[0].host}|{.spec.rules[0].http.paths[0].path}"
     $ingressResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $ArgoCDNamespace, "get", "ingress", "argocd-server", "--output", "jsonpath=$ingressJsonPath") -TimeoutSeconds 20
     $ingressParts = if ($ingressResult.exit_code -eq 0 -and -not $ingressResult.timed_out) { @(([string]$ingressResult.stdout).Split('|')) } else { @() }
-    $ingressReady = [bool]($ingressParts.Count -ge 2 -and ([string]$ingressParts[0]).Trim() -eq "nginx" -and ([string]$ingressParts[1]).Trim() -eq $ArgoCDIngressHost)
+    $ingressReady = [bool]($ingressParts.Count -ge 3 -and ([string]$ingressParts[0]).Trim() -eq "nginx" -and [string]::IsNullOrWhiteSpace(([string]$ingressParts[1]).Trim()) -and ([string]$ingressParts[2]).Trim() -eq $ArgoCDIngressPath)
     $status["ingress_enabled"] = $ingressReady
-    Add-Check -Id "management_argocd_ingress" -Label "Argo CD Ingress" -Status $(if ($ingressReady) { "ok" } else { "failed" }) -Message $(if ($ingressReady) { "Argo CD Ingress routes argocd.localhost through ingress class nginx." } else { "Argo CD Ingress host or ingress class verification failed." }) -Details @{
+    Add-Check -Id "management_argocd_ingress" -Label "Argo CD Ingress" -Status $(if ($ingressReady) { "ok" } else { "failed" }) -Message $(if ($ingressReady) { "Argo CD Ingress is hostless and routes /argocd through ingress class nginx." } else { "Argo CD hostless Ingress path or ingress class verification failed." }) -Details @{
         required      = $true
         namespace     = $ArgoCDNamespace
         ingress       = "argocd-server"
         ingress_class = "nginx"
         host           = $ArgoCDIngressHost
+        path           = $ArgoCDIngressPath
     }
 
     $adminSecretResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $ArgoCDNamespace, "get", "secret", "argocd-initial-admin-secret", "--output", "name") -TimeoutSeconds 20
@@ -5531,7 +5554,7 @@ function Invoke-BootstrapManagementArgoCD {
     }
 
     $uiReady = Test-ManagementArgoCDUi
-    Add-Check -Id "management_argocd_ui" -Label "Argo CD local UI" -Status $(if ($uiReady) { "ok" } else { "failed" }) -Message $(if ($uiReady) { "Argo CD UI is reachable through http://argocd.localhost:8080/." } else { "Argo CD UI is not reachable through http://argocd.localhost:8080/." }) -Details @{
+    Add-Check -Id "management_argocd_ui" -Label "Argo CD local UI" -Status $(if ($uiReady) { "ok" } else { "failed" }) -Message $(if ($uiReady) { "Argo CD UI is reachable through http://localhost:8080/argocd." } else { "Argo CD UI is not reachable through http://localhost:8080/argocd." }) -Details @{
         required = $true
         url      = $ArgoCDUiAccess
     }
@@ -5556,6 +5579,234 @@ function Invoke-BootstrapManagementArgoCD {
         chart_version = $ArgoCDChartVersion
         workload_cluster_registered = $false
         gitops_application_created   = $false
+    }
+
+    return $status
+}
+
+function Add-ArgoCDReadinessVerification {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Id,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Label,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Kind,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [bool]$Required = $true
+    )
+
+    $ready = Test-ArgoCDResourceReady -Kind $Kind -Name $Name
+    Add-Check -Id $Id -Label $Label -Status $(if ($ready) { "ok" } elseif ($Required) { "failed" } else { "warning" }) -Message $(if ($ready) { "$Name exists and has at least one Ready replica." } else { "$Name is missing or does not have a Ready replica." }) -Details @{
+        required  = $Required
+        namespace = $ArgoCDNamespace
+        kind      = $Kind
+        name      = $Name
+    }
+    return $ready
+}
+
+function Invoke-VerifyManagementArgoCD {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ManagementCluster,
+
+        [bool]$HelmAvailable,
+
+        [bool]$KubectlAvailable
+    )
+
+    $status = New-ManagementArgoCDStatus
+    $status["mode"] = "verify"
+
+    if ([string]$ManagementCluster["status"] -ne "ready") {
+        $status["status"] = "error"
+        $status["message"] = "devdeploy-mgmt must be Ready before verifying Argo CD."
+        Add-Check -Id "management_argocd_verify_cluster" -Label "Management Argo CD cluster verification" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required       = $true
+            cluster_name   = "devdeploy-mgmt"
+            cluster_status = [string]$ManagementCluster["status"]
+        }
+        return $status
+    }
+
+    Add-Check -Id "management_argocd_verify_cluster" -Label "Management Argo CD cluster verification" -Status "ok" -Message "devdeploy-mgmt is reachable and has Ready node capacity." -Details @{
+        required     = $true
+        cluster_name = "devdeploy-mgmt"
+        context      = "kind-devdeploy-mgmt"
+    }
+
+    if (-not $HelmAvailable -or -not $KubectlAvailable) {
+        $status["status"] = "error"
+        $status["message"] = "Helm and kubectl are required for read-only Argo CD verification."
+        Add-Check -Id "management_argocd_verify_tools" -Label "Management Argo CD verification tools" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required          = $true
+            helm_available    = $HelmAvailable
+            kubectl_available = $KubectlAvailable
+        }
+        return $status
+    }
+
+    Add-Check -Id "management_argocd_verify_tools" -Label "Management Argo CD verification tools" -Status "ok" -Message "Helm and kubectl are available for read-only Argo CD verification." -Details @{
+        required = $true
+    }
+
+    $namespaceResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "get", "namespace", $ArgoCDNamespace, "--output", "name") -TimeoutSeconds 20
+    $namespaceReady = [bool]($namespaceResult.exit_code -eq 0 -and -not $namespaceResult.timed_out)
+    Add-Check -Id "management_argocd_verify_namespace" -Label "Management Argo CD namespace verification" -Status $(if ($namespaceReady) { "ok" } else { "failed" }) -Message $(if ($namespaceReady) { "Namespace argocd exists in devdeploy-mgmt." } else { "Namespace argocd does not exist or could not be read." }) -Details @{
+        required  = $true
+        namespace = $ArgoCDNamespace
+    }
+    if (-not $namespaceReady) {
+        $status["status"] = "error"
+        $status["message"] = "Management Argo CD namespace verification failed. No resources were changed."
+        return $status
+    }
+
+    $releaseResult = Invoke-ReadOnlyCommand -FileName "helm" -Arguments @("--kube-context", "kind-devdeploy-mgmt", "list", "--namespace", $ArgoCDNamespace, "--filter", "^$ArgoCDRelease$", "--deployed", "--output", "json") -TimeoutSeconds 30 -PreserveStandardOutput $true
+    $releaseReady = $false
+    $chartVersionMatches = $false
+    try {
+        if ($releaseResult.exit_code -eq 0 -and -not $releaseResult.timed_out -and -not [string]::IsNullOrWhiteSpace($releaseResult.stdout)) {
+            $releaseItems = @(([string]$releaseResult.stdout | ConvertFrom-Json))
+            $releaseItem = @($releaseItems | Where-Object { [string]$_.name -eq $ArgoCDRelease -and [string]$_.namespace -eq $ArgoCDNamespace }) | Select-Object -First 1
+            if ($null -ne $releaseItem -and [string]$releaseItem.status -eq "deployed") {
+                $releaseReady = $true
+                $detectedChart = [string]$releaseItem.chart
+                if ($detectedChart -match '^argo-cd-(.+)$') {
+                    $status["chart_version"] = [string]$Matches[1]
+                    $chartVersionMatches = [bool]([string]$Matches[1] -eq $ArgoCDChartVersion)
+                }
+            }
+        }
+    }
+    catch {
+        $releaseReady = $false
+    }
+
+    $status["installed"] = $releaseReady
+    Add-Check -Id "management_argocd_verify_release" -Label "Management Argo CD Helm release verification" -Status $(if ($releaseReady) { "ok" } else { "failed" }) -Message $(if ($releaseReady) { "Helm release argocd exists and is deployed." } else { "Helm release argocd is missing or is not deployed." }) -Details @{
+        required      = $true
+        namespace     = $ArgoCDNamespace
+        release       = $ArgoCDRelease
+        chart         = $ArgoCDChart
+        chart_version = [string]$status["chart_version"]
+    }
+    if (-not $releaseReady) {
+        $status["status"] = "error"
+        $status["message"] = "Management Argo CD Helm release verification failed. No resources were changed."
+        return $status
+    }
+
+    Add-Check -Id "management_argocd_verify_chart_version" -Label "Management Argo CD chart version" -Status $(if ($chartVersionMatches) { "ok" } else { "warning" }) -Message $(if ($chartVersionMatches) { "Argo CD chart version matches the pinned version 10.1.0." } else { "Argo CD is deployed, but its chart version differs from the launcher pin 10.1.0." }) -Details @{
+        required         = $false
+        expected_version = $ArgoCDChartVersion
+        detected_version = [string]$status["chart_version"]
+    }
+
+    $serverReady = Add-ArgoCDReadinessVerification -Id "management_argocd_verify_server" -Label "Argo CD server verification" -Kind "deployment" -Name "argocd-server"
+    $repoServerReady = Add-ArgoCDReadinessVerification -Id "management_argocd_verify_repo_server" -Label "Argo CD repo-server verification" -Kind "deployment" -Name "argocd-repo-server"
+    $controllerReady = Add-ArgoCDReadinessVerification -Id "management_argocd_verify_application_controller" -Label "Argo CD application-controller verification" -Kind "statefulset" -Name "argocd-application-controller"
+
+    $applicationSetExistsResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $ArgoCDNamespace, "get", "deployment", "argocd-applicationset-controller", "--output", "name") -TimeoutSeconds 20
+    $applicationSetReady = $true
+    if ($applicationSetExistsResult.exit_code -eq 0 -and -not $applicationSetExistsResult.timed_out) {
+        $applicationSetReady = Add-ArgoCDReadinessVerification -Id "management_argocd_verify_applicationset" -Label "Argo CD ApplicationSet verification" -Kind "deployment" -Name "argocd-applicationset-controller"
+    }
+    else {
+        Add-Check -Id "management_argocd_verify_applicationset" -Label "Argo CD ApplicationSet verification" -Status "skipped" -Message "ApplicationSet controller is not installed; this optional component was skipped." -Details @{
+            required = $false
+        }
+    }
+
+    $redisDeploymentResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $ArgoCDNamespace, "get", "deployment", "argocd-redis", "--output", "name") -TimeoutSeconds 20
+    if ($redisDeploymentResult.exit_code -eq 0 -and -not $redisDeploymentResult.timed_out) {
+        $redisReady = Add-ArgoCDReadinessVerification -Id "management_argocd_verify_redis" -Label "Argo CD Redis verification" -Kind "deployment" -Name "argocd-redis"
+    }
+    else {
+        $redisReady = Add-ArgoCDReadinessVerification -Id "management_argocd_verify_redis" -Label "Argo CD Redis verification" -Kind "statefulset" -Name "argocd-redis"
+    }
+
+    $serviceResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $ArgoCDNamespace, "get", "service", "argocd-server", "--output", "name") -TimeoutSeconds 20
+    $serviceReady = [bool]($serviceResult.exit_code -eq 0 -and -not $serviceResult.timed_out)
+    Add-Check -Id "management_argocd_verify_service" -Label "Argo CD server Service verification" -Status $(if ($serviceReady) { "ok" } else { "failed" }) -Message $(if ($serviceReady) { "argocd-server Service exists." } else { "argocd-server Service is missing or could not be read." }) -Details @{
+        required  = $true
+        namespace = $ArgoCDNamespace
+        service   = "argocd-server"
+    }
+
+    $ingressJsonPath = "{.spec.ingressClassName}|{.spec.rules[0].host}|{.spec.rules[0].http.paths[0].path}"
+    $ingressResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $ArgoCDNamespace, "get", "ingress", "argocd-server", "--output", "jsonpath=$ingressJsonPath") -TimeoutSeconds 20
+    $ingressParts = if ($ingressResult.exit_code -eq 0 -and -not $ingressResult.timed_out) { @(([string]$ingressResult.stdout).Split('|')) } else { @() }
+    $ingressReady = [bool]($ingressParts.Count -ge 3 -and ([string]$ingressParts[0]).Trim() -eq "nginx" -and [string]::IsNullOrWhiteSpace(([string]$ingressParts[1]).Trim()) -and ([string]$ingressParts[2]).Trim() -eq $ArgoCDIngressPath)
+    $status["ingress_enabled"] = $ingressReady
+    Add-Check -Id "management_argocd_verify_ingress" -Label "Argo CD Ingress verification" -Status $(if ($ingressReady) { "ok" } else { "failed" }) -Message $(if ($ingressReady) { "Argo CD Ingress is hostless and routes /argocd through class nginx." } else { "Argo CD hostless Ingress path or class verification failed." }) -Details @{
+        required      = $true
+        namespace     = $ArgoCDNamespace
+        ingress       = "argocd-server"
+        ingress_class = "nginx"
+        host           = $ArgoCDIngressHost
+        path           = $ArgoCDIngressPath
+    }
+
+    $uiReady = Test-ManagementArgoCDUi
+    Add-Check -Id "management_argocd_verify_ui" -Label "Argo CD local UI verification" -Status $(if ($uiReady) { "ok" } else { "failed" }) -Message $(if ($uiReady) { "Argo CD UI is reachable through its hostless /argocd ingress route." } else { "Argo CD UI is not reachable through its hostless /argocd ingress route." }) -Details @{
+        required = $true
+        url      = $ArgoCDUiAccess
+    }
+
+    $adminSecretResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $ArgoCDNamespace, "get", "secret", "argocd-initial-admin-secret", "--output", "name") -TimeoutSeconds 20
+    $adminSecretReady = [bool]($adminSecretResult.exit_code -eq 0 -and -not $adminSecretResult.timed_out)
+    $status["admin_secret_present"] = $adminSecretReady
+    Add-Check -Id "management_argocd_verify_admin_secret" -Label "Argo CD initial admin Secret verification" -Status $(if ($adminSecretReady) { "ok" } else { "warning" }) -Message $(if ($adminSecretReady) { "Argo CD initial admin Secret exists; its value was not read or printed." } else { "Argo CD initial admin Secret was not found. No Secret data was read." }) -Details @{
+        required    = $false
+        namespace   = $ArgoCDNamespace
+        secret_name = "argocd-initial-admin-secret"
+        value_read  = $false
+    }
+
+    $applicationsResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $ArgoCDNamespace, "get", "applications.argoproj.io", "--output", "jsonpath={.items[*].metadata.name}") -TimeoutSeconds 20
+    $applicationCountKnown = [bool]($applicationsResult.exit_code -eq 0 -and -not $applicationsResult.timed_out)
+    if ($applicationCountKnown) {
+        $applicationNames = @(([string]$applicationsResult.stdout) -split "\s+" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $status["application_count"] = [int]$applicationNames.Count
+    }
+    Add-Check -Id "management_argocd_verify_applications" -Label "Argo CD Application inventory" -Status $(if ($applicationCountKnown) { "ok" } else { "warning" }) -Message $(if ($applicationCountKnown) { "Argo CD Application count was read without modifying Applications." } else { "Argo CD Application count could not be determined safely." }) -Details @{
+        required          = $false
+        application_count = $status["application_count"]
+        read_only         = $true
+    }
+
+    $coreReady = [bool]($serverReady -and $repoServerReady -and $controllerReady -and $applicationSetReady -and $redisReady -and $serviceReady -and $ingressReady -and $uiReady)
+    $hasWarnings = [bool](-not $chartVersionMatches -or -not $adminSecretReady -or -not $applicationCountKnown)
+    $status["ready"] = $coreReady
+    $status["checked_at"] = [string](Get-Timestamp)
+    if (-not $coreReady) {
+        $status["status"] = "error"
+        $status["message"] = "Management Argo CD read-only verification found missing or unready core resources. No resources were changed."
+    }
+    elseif ($hasWarnings) {
+        $status["status"] = "warning"
+        $status["message"] = "Management Argo CD core resources are Ready, but optional verification warnings need review."
+    }
+    else {
+        $status["status"] = "ready"
+        $status["message"] = "Management Argo CD passed read-only verification."
+    }
+
+    Add-Check -Id "management_argocd_verify_ready" -Label "Management Argo CD read-only verification" -Status $(if ($coreReady) { "ok" } else { "failed" }) -Message ([string]$status["message"]) -Details @{
+        required                        = $true
+        namespace                       = $ArgoCDNamespace
+        release                         = $ArgoCDRelease
+        application_count               = $status["application_count"]
+        workload_cluster_registered     = $false
+        gitops_application_created      = $false
+        mutation_performed              = $false
     }
 
     return $status
@@ -5816,6 +6067,9 @@ elseif ($VerifyManagementFrontend) {
 elseif ($BootstrapManagementArgoCD) {
     Write-LauncherLog "Starting DevDeploy Launcher explicit management Argo CD bootstrap mode."
 }
+elseif ($VerifyManagementArgoCD) {
+    Write-LauncherLog "Starting DevDeploy Launcher strict read-only management Argo CD verify mode."
+}
 elseif ($InitializeManagementBackendDatabase) {
     Write-LauncherLog "Starting DevDeploy Launcher explicit management backend database initialization mode."
 }
@@ -5841,13 +6095,13 @@ else {
     Write-LauncherLog "Starting DevDeploy Launcher read-only preflight."
 }
 
-$dockerAvailable = Test-CommandAvailable -Name "docker" -Label "Docker CLI" -Required ([bool](-not ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $InitializeManagementBackendDatabase)))
+$dockerAvailable = Test-CommandAvailable -Name "docker" -Label "Docker CLI" -Required ([bool](-not ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $InitializeManagementBackendDatabase)))
 $kindAvailable = Test-CommandAvailable -Name "kind" -Label "kind CLI" -Required ([bool](-not ($BuildManagementBackendImage -or $BuildManagementFrontendImage)))
 $kubectlAvailable = Test-CommandAvailable -Name "kubectl" -Label "kubectl CLI" -Required ([bool](-not ($BuildManagementBackendImage -or $BuildManagementFrontendImage)))
 [void](Test-CommandAvailable -Name "git" -Label "git CLI" -Required $false)
-$helmAvailable = Test-CommandAvailable -Name "helm" -Label "Helm CLI" -Required ([bool]($BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BootstrapManagementArgoCD))
+$helmAvailable = Test-CommandAvailable -Name "helm" -Label "Helm CLI" -Required ([bool]($BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD))
 
-if ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $InitializeManagementBackendDatabase) {
+if ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $InitializeManagementBackendDatabase) {
     $dockerDaemonReachable = $false
     Add-Check -Id "docker_daemon" -Label "Docker daemon" -Status "skipped" -Message "Docker daemon check is not required for this Secret, verification, or frontend bootstrap mode." -Details @{
         required = $false
@@ -5876,10 +6130,10 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
     $expectedCluster = if ($isManagementPort) { "devdeploy-mgmt" } elseif ($isWorkloadPort) { "devdeploy-workload" } else { "" }
     $existingClusterDetected = [bool](($isManagementPort -and $managementClusterExistsBeforePortCheck) -or ($isWorkloadPort -and $workloadClusterExistsBeforePortCheck))
     $portRequired = [bool](-not $existingClusterDetected)
-    if (($BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BootstrapManagementArgoCD) -and $isWorkloadPort) {
+    if (($BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD) -and $isWorkloadPort) {
         $portRequired = $false
     }
-    if ($BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementFrontendImage -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $InitializeManagementBackendDatabase -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) {
+    if ($BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementFrontendImage -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $InitializeManagementBackendDatabase -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) {
         $portRequired = $false
     }
     $allowBusyAsOk = [bool]$existingClusterDetected
@@ -5888,7 +6142,7 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
 }
 
 if ($workloadClusterExistsBeforePortCheck) {
-    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementFrontendImage -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $InitializeManagementBackendDatabase -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) { "ok" } else { "warning" }
+    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementFrontendImage -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $InitializeManagementBackendDatabase -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) { "ok" } else { "warning" }
     $detectedMessage = if ($CreateWorkloadCluster) {
         "devdeploy-workload already exists. This launcher mode will verify it instead of recreating it."
     }
@@ -5915,6 +6169,9 @@ if ($workloadClusterExistsBeforePortCheck) {
     }
     elseif ($BootstrapManagementArgoCD) {
         "devdeploy-workload already exists. Argo CD bootstrap mode targets only devdeploy-mgmt and does not register or modify devdeploy-workload."
+    }
+    elseif ($VerifyManagementArgoCD) {
+        "devdeploy-workload already exists. Argo CD verify mode is read-only and targets only devdeploy-mgmt."
     }
     elseif ($InitializeManagementBackendDatabase) {
         "devdeploy-workload already exists. Backend database initialization mode targets only the backend database in devdeploy-mgmt."
@@ -5945,7 +6202,7 @@ if ($workloadClusterExistsBeforePortCheck) {
     }
 }
 
-Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres) -ManagementBackendImageBuildMode ([bool]$BuildManagementBackendImage) -ManagementBackendImageLoadMode ([bool]$LoadManagementBackendImage) -ManagementBackendSecretEnsureMode ([bool]$EnsureManagementBackendSecret) -ManagementBackendSecretVerifyMode ([bool]$VerifyManagementBackendSecret) -ManagementBackendBootstrapMode ([bool]$BootstrapManagementBackend) -ManagementBackendVerifyMode ([bool]$VerifyManagementBackend) -ManagementFrontendImageBuildMode ([bool]$BuildManagementFrontendImage) -ManagementFrontendImageLoadMode ([bool]$LoadManagementFrontendImage) -ManagementFrontendBootstrapMode ([bool]$BootstrapManagementFrontend) -ManagementBackendDatabaseInitializeMode ([bool]$InitializeManagementBackendDatabase) -ManagementFrontendVerifyMode ([bool]$VerifyManagementFrontend) -ManagementArgoCDBootstrapMode ([bool]$BootstrapManagementArgoCD)
+Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres) -ManagementBackendImageBuildMode ([bool]$BuildManagementBackendImage) -ManagementBackendImageLoadMode ([bool]$LoadManagementBackendImage) -ManagementBackendSecretEnsureMode ([bool]$EnsureManagementBackendSecret) -ManagementBackendSecretVerifyMode ([bool]$VerifyManagementBackendSecret) -ManagementBackendBootstrapMode ([bool]$BootstrapManagementBackend) -ManagementBackendVerifyMode ([bool]$VerifyManagementBackend) -ManagementFrontendImageBuildMode ([bool]$BuildManagementFrontendImage) -ManagementFrontendImageLoadMode ([bool]$LoadManagementFrontendImage) -ManagementFrontendBootstrapMode ([bool]$BootstrapManagementFrontend) -ManagementBackendDatabaseInitializeMode ([bool]$InitializeManagementBackendDatabase) -ManagementFrontendVerifyMode ([bool]$VerifyManagementFrontend) -ManagementArgoCDBootstrapMode ([bool]$BootstrapManagementArgoCD) -ManagementArgoCDVerifyMode ([bool]$VerifyManagementArgoCD)
 Test-KubectlContext -KubectlAvailable $kubectlAvailable
 
 $launcherMode = "preflight"
@@ -5978,6 +6235,9 @@ elseif ($VerifyManagementFrontend) {
 }
 elseif ($BootstrapManagementArgoCD) {
     $launcherMode = "management_argocd_bootstrap"
+}
+elseif ($VerifyManagementArgoCD) {
+    $launcherMode = "management_argocd_verify"
 }
 elseif ($InitializeManagementBackendDatabase) {
     $launcherMode = "management_backend_database_initialize"
@@ -6115,6 +6375,10 @@ elseif ($BootstrapManagementArgoCD) {
     $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
     $platformArgoCDOverride = Invoke-BootstrapManagementArgoCD -ManagementCluster $managementCluster -HelmAvailable $helmAvailable -KubectlAvailable $kubectlAvailable
 }
+elseif ($VerifyManagementArgoCD) {
+    $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
+    $platformArgoCDOverride = Invoke-VerifyManagementArgoCD -ManagementCluster $managementCluster -HelmAvailable $helmAvailable -KubectlAvailable $kubectlAvailable
+}
 elseif ($InitializeManagementBackendDatabase) {
     $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
     $databaseResult = Invoke-InitializeManagementBackendDatabase -KubectlAvailable $kubectlAvailable -ManagementCluster $managementCluster
@@ -6229,6 +6493,10 @@ if (-not $Quiet) {
     }
     elseif ($BootstrapManagementArgoCD) {
         Write-Host ("Management Argo CD release: {0}/{1} ({2} {3})" -f $ArgoCDNamespace, $ArgoCDRelease, $ArgoCDChart, $ArgoCDChartVersion)
+        Write-Host ("Management Argo CD UI: {0}" -f $ArgoCDUiAccess)
+    }
+    elseif ($VerifyManagementArgoCD) {
+        Write-Host ("Verified management Argo CD release: {0}/{1}" -f $ArgoCDNamespace, $ArgoCDRelease)
         Write-Host ("Management Argo CD UI: {0}" -f $ArgoCDUiAccess)
     }
     elseif ($InitializeManagementBackendDatabase) {

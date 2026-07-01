@@ -282,7 +282,8 @@ This guarded mode:
 - Adds or refreshes the official `https://argoproj.github.io/argo-helm` repository.
 - Installs or upgrades release `argocd` in namespace `argocd`.
 - Pins chart `argo/argo-cd` to version `10.1.0`.
-- Configures host-specific HTTP ingress at `http://argocd.localhost:8080/` using ingress class `nginx`.
+- Configures hostless HTTP ingress at `http://localhost:8080/argocd` using ingress class `nginx`.
+- Configures Argo CD base href and root path as `/argocd` so redirects and static assets use the path prefix correctly.
 - Waits for the server, repo-server, application-controller, Redis, and optional ApplicationSet workloads.
 - Verifies the server Service, Ingress, local UI route, and initial admin Secret metadata.
 - Writes sanitized status under `platform_bootstrap.components.argocd`.
@@ -296,14 +297,22 @@ Manual verification:
 ```powershell
 kubectl --context kind-devdeploy-mgmt -n argocd get pods,svc,ingress
 helm --kube-context kind-devdeploy-mgmt -n argocd list
-Invoke-WebRequest http://argocd.localhost:8080/ -UseBasicParsing
+Invoke-WebRequest http://localhost:8080/argocd -UseBasicParsing
 ```
 
-If Windows PowerShell cannot resolve the reserved `.localhost` subdomain, verify the same host-specific ingress route without changing cluster resources:
+## Verify Management Argo CD
+
+To run strict read-only verification of the installed Argo CD release:
 
 ```powershell
-Invoke-WebRequest http://localhost:8080/ -Headers @{ Host = "argocd.localhost" } -UseBasicParsing
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -VerifyManagementArgoCD
 ```
+
+This mode reads only from `devdeploy-mgmt` and namespace `argocd`. It verifies the deployed Helm release and pinned chart version, core workload readiness, server Service, hostless `/argocd` Ingress, UI route, initial admin Secret metadata, and Argo CD Application count.
+
+The resulting `platform_bootstrap.components.argocd` object uses `mode: verify` and reports `application_count`. The launcher never reads or prints the admin password or any base64 Secret data.
+
+This mode does not run Helm install or upgrade, mutate Kubernetes resources, register `devdeploy-workload`, create cluster Secrets or Applications, configure repositories, or deploy workloads. Workload registration remains a later phase.
 
 ## Verify The Management Frontend
 
@@ -418,6 +427,7 @@ devdeploy-launcher-status
 - `management_frontend_bootstrap`
 - `management_frontend_verify`
 - `management_argocd_bootstrap`
+- `management_argocd_verify`
 - `management_backend_database_initialize`
 
 `status` is one of:
