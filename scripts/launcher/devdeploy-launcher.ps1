@@ -38,6 +38,8 @@ param(
 
     [switch]$BootstrapManagementFrontend,
 
+    [switch]$VerifyManagementFrontend,
+
     [switch]$InitializeManagementBackendDatabase,
 
     [switch]$Quiet
@@ -489,6 +491,17 @@ function New-NextActions {
         }
         else {
             $actions.Add("Review failed frontend prerequisite, render, apply, or rollout checks and rerun -BootstrapManagementFrontend after resolving them.") | Out-Null
+        }
+    }
+    elseif ($LauncherMode -eq "management_frontend_verify") {
+        if ($frontendStatus -eq "ready") {
+            $actions.Add("The management frontend passed read-only verification. Proceed to the future Argo CD bootstrap phase when available.") | Out-Null
+        }
+        elseif ($frontendStatus -eq "warning") {
+            $actions.Add("Frontend resources are Ready, but page or ingress checks need review. Rerun -VerifyManagementFrontend after checking local routing.") | Out-Null
+        }
+        else {
+            $actions.Add("Review failed read-only frontend checks. Run -BootstrapManagementFrontend only when you intend to reconcile frontend resources.") | Out-Null
         }
     }
 
@@ -3003,7 +3016,7 @@ function Get-ManagementFrontendRuntimeStatus {
         [void][int]::TryParse(([string]$deploymentParts[2]).Trim(), [ref]$availableReplicas)
     }
     $deployedImage = if ($deploymentParts.Count -ge 4) { ([string]$deploymentParts[3]).Trim() } else { "" }
-    $deploymentReady = [bool]($desiredReplicas -ge 1 -and $readyReplicas -eq $desiredReplicas -and $availableReplicas -eq $desiredReplicas -and $deployedImage -eq [string]$script:FrontendImage)
+    $deploymentReady = [bool]($desiredReplicas -ge 1 -and $readyReplicas -eq $desiredReplicas -and $availableReplicas -eq $desiredReplicas -and $deployedImage -eq ([string]$script:FrontendImage))
 
     $serviceResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace, "get", "service", "devdeploy-frontend", "--output", "name") -TimeoutSeconds 20
     $ingressResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace, "get", "ingress", "devdeploy-frontend", "--output", "name") -TimeoutSeconds 20
@@ -3035,6 +3048,296 @@ function Get-ManagementFrontendRuntimeStatus {
     }
 
     return $status
+}
+
+function Invoke-VerifyManagementFrontend {
+    param(
+        [bool]$KubectlAvailable,
+
+        [Parameter(Mandatory = $true)]
+        [object]$ManagementCluster
+    )
+
+    $frontend = New-ManagementFrontendStatus
+    $frontend["mode"] = "verify"
+    $frontendImageStatus = New-ManagementFrontendImageStatus
+    $backend = New-ManagementBackendStatus
+    $backendImage = New-ManagementBackendImageStatus
+    $backendSecret = New-ManagementBackendSecretStatus
+    $ingress = New-PlatformComponentStatus -Installed $null -Ready $null -Namespace $IngressNginxNamespace -Release $IngressNginxRelease -Status "unknown" -Message "Management ingress status has not been checked."
+    $postgres = New-PlatformComponentStatus -Installed $null -Ready $null -Namespace $PostgresNamespace -Release $PostgresRelease -Status "unknown" -Message "PostgreSQL status has not been checked."
+
+    if (-not $KubectlAvailable -or [string]$ManagementCluster["status"] -ne "ready") {
+        $frontend["status"] = "error"
+        $frontend["message"] = "kubectl and a Ready devdeploy-mgmt cluster are required to verify the frontend."
+        $frontend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_frontend_verify_prerequisites" -Label "Management frontend verify prerequisites" -Status "failed" -Message ([string]$frontend["message"]) -Details @{
+            required          = $true
+            target_cluster    = "devdeploy-mgmt"
+            management_status = [string]$ManagementCluster["status"]
+            read_only         = $true
+        }
+        return New-ManagementFrontendBootstrapResult -Frontend $frontend -FrontendImage $frontendImageStatus -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+
+    $namespaceResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "get", "namespace", $PostgresNamespace, "--output", "name") -TimeoutSeconds 20
+    if ($namespaceResult.exit_code -ne 0 -or $namespaceResult.timed_out) {
+        $frontend["status"] = "error"
+        $frontend["message"] = "Namespace devdeploy does not exist in devdeploy-mgmt."
+        $frontend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_frontend_verify_namespace" -Label "Management frontend namespace verification" -Status "failed" -Message ([string]$frontend["message"]) -Details @{
+            required  = $true
+            namespace = $PostgresNamespace
+            read_only = $true
+        }
+        return New-ManagementFrontendBootstrapResult -Frontend $frontend -FrontendImage $frontendImageStatus -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+
+    Add-Check -Id "management_frontend_verify_namespace" -Label "Management frontend namespace verification" -Status "ok" -Message "Namespace devdeploy exists in devdeploy-mgmt." -Details @{
+        required  = $true
+        namespace = $PostgresNamespace
+        read_only = $true
+    }
+
+    $backendVerification = Invoke-VerifyManagementBackend -KubectlAvailable $KubectlAvailable -ManagementCluster $ManagementCluster
+    $backend = $backendVerification["backend"]
+    $backendImage = $backendVerification["backend_image"]
+    $backendSecret = $backendVerification["backend_secret"]
+    $ingress = $backendVerification["ingress"]
+    $postgres = $backendVerification["postgres"]
+
+    if ([string]$ingress["status"] -ne "ready") {
+        $frontend["status"] = "error"
+        $frontend["message"] = "Management ingress-nginx is not Ready."
+        $frontend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_frontend_verify_ingress_controller" -Label "Management frontend ingress controller verification" -Status "failed" -Message ([string]$frontend["message"]) -Details @{
+            required       = $true
+            ingress_status = [string]$ingress["status"]
+            read_only      = $true
+        }
+        return New-ManagementFrontendBootstrapResult -Frontend $frontend -FrontendImage $frontendImageStatus -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+
+    Add-Check -Id "management_frontend_verify_ingress_controller" -Label "Management frontend ingress controller verification" -Status "ok" -Message "Management ingress-nginx controller is Ready." -Details @{
+        required  = $true
+        read_only = $true
+    }
+
+    if ([string]$backend["status"] -ne "ready" -or -not [bool]$backend["health_check_succeeded"]) {
+        $frontend["status"] = "error"
+        $frontend["message"] = "Management backend availability and health verification failed."
+        $frontend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_frontend_verify_backend" -Label "Management frontend backend verification" -Status "failed" -Message ([string]$frontend["message"]) -Details @{
+            required                 = $true
+            backend_status           = [string]$backend["status"]
+            backend_health_succeeded = [bool]$backend["health_check_succeeded"]
+            read_only                = $true
+        }
+        return New-ManagementFrontendBootstrapResult -Frontend $frontend -FrontendImage $frontendImageStatus -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+
+    Add-Check -Id "management_frontend_verify_backend" -Label "Management frontend backend verification" -Status "ok" -Message "Management backend Deployment and health endpoint are Ready." -Details @{
+        required  = $true
+        endpoint  = "/api/v1/health"
+        read_only = $true
+    }
+
+    $deploymentJsonPath = "{.spec.replicas}|{.status.readyReplicas}|{.status.availableReplicas}|{.spec.template.spec.containers[0].image}|{.spec.template.spec.containers[0].ports[0].name}|{.spec.template.spec.containers[0].ports[0].containerPort}"
+    $deploymentResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace, "get", "deployment", "devdeploy-frontend", "--output", "jsonpath=$deploymentJsonPath") -TimeoutSeconds 20
+    if ($deploymentResult.exit_code -ne 0 -or $deploymentResult.timed_out -or [string]::IsNullOrWhiteSpace([string]$deploymentResult.stdout)) {
+        $frontend["status"] = "error"
+        $frontend["message"] = "Deployment devdeploy-frontend does not exist or could not be read."
+        $frontend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_frontend_verify_deployment" -Label "Management frontend Deployment verification" -Status "failed" -Message ([string]$frontend["message"]) -Details @{
+            required   = $true
+            namespace  = $PostgresNamespace
+            deployment = "devdeploy-frontend"
+            read_only  = $true
+        }
+        return New-ManagementFrontendBootstrapResult -Frontend $frontend -FrontendImage $frontendImageStatus -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+
+    $deploymentParts = @(([string]$deploymentResult.stdout).Split('|'))
+    $desiredReplicas = 0
+    $readyReplicas = 0
+    $availableReplicas = 0
+    if ($deploymentParts.Count -ge 6) {
+        [void][int]::TryParse(([string]$deploymentParts[0]).Trim(), [ref]$desiredReplicas)
+        [void][int]::TryParse(([string]$deploymentParts[1]).Trim(), [ref]$readyReplicas)
+        [void][int]::TryParse(([string]$deploymentParts[2]).Trim(), [ref]$availableReplicas)
+    }
+    $deployedImage = if ($deploymentParts.Count -ge 6) { ([string]$deploymentParts[3]).Trim() } else { "" }
+    $containerPortName = if ($deploymentParts.Count -ge 6) { ([string]$deploymentParts[4]).Trim() } else { "" }
+    $containerPort = 0
+    if ($deploymentParts.Count -ge 6) {
+        [void][int]::TryParse(([string]$deploymentParts[5]).Trim(), [ref]$containerPort)
+    }
+    $replicasReady = [bool]($desiredReplicas -ge 1 -and $readyReplicas -eq $desiredReplicas -and $availableReplicas -eq $desiredReplicas)
+    $imageMatches = [bool]($deployedImage -eq ([string]$script:FrontendImage))
+    $portMatches = [bool]($containerPortName -eq "http" -and $containerPort -eq 8080)
+    $frontend["deployed"] = $true
+    $frontend["rollout_succeeded"] = $replicasReady
+
+    if (-not $replicasReady -or -not $imageMatches -or -not $portMatches) {
+        $frontend["status"] = "error"
+        $frontend["message"] = "Frontend Deployment is not fully Available or does not match the expected image and port contract."
+        $frontend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_frontend_verify_deployment" -Label "Management frontend Deployment verification" -Status "failed" -Message ([string]$frontend["message"]) -Details @{
+            required           = $true
+            desired_replicas   = $desiredReplicas
+            ready_replicas     = $readyReplicas
+            available_replicas = $availableReplicas
+            deployed_image     = $deployedImage
+            image_matches      = $imageMatches
+            container_port     = $containerPort
+            port_matches       = $portMatches
+            read_only          = $true
+        }
+        return New-ManagementFrontendBootstrapResult -Frontend $frontend -FrontendImage $frontendImageStatus -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+
+    $frontendImageStatus["loaded_to_management_cluster"] = $true
+    $frontendImageStatus["target_cluster"] = "devdeploy-mgmt"
+    $frontendImageStatus["status"] = "ready"
+    $frontendImageStatus["message"] = "The running frontend Deployment uses devdeploy-frontend:local in devdeploy-mgmt."
+    $frontendImageStatus["checked_at"] = [string](Get-Timestamp)
+    Add-Check -Id "management_frontend_verify_deployment" -Label "Management frontend Deployment verification" -Status "ok" -Message "Frontend Deployment is Available and matches the expected image and port contract." -Details @{
+        required           = $true
+        desired_replicas   = $desiredReplicas
+        ready_replicas     = $readyReplicas
+        available_replicas = $availableReplicas
+        image              = $deployedImage
+        container_port     = $containerPort
+        read_only          = $true
+    }
+
+    $podJsonPath = '{range .items[*]}{.metadata.name}|{.status.phase}|{.status.containerStatuses[0].ready}|{.status.containerStatuses[0].restartCount};{end}'
+    $podsResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace, "get", "pods", "--selector", "app.kubernetes.io/name=devdeploy-frontend,app.kubernetes.io/component=frontend", "--output", "jsonpath=$podJsonPath") -TimeoutSeconds 20
+    $podSummaries = New-Object System.Collections.Generic.List[object]
+    if ($podsResult.exit_code -eq 0 -and -not $podsResult.timed_out) {
+        foreach ($podRecord in @(([string]$podsResult.stdout).Split(';') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+            $podParts = @(([string]$podRecord).Split('|'))
+            if ($podParts.Count -ge 4) {
+                $restartCount = 0
+                [void][int]::TryParse(([string]$podParts[3]).Trim(), [ref]$restartCount)
+                $podSummaries.Add([ordered]@{
+                        name          = ([string]$podParts[0]).Trim()
+                        phase         = ([string]$podParts[1]).Trim()
+                        ready         = [bool](([string]$podParts[2]).Trim() -eq "true")
+                        restart_count = $restartCount
+                    }) | Out-Null
+            }
+        }
+    }
+    $readyPods = @($podSummaries | Where-Object { $_["phase"] -eq "Running" -and $_["ready"] })
+    if ($readyPods.Count -lt 1) {
+        $frontend["status"] = "error"
+        $frontend["message"] = "No Running and Ready frontend Pod was found."
+        $frontend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_frontend_verify_pods" -Label "Management frontend Pod verification" -Status "failed" -Message ([string]$frontend["message"]) -Details @{
+            required  = $true
+            namespace = $PostgresNamespace
+            pods      = @($podSummaries | ForEach-Object { $_ })
+            read_only = $true
+        }
+        return New-ManagementFrontendBootstrapResult -Frontend $frontend -FrontendImage $frontendImageStatus -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+
+    Add-Check -Id "management_frontend_verify_pods" -Label "Management frontend Pod verification" -Status "ok" -Message "At least one frontend Pod is Running and Ready." -Details @{
+        required  = $true
+        namespace = $PostgresNamespace
+        pods      = @($podSummaries | ForEach-Object { $_ })
+        read_only = $true
+    }
+
+    $serviceJsonPath = "{.spec.ports[0].port}|{.spec.ports[0].targetPort}"
+    $serviceResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace, "get", "service", "devdeploy-frontend", "--output", "jsonpath=$serviceJsonPath") -TimeoutSeconds 20
+    $serviceParts = if ($serviceResult.exit_code -eq 0 -and -not $serviceResult.timed_out) { @(([string]$serviceResult.stdout).Split('|')) } else { @() }
+    $serviceValid = [bool]($serviceParts.Count -ge 2 -and ([string]$serviceParts[0]).Trim() -eq "80" -and ([string]$serviceParts[1]).Trim() -eq "http")
+    if (-not $serviceValid) {
+        $frontend["status"] = "error"
+        $frontend["message"] = "Frontend Service is missing or does not expose port 80 with targetPort http."
+        $frontend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_frontend_verify_service" -Label "Management frontend Service verification" -Status "failed" -Message ([string]$frontend["message"]) -Details @{
+            required  = $true
+            namespace = $PostgresNamespace
+            service   = "devdeploy-frontend"
+            read_only = $true
+        }
+        return New-ManagementFrontendBootstrapResult -Frontend $frontend -FrontendImage $frontendImageStatus -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+
+    Add-Check -Id "management_frontend_verify_service" -Label "Management frontend Service verification" -Status "ok" -Message "Frontend Service exposes port 80 with targetPort http." -Details @{
+        required    = $true
+        namespace   = $PostgresNamespace
+        service     = "devdeploy-frontend"
+        service_port = 80
+        target_port = "http"
+        read_only   = $true
+    }
+
+    $ingressJsonPath = "{.spec.ingressClassName}|{.spec.rules[0].host}|{.spec.rules[0].http.paths[0].path}"
+    $ingressResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace, "get", "ingress", "devdeploy-frontend", "--output", "jsonpath=$ingressJsonPath") -TimeoutSeconds 20
+    $ingressParts = if ($ingressResult.exit_code -eq 0 -and -not $ingressResult.timed_out) { @(([string]$ingressResult.stdout).Split('|')) } else { @() }
+    $ingressValid = [bool]($ingressParts.Count -ge 3 -and ([string]$ingressParts[0]).Trim() -eq "nginx" -and [string]::IsNullOrWhiteSpace([string]$ingressParts[1]) -and ([string]$ingressParts[2]).Trim() -eq "/")
+    if (-not $ingressValid) {
+        $frontend["status"] = "error"
+        $frontend["message"] = "Frontend Ingress is missing or does not match the hostless nginx / contract."
+        $frontend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_frontend_verify_ingress" -Label "Management frontend Ingress verification" -Status "failed" -Message ([string]$frontend["message"]) -Details @{
+            required  = $true
+            namespace = $PostgresNamespace
+            ingress   = "devdeploy-frontend"
+            read_only = $true
+        }
+        return New-ManagementFrontendBootstrapResult -Frontend $frontend -FrontendImage $frontendImageStatus -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+
+    Add-Check -Id "management_frontend_verify_ingress" -Label "Management frontend Ingress verification" -Status "ok" -Message "Frontend Ingress is hostless, uses class nginx, and routes /." -Details @{
+        required      = $true
+        namespace     = $PostgresNamespace
+        ingress       = "devdeploy-frontend"
+        ingress_class = "nginx"
+        hostless      = $true
+        path          = "/"
+        read_only     = $true
+    }
+
+    $pageResult = Test-ManagementFrontendPage -KubectlAvailable $KubectlAvailable
+    $frontend["page_check_succeeded"] = [bool]$pageResult.success
+    Add-Check -Id "management_frontend_verify_page" -Label "Management frontend page verification" -Status $(if ($pageResult.success) { "ok" } else { "warning" }) -Message ([string]$pageResult.message) -Details @{
+        required  = $false
+        endpoint  = "/"
+        method    = "temporary_port_forward"
+        read_only = $true
+    }
+
+    $ingressRoutes = Test-ManagementIngressRoutes
+    $frontend["ingress_page_check_succeeded"] = [bool]$ingressRoutes.frontend_success
+    $frontend["backend_api_route_check_succeeded"] = [bool]$ingressRoutes.backend_success
+    Add-Check -Id "management_frontend_verify_ingress_page" -Label "Management frontend ingress page verification" -Status $(if ($ingressRoutes.frontend_success) { "ok" } else { "warning" }) -Message ([string]$ingressRoutes.frontend_message) -Details @{
+        required  = $false
+        endpoint  = "http://localhost:8080/"
+        read_only = $true
+    }
+    Add-Check -Id "management_frontend_verify_backend_route" -Label "Management backend ingress route verification" -Status $(if ($ingressRoutes.backend_success) { "ok" } else { "warning" }) -Message ([string]$ingressRoutes.backend_message) -Details @{
+        required  = $false
+        endpoint  = "http://localhost:8080/api/v1/health"
+        read_only = $true
+    }
+
+    $frontend["ready"] = $true
+    $frontend["checked_at"] = [string](Get-Timestamp)
+    if ($pageResult.success -and $ingressRoutes.frontend_success -and $ingressRoutes.backend_success) {
+        $frontend["status"] = "ready"
+        $frontend["message"] = "DevDeploy frontend passed read-only Deployment, Pod, Service, Ingress, page, and route verification."
+    }
+    else {
+        $frontend["status"] = "warning"
+        $frontend["message"] = "Frontend resources are Ready, but one or more read-only page or ingress route checks need review."
+    }
+
+    return New-ManagementFrontendBootstrapResult -Frontend $frontend -FrontendImage $frontendImageStatus -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
 }
 
 function New-ManagementBackendDatabaseResult {
@@ -3359,7 +3662,9 @@ function Test-KindClusters {
 
         [bool]$ManagementFrontendBootstrapMode = $false,
 
-        [bool]$ManagementBackendDatabaseInitializeMode = $false
+        [bool]$ManagementBackendDatabaseInitializeMode = $false,
+
+        [bool]$ManagementFrontendVerifyMode = $false
     )
 
     if (-not $KindAvailable) {
@@ -3456,6 +3761,10 @@ function Test-KindClusters {
     elseif ($ManagementBackendDatabaseInitializeMode -and $mgmtExists) {
         $status = "ok"
         $message = "devdeploy-mgmt exists. Backend database initialization mode runs Alembic only in the management backend Pod."
+    }
+    elseif ($ManagementFrontendVerifyMode -and $mgmtExists) {
+        $status = "ok"
+        $message = "devdeploy-mgmt exists. Frontend verify mode performs read-only checks only in this management cluster."
     }
 
     Add-Check -Id "kind_clusters" -Label "Existing kind clusters" -Status $status -Message $message -Details @{
@@ -5046,6 +5355,9 @@ elseif ($LoadManagementFrontendImage) {
 elseif ($BootstrapManagementFrontend) {
     Write-LauncherLog "Starting DevDeploy Launcher explicit management frontend bootstrap mode."
 }
+elseif ($VerifyManagementFrontend) {
+    Write-LauncherLog "Starting DevDeploy Launcher read-only management frontend verify mode."
+}
 elseif ($InitializeManagementBackendDatabase) {
     Write-LauncherLog "Starting DevDeploy Launcher explicit management backend database initialization mode."
 }
@@ -5071,13 +5383,13 @@ else {
     Write-LauncherLog "Starting DevDeploy Launcher read-only preflight."
 }
 
-$dockerAvailable = Test-CommandAvailable -Name "docker" -Label "Docker CLI" -Required ([bool](-not ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $InitializeManagementBackendDatabase)))
+$dockerAvailable = Test-CommandAvailable -Name "docker" -Label "Docker CLI" -Required ([bool](-not ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $InitializeManagementBackendDatabase)))
 $kindAvailable = Test-CommandAvailable -Name "kind" -Label "kind CLI" -Required ([bool](-not ($BuildManagementBackendImage -or $BuildManagementFrontendImage)))
 $kubectlAvailable = Test-CommandAvailable -Name "kubectl" -Label "kubectl CLI" -Required ([bool](-not ($BuildManagementBackendImage -or $BuildManagementFrontendImage)))
 [void](Test-CommandAvailable -Name "git" -Label "git CLI" -Required $false)
 $helmAvailable = Test-CommandAvailable -Name "helm" -Label "Helm CLI" -Required ([bool]($BootstrapManagementIngress -or $BootstrapManagementPostgres))
 
-if ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $InitializeManagementBackendDatabase) {
+if ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $InitializeManagementBackendDatabase) {
     $dockerDaemonReachable = $false
     Add-Check -Id "docker_daemon" -Label "Docker daemon" -Status "skipped" -Message "Docker daemon check is not required for this Secret, verification, or frontend bootstrap mode." -Details @{
         required = $false
@@ -5109,7 +5421,7 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
     if (($BootstrapManagementIngress -or $BootstrapManagementPostgres) -and $isWorkloadPort) {
         $portRequired = $false
     }
-    if ($BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementFrontendImage -or $BootstrapManagementFrontend -or $InitializeManagementBackendDatabase -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) {
+    if ($BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementFrontendImage -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $InitializeManagementBackendDatabase -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) {
         $portRequired = $false
     }
     $allowBusyAsOk = [bool]$existingClusterDetected
@@ -5118,7 +5430,7 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
 }
 
 if ($workloadClusterExistsBeforePortCheck) {
-    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementFrontendImage -or $BootstrapManagementFrontend -or $InitializeManagementBackendDatabase -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) { "ok" } else { "warning" }
+    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementFrontendImage -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $InitializeManagementBackendDatabase -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) { "ok" } else { "warning" }
     $detectedMessage = if ($CreateWorkloadCluster) {
         "devdeploy-workload already exists. This launcher mode will verify it instead of recreating it."
     }
@@ -5139,6 +5451,9 @@ if ($workloadClusterExistsBeforePortCheck) {
     }
     elseif ($BootstrapManagementFrontend) {
         "devdeploy-workload already exists. Frontend bootstrap mode targets only devdeploy-mgmt and does not modify devdeploy-workload."
+    }
+    elseif ($VerifyManagementFrontend) {
+        "devdeploy-workload already exists. Frontend verify mode is read-only and targets only devdeploy-mgmt."
     }
     elseif ($InitializeManagementBackendDatabase) {
         "devdeploy-workload already exists. Backend database initialization mode targets only the backend database in devdeploy-mgmt."
@@ -5169,7 +5484,7 @@ if ($workloadClusterExistsBeforePortCheck) {
     }
 }
 
-Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres) -ManagementBackendImageBuildMode ([bool]$BuildManagementBackendImage) -ManagementBackendImageLoadMode ([bool]$LoadManagementBackendImage) -ManagementBackendSecretEnsureMode ([bool]$EnsureManagementBackendSecret) -ManagementBackendSecretVerifyMode ([bool]$VerifyManagementBackendSecret) -ManagementBackendBootstrapMode ([bool]$BootstrapManagementBackend) -ManagementBackendVerifyMode ([bool]$VerifyManagementBackend) -ManagementFrontendImageBuildMode ([bool]$BuildManagementFrontendImage) -ManagementFrontendImageLoadMode ([bool]$LoadManagementFrontendImage) -ManagementFrontendBootstrapMode ([bool]$BootstrapManagementFrontend) -ManagementBackendDatabaseInitializeMode ([bool]$InitializeManagementBackendDatabase)
+Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres) -ManagementBackendImageBuildMode ([bool]$BuildManagementBackendImage) -ManagementBackendImageLoadMode ([bool]$LoadManagementBackendImage) -ManagementBackendSecretEnsureMode ([bool]$EnsureManagementBackendSecret) -ManagementBackendSecretVerifyMode ([bool]$VerifyManagementBackendSecret) -ManagementBackendBootstrapMode ([bool]$BootstrapManagementBackend) -ManagementBackendVerifyMode ([bool]$VerifyManagementBackend) -ManagementFrontendImageBuildMode ([bool]$BuildManagementFrontendImage) -ManagementFrontendImageLoadMode ([bool]$LoadManagementFrontendImage) -ManagementFrontendBootstrapMode ([bool]$BootstrapManagementFrontend) -ManagementBackendDatabaseInitializeMode ([bool]$InitializeManagementBackendDatabase) -ManagementFrontendVerifyMode ([bool]$VerifyManagementFrontend)
 Test-KubectlContext -KubectlAvailable $kubectlAvailable
 
 $launcherMode = "preflight"
@@ -5196,6 +5511,9 @@ elseif ($LoadManagementFrontendImage) {
 }
 elseif ($BootstrapManagementFrontend) {
     $launcherMode = "management_frontend_bootstrap"
+}
+elseif ($VerifyManagementFrontend) {
+    $launcherMode = "management_frontend_verify"
 }
 elseif ($InitializeManagementBackendDatabase) {
     $launcherMode = "management_backend_database_initialize"
@@ -5317,6 +5635,17 @@ elseif ($BootstrapManagementFrontend) {
     $platformIngressOverride = $frontendBootstrapResult["ingress"]
     $platformPostgresOverride = $frontendBootstrapResult["postgres"]
 }
+elseif ($VerifyManagementFrontend) {
+    $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
+    $frontendVerifyResult = Invoke-VerifyManagementFrontend -KubectlAvailable $kubectlAvailable -ManagementCluster $managementCluster
+    $frontendStatus = $frontendVerifyResult["frontend"]
+    $frontendImageStatus = $frontendVerifyResult["frontend_image"]
+    $backendStatus = $frontendVerifyResult["backend"]
+    $backendImageStatus = $frontendVerifyResult["backend_image"]
+    $backendSecretStatus = $frontendVerifyResult["backend_secret"]
+    $platformIngressOverride = $frontendVerifyResult["ingress"]
+    $platformPostgresOverride = $frontendVerifyResult["postgres"]
+}
 elseif ($InitializeManagementBackendDatabase) {
     $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
     $databaseResult = Invoke-InitializeManagementBackendDatabase -KubectlAvailable $kubectlAvailable -ManagementCluster $managementCluster
@@ -5369,7 +5698,7 @@ if ($null -eq $managementCluster) {
 if ($null -eq $workloadCluster) {
     $workloadCluster = New-WorkloadClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
 }
-$platformHelmAvailable = [bool]($helmAvailable -and -not $BuildManagementBackendImage -and -not $BuildManagementFrontendImage -and -not $LoadManagementFrontendImage -and -not $BootstrapManagementFrontend -and -not $InitializeManagementBackendDatabase -and -not $LoadManagementBackendImage -and -not $EnsureManagementBackendSecret -and -not $VerifyManagementBackendSecret -and -not $BootstrapManagementBackend -and -not $VerifyManagementBackend)
+$platformHelmAvailable = [bool]($helmAvailable -and -not $BuildManagementBackendImage -and -not $BuildManagementFrontendImage -and -not $LoadManagementFrontendImage -and -not $BootstrapManagementFrontend -and -not $VerifyManagementFrontend -and -not $InitializeManagementBackendDatabase -and -not $LoadManagementBackendImage -and -not $EnsureManagementBackendSecret -and -not $VerifyManagementBackendSecret -and -not $BootstrapManagementBackend -and -not $VerifyManagementBackend)
 $platformBootstrap = New-PlatformBootstrapStatus -ManagementCluster $managementCluster -HelmAvailable $platformHelmAvailable -KubectlAvailable $kubectlAvailable -BackendImageStatus $backendImageStatus -BackendSecretStatus $backendSecretStatus -BackendStatus $backendStatus -BackendDatabaseStatus $backendDatabaseStatus -FrontendImageStatus $frontendImageStatus -FrontendStatus $frontendStatus -IngressStatusOverride $platformIngressOverride -PostgresStatusOverride $platformPostgresOverride
 $stableChecks = @($Checks | ForEach-Object { $_ })
 $overallStatus = [string](Get-OverallStatus -StableChecks $stableChecks)
@@ -5425,6 +5754,9 @@ if (-not $Quiet) {
     }
     elseif ($BootstrapManagementFrontend) {
         Write-Host ("Management frontend deployment: {0}/devdeploy-frontend" -f $PostgresNamespace)
+    }
+    elseif ($VerifyManagementFrontend) {
+        Write-Host ("Verified management frontend deployment: {0}/devdeploy-frontend" -f $PostgresNamespace)
     }
     elseif ($InitializeManagementBackendDatabase) {
         Write-Host ("Management backend database: {0}/devdeploy" -f $PostgresNamespace)

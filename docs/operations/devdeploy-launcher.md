@@ -268,6 +268,18 @@ It waits for `deployment/devdeploy-frontend`, verifies the Service and hostless 
 
 This explicit mode is the only frontend mode that may run `kubectl apply`, and it does so only against `platform/management/frontend` in `devdeploy-mgmt`. It does not build or load images, update Secrets, apply backend manifests, run `kubectl delete`, install Helm charts or Argo CD, create clusters, or mutate `devdeploy-workload`.
 
+## Verify The Management Frontend
+
+To run strict read-only verification of the deployed frontend:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -VerifyManagementFrontend
+```
+
+This mode verifies the management cluster and namespace, ingress-nginx, backend health, frontend Deployment and image, Ready Pods, Service port mapping, hostless Ingress, the frontend page through a temporary port-forward, and the frontend/backend host ingress routes.
+
+It only runs read-only Kubernetes queries, temporary port-forwarding, and HTTP requests. It does not apply, patch, delete, restart, build, load, install, or otherwise mutate platform or workload resources.
+
 ## Initialize The Management Backend Database
 
 After PostgreSQL and the backend are Ready, initialize or advance the management database schema with:
@@ -367,6 +379,7 @@ devdeploy-launcher-status
 - `management_frontend_image_build`
 - `management_frontend_image_load`
 - `management_frontend_bootstrap`
+- `management_frontend_verify`
 - `management_backend_database_initialize`
 
 `status` is one of:
