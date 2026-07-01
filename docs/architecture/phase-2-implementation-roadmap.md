@@ -23,6 +23,7 @@ The Phase 2 architecture baseline is defined in:
 - [Frontend Bootstrap Manifest Strategy](./frontend-bootstrap-manifest-strategy.md)
 - [Argo CD Bootstrap Preparation](./argocd-bootstrap-preparation.md)
 - [Argo CD Bootstrap Launcher Design](./argocd-bootstrap-launcher-design.md)
+- [Workload Cluster Registration Design](./workload-cluster-registration-design.md)
 
 The target architecture uses:
 
@@ -236,14 +237,22 @@ Expected output:
 - `devdeploy-workload` is registered and reported reachable.
 - No user workloads are deployed as a side effect of registration.
 
-## 12. Phase 2G - GitOps Root Application and Repository Integration
+## 12. Phase 2G - Workload Registration and GitOps Root Application
 
 Goal:
 
-- Connect Argo CD to the GitOps source and create or verify the parent workload Application.
+- Register `devdeploy-workload` with management Argo CD, then connect Argo CD to the GitOps source and create or verify the parent workload Application.
+
+Completed design baseline:
+
+- Phase 2G.1 defines endpoint discovery, Pod-network validation, credential/RBAC boundaries, the Launcher-managed cluster Secret, and sanitized registration status.
 
 Recommended tasks:
 
+- Discover an API endpoint reachable from `devdeploy-mgmt` Pods; never register host loopback `127.0.0.1:58081`.
+- Add explicit registration and strict read-only verification Launcher modes.
+- Prefer a scoped workload ServiceAccount and document any temporary local-only cluster-admin fallback.
+- Verify successful Argo CD cluster discovery without creating Applications.
 - Configure repository access without exposing credentials.
 - Create or verify parent Application `devdeploy-workloads`.
 - Ensure `devdeploy-workloads` targets `devdeploy-workload`.
@@ -252,6 +261,8 @@ Recommended tasks:
 
 Expected output:
 
+- `devdeploy-workload` is registered and reachable from Argo CD.
+- Registration credentials and endpoint details are sanitized.
 - Argo CD can read the configured GitOps source.
 - The parent Application exists and has the correct destination.
 - GitOps source changes remain the only normal path to workload reconciliation.

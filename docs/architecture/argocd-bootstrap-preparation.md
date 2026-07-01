@@ -125,6 +125,8 @@ Possible approaches include:
 
 The preferred V1 direction is a deterministic Launcher-managed Argo CD cluster Secret in namespace `argocd`, backed by credentials created specifically for `devdeploy-workload`.
 
+Detailed endpoint discovery, Pod-network validation, credential, RBAC, and status decisions are defined in [Workload Cluster Registration Design](./workload-cluster-registration-design.md).
+
 The registration endpoint requires deliberate handling. The host kubeconfig endpoint `https://127.0.0.1:58081` is not valid from inside an Argo CD Pod because Pod loopback refers to that Pod, not the Windows host. Future implementation must:
 
 - Discover or construct an API endpoint reachable from `devdeploy-mgmt` Pods.
@@ -284,4 +286,4 @@ Status must contain only sanitized metadata and booleans. It must not contain ad
 
 ## 12. Phase Handoff
 
-Phase 2F.1 establishes the preparation decisions in this document. Phase 2F.2 defines the Launcher contracts for management Argo CD bootstrap and verification. Runtime installation remains future work in Phase 2F.3 and Phase 2F.4.
+Phase 2F.1 establishes the preparation decisions in this document. Phase 2F.2 defines the Launcher contracts for management Argo CD bootstrap and verification. Phases 2F.3 and 2F.4 implement those management-cluster modes. Phase 2G.1 defines the next workload registration contract before runtime registration begins.
