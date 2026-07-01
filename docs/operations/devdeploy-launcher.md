@@ -314,6 +314,28 @@ The resulting `platform_bootstrap.components.argocd` object uses `mode: verify` 
 
 This mode does not run Helm install or upgrade, mutate Kubernetes resources, register `devdeploy-workload`, create cluster Secrets or Applications, configure repositories, or deploy workloads. Workload registration remains a later phase.
 
+## Discover The Workload Cluster Endpoint
+
+To discover which workload Kubernetes API endpoint is reachable and TLS-valid from inside `devdeploy-mgmt`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -DiscoverWorkloadClusterEndpoint
+```
+
+This explicit mode:
+
+- Rejects the host-only kubeconfig endpoint `https://127.0.0.1:58081` for Argo CD Pod use.
+- Inspects the management and workload kind control-plane Docker networks.
+- Tests the shared Docker-network control-plane hostname, `host.docker.internal`, and a discovered Docker gateway when available.
+- Creates only the labeled temporary Pod `devdeploy/devdeploy-endpoint-probe` in `devdeploy-mgmt`.
+- Uses the workload cluster CA in memory to verify network reachability, certificate trust, and hostname identity.
+- Deletes only that deterministic temporary probe Pod after the test.
+- Writes sanitized results to `platform_bootstrap.components.workload_cluster_endpoint`.
+
+The status includes the selected strategy and endpoint, candidate reachability/TLS booleans, and cleanup result. It never includes raw kubeconfig, CA content, bearer tokens, client certificates, or private keys.
+
+This mode does not register the workload cluster, create an Argo CD cluster Secret, create workload ServiceAccounts or RBAC, create Applications, deploy workloads, or mutate `devdeploy-workload`.
+
 ## Verify The Management Frontend
 
 To run strict read-only verification of the deployed frontend:
@@ -428,6 +450,7 @@ devdeploy-launcher-status
 - `management_frontend_verify`
 - `management_argocd_bootstrap`
 - `management_argocd_verify`
+- `workload_cluster_endpoint_discovery`
 - `management_backend_database_initialize`
 
 `status` is one of:
@@ -569,6 +592,11 @@ When `-BootstrapManagementPostgres` is used, the local status includes:
 - `platform_bootstrap`
 - `platform_bootstrap.devdeploy_namespace`
 - `platform_bootstrap.components.postgres`
+
+When `-DiscoverWorkloadClusterEndpoint` is used, the local status includes:
+
+- `platform_bootstrap`
+- `platform_bootstrap.components.workload_cluster_endpoint`
 
 The `next_actions` array contains safe, non-destructive guidance. For example:
 

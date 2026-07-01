@@ -44,6 +44,8 @@ param(
 
     [switch]$VerifyManagementArgoCD,
 
+    [switch]$DiscoverWorkloadClusterEndpoint,
+
     [switch]$InitializeManagementBackendDatabase,
 
     [switch]$Quiet
@@ -100,6 +102,9 @@ $ArgoCDChart = "argo/argo-cd"
 $ArgoCDIngressHost = ""
 $ArgoCDIngressPath = "/argocd"
 $ArgoCDUiAccess = "http://localhost:8080/argocd"
+$WorkloadEndpointProbeNamespace = "devdeploy"
+$WorkloadEndpointProbeName = "devdeploy-endpoint-probe"
+$WorkloadEndpointProbeImage = $BackendImage
 
 $PortPlan = [ordered]@{
     management_api   = 58080
@@ -637,6 +642,26 @@ function New-NextActions {
         }
         else {
             $actions.Add("Review the sanitized launcher status and logs. Run -BootstrapManagementArgoCD only when you intend to reconcile Argo CD resources.") | Out-Null
+        }
+    }
+
+    if ($LauncherMode -eq "workload_cluster_endpoint_discovery") {
+        $endpointStatus = "not_started"
+        try {
+            $endpointStatus = [string]$PlatformBootstrap["components"]["workload_cluster_endpoint"]["status"]
+        }
+        catch {
+            $endpointStatus = "unknown"
+        }
+
+        if ($endpointStatus -eq "ready") {
+            $actions.Add("A workload API endpoint was discovered and verified. Registration with Argo CD remains a separate future step.") | Out-Null
+        }
+        elseif ($endpointStatus -eq "warning") {
+            $actions.Add("Endpoint discovery succeeded, but probe cleanup or an optional check needs review before registration work begins.") | Out-Null
+        }
+        else {
+            $actions.Add("Review the sanitized endpoint probe checks and logs, then rerun -DiscoverWorkloadClusterEndpoint after resolving connectivity or TLS issues.") | Out-Null
         }
     }
 
@@ -3715,7 +3740,9 @@ function Test-KindClusters {
 
         [bool]$ManagementArgoCDBootstrapMode = $false,
 
-        [bool]$ManagementArgoCDVerifyMode = $false
+        [bool]$ManagementArgoCDVerifyMode = $false,
+
+        [bool]$WorkloadEndpointDiscoveryMode = $false
     )
 
     if (-not $KindAvailable) {
@@ -3824,6 +3851,10 @@ function Test-KindClusters {
     elseif ($ManagementArgoCDVerifyMode -and $mgmtExists) {
         $status = "ok"
         $message = "devdeploy-mgmt exists. Argo CD verify mode performs read-only checks only in this management cluster."
+    }
+    elseif ($WorkloadEndpointDiscoveryMode -and $mgmtExists -and $workloadExists) {
+        $status = "ok"
+        $message = "Both DevDeploy clusters exist. Endpoint discovery may create only its deterministic temporary probe Pod in devdeploy-mgmt."
     }
 
     Add-Check -Id "kind_clusters" -Label "Existing kind clusters" -Status $status -Message $message -Details @{
@@ -4960,6 +4991,494 @@ function Get-ManagementArgoCDStatus {
     return $status
 }
 
+function New-WorkloadClusterEndpointStatus {
+    return [ordered]@{
+        discovered             = $false
+        ready                  = $false
+        source_cluster         = "devdeploy-mgmt"
+        source_context         = "kind-devdeploy-mgmt"
+        target_cluster         = "devdeploy-workload"
+        target_context         = "kind-devdeploy-workload"
+        rejected_host_endpoint = $null
+        selected_endpoint      = $null
+        selected_strategy      = "not_selected"
+        candidates             = @()
+        probe_namespace        = $WorkloadEndpointProbeNamespace
+        probe_resource_name    = $WorkloadEndpointProbeName
+        cleanup_succeeded      = $null
+        status                 = "not_started"
+        message                = "Workload cluster endpoint discovery has not been requested."
+        checked_at             = [string](Get-Timestamp)
+    }
+}
+
+function Get-DockerContainerNetworkInfo {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ContainerName
+    )
+
+    $result = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @("inspect", $ContainerName, "--format", "{{json .NetworkSettings.Networks}}") -TimeoutSeconds 20 -PreserveStandardOutput $true
+    if ($result.exit_code -ne 0 -or $result.timed_out -or [string]::IsNullOrWhiteSpace($result.stdout)) {
+        return [ordered]@{
+            success  = $false
+            networks = @()
+            error    = "Docker network metadata could not be read for the expected kind control-plane container."
+        }
+    }
+
+    try {
+        $parsed = ([string]$result.stdout | ConvertFrom-Json)
+        $networks = New-Object System.Collections.Generic.List[object]
+        foreach ($property in @($parsed.PSObject.Properties)) {
+            $networks.Add([ordered]@{
+                    name       = [string]$property.Name
+                    gateway    = [string]$property.Value.Gateway
+                    ip_address = [string]$property.Value.IPAddress
+                }) | Out-Null
+        }
+
+        return [ordered]@{
+            success  = $true
+            networks = @($networks | ForEach-Object { $_ })
+            error    = ""
+        }
+    }
+    catch {
+        return [ordered]@{
+            success  = $false
+            networks = @()
+            error    = "Docker network metadata could not be parsed safely."
+        }
+    }
+}
+
+function Remove-WorkloadEndpointProbePod {
+    param(
+        [bool]$KubectlAvailable
+    )
+
+    if (-not $KubectlAvailable) {
+        return $false
+    }
+
+    $result = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $WorkloadEndpointProbeNamespace, "delete", "pod", $WorkloadEndpointProbeName, "--ignore-not-found=true", "--wait=true", "--timeout=30s") -TimeoutSeconds 45
+    return [bool]($result.exit_code -eq 0 -and -not $result.timed_out)
+}
+
+function Invoke-DiscoverWorkloadClusterEndpoint {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ManagementCluster,
+
+        [Parameter(Mandatory = $true)]
+        [object]$WorkloadCluster,
+
+        [bool]$DockerAvailable,
+
+        [bool]$DockerDaemonReachable,
+
+        [bool]$KindAvailable,
+
+        [bool]$KubectlAvailable
+    )
+
+    $status = New-WorkloadClusterEndpointStatus
+    $candidateResults = New-Object System.Collections.Generic.List[object]
+    $probeCreated = $false
+    $cleanupSucceeded = $false
+
+    if (-not $DockerAvailable -or -not $DockerDaemonReachable -or -not $KindAvailable -or -not $KubectlAvailable) {
+        $status["status"] = "error"
+        $status["message"] = "Docker, kind, kubectl, and a reachable Docker daemon are required for endpoint discovery."
+        Add-Check -Id "workload_endpoint_prerequisites" -Label "Workload endpoint discovery prerequisites" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required                = $true
+            docker_available        = $DockerAvailable
+            docker_daemon_reachable = $DockerDaemonReachable
+            kind_available          = $KindAvailable
+            kubectl_available       = $KubectlAvailable
+        }
+        return $status
+    }
+
+    if ([string]$ManagementCluster["status"] -ne "ready" -or [string]$WorkloadCluster["status"] -ne "ready") {
+        $status["status"] = "error"
+        $status["message"] = "Both devdeploy-mgmt and devdeploy-workload must be Ready before endpoint discovery."
+        Add-Check -Id "workload_endpoint_prerequisites" -Label "Workload endpoint discovery prerequisites" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required                  = $true
+            management_cluster_status = [string]$ManagementCluster["status"]
+            workload_cluster_status   = [string]$WorkloadCluster["status"]
+        }
+        return $status
+    }
+
+    Add-Check -Id "workload_endpoint_prerequisites" -Label "Workload endpoint discovery prerequisites" -Status "ok" -Message "Both DevDeploy clusters and required host tools are ready for endpoint discovery." -Details @{
+        required = $true
+    }
+
+    $serverResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("config", "view", "--raw", "--minify", "--context", "kind-devdeploy-workload", "--output", "jsonpath={.clusters[0].cluster.server}") -TimeoutSeconds 20 -PreserveStandardOutput $true
+    $caResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("config", "view", "--raw", "--minify", "--context", "kind-devdeploy-workload", "--output", "jsonpath={.clusters[0].cluster.certificate-authority-data}") -TimeoutSeconds 20 -PreserveStandardOutput $true
+    $hostEndpoint = ([string]$serverResult.stdout).Trim()
+    $caData = ([string]$caResult.stdout).Trim()
+    if ($serverResult.exit_code -ne 0 -or $serverResult.timed_out -or [string]::IsNullOrWhiteSpace($hostEndpoint) -or $caResult.exit_code -ne 0 -or $caResult.timed_out -or [string]::IsNullOrWhiteSpace($caData)) {
+        $status["status"] = "error"
+        $status["message"] = "The workload kubeconfig server endpoint or CA data could not be read safely."
+        Add-Check -Id "workload_endpoint_kubeconfig" -Label "Workload kubeconfig endpoint metadata" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required = $true
+        }
+        return $status
+    }
+
+    $status["rejected_host_endpoint"] = $hostEndpoint
+    $hostOnlyRejected = [bool]($hostEndpoint -match '^https://(127\.0\.0\.1|localhost):58081/?$')
+    $candidateResults.Add([ordered]@{
+            strategy                  = "host_kubeconfig_loopback"
+            endpoint                  = $hostEndpoint
+            reachable_from_management = $false
+            tls_verified              = $false
+            selected                  = $false
+            rejected_reason           = if ($hostOnlyRejected) { "Host loopback is not valid from inside Argo CD or management-cluster Pods." } else { "The host kubeconfig endpoint is recorded only for comparison and is not selected without Pod-network validation." }
+        }) | Out-Null
+    Add-Check -Id "workload_endpoint_host_loopback_rejected" -Label "Host-only workload endpoint rejection" -Status "ok" -Message "The workload kubeconfig host endpoint was classified as host-only and will not be selected for Argo CD." -Details @{
+        required = $true
+        endpoint = $hostEndpoint
+        rejected = $true
+    }
+
+    $managementNetwork = Get-DockerContainerNetworkInfo -ContainerName "devdeploy-mgmt-control-plane"
+    $workloadNetwork = Get-DockerContainerNetworkInfo -ContainerName "devdeploy-workload-control-plane"
+    if (-not $managementNetwork.success -or -not $workloadNetwork.success) {
+        $status["status"] = "error"
+        $status["message"] = "Docker network information for both kind control planes could not be inspected safely."
+        Add-Check -Id "workload_endpoint_docker_networks" -Label "Workload endpoint Docker networks" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required = $true
+        }
+        $status["candidates"] = @($candidateResults | ForEach-Object { $_ })
+        return $status
+    }
+
+    $managementNetworkNames = @($managementNetwork.networks | ForEach-Object { [string]$_['name'] })
+    $workloadNetworkNames = @($workloadNetwork.networks | ForEach-Object { [string]$_['name'] })
+    $sharedNetworkNames = @($managementNetworkNames | Where-Object { $workloadNetworkNames -contains $_ })
+    $probeCandidates = New-Object System.Collections.Generic.List[object]
+    if ($sharedNetworkNames.Count -gt 0) {
+        $probeCandidates.Add([ordered]@{
+                strategy = "docker_network_control_plane"
+                endpoint = "https://devdeploy-workload-control-plane:6443"
+            }) | Out-Null
+    }
+    else {
+        $candidateResults.Add([ordered]@{
+                strategy                  = "docker_network_control_plane"
+                endpoint                  = "https://devdeploy-workload-control-plane:6443"
+                reachable_from_management = $false
+                tls_verified              = $false
+                selected                  = $false
+                rejected_reason           = "The management and workload control-plane containers do not share a Docker network."
+            }) | Out-Null
+    }
+
+    $probeCandidates.Add([ordered]@{
+            strategy = "host_docker_internal"
+            endpoint = "https://host.docker.internal:58081"
+        }) | Out-Null
+
+    $gateway = ""
+    if ($sharedNetworkNames.Count -gt 0) {
+        $sharedName = [string]$sharedNetworkNames[0]
+        $sharedMetadata = @($managementNetwork.networks | Where-Object { [string]$_['name'] -eq $sharedName }) | Select-Object -First 1
+        if ($null -ne $sharedMetadata) {
+            $gateway = [string]$sharedMetadata["gateway"]
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($gateway)) {
+        $probeCandidates.Add([ordered]@{
+                strategy = "docker_gateway"
+                endpoint = "https://${gateway}:58081"
+            }) | Out-Null
+    }
+
+    Add-Check -Id "workload_endpoint_candidates" -Label "Workload endpoint candidates" -Status "ok" -Message "Sanitized workload API endpoint candidates were derived from Docker and kubeconfig metadata." -Details @{
+        required             = $true
+        shared_network_count = [int]$sharedNetworkNames.Count
+        probe_candidate_count = [int]$probeCandidates.Count
+    }
+
+    $existingProbeResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $WorkloadEndpointProbeNamespace, "get", "pod", $WorkloadEndpointProbeName, "--output", "json") -TimeoutSeconds 20 -PreserveStandardOutput $true
+    if ($existingProbeResult.exit_code -eq 0 -and -not $existingProbeResult.timed_out) {
+        $existingOwned = $false
+        try {
+            $existingProbe = ([string]$existingProbeResult.stdout | ConvertFrom-Json)
+            $existingOwned = [bool]([string]$existingProbe.metadata.labels.'devdeploy.io/purpose' -eq "endpoint-probe")
+        }
+        catch {
+            $existingOwned = $false
+        }
+
+        if (-not $existingOwned) {
+            $status["status"] = "error"
+            $status["message"] = "A Pod named devdeploy-endpoint-probe already exists without the expected ownership label; it was not deleted."
+            Add-Check -Id "workload_endpoint_probe_ownership" -Label "Workload endpoint probe ownership" -Status "failed" -Message ([string]$status["message"]) -Details @{
+                required       = $true
+                namespace      = $WorkloadEndpointProbeNamespace
+                resource_name  = $WorkloadEndpointProbeName
+            }
+            $status["candidates"] = @($candidateResults | ForEach-Object { $_ })
+            return $status
+        }
+
+        if (-not (Remove-WorkloadEndpointProbePod -KubectlAvailable $KubectlAvailable)) {
+            $status["status"] = "error"
+            $status["message"] = "A stale owned endpoint probe Pod could not be removed safely."
+            Add-Check -Id "workload_endpoint_probe_ownership" -Label "Workload endpoint probe ownership" -Status "failed" -Message ([string]$status["message"]) -Details @{
+                required      = $true
+                namespace     = $WorkloadEndpointProbeNamespace
+                resource_name = $WorkloadEndpointProbeName
+            }
+            $status["candidates"] = @($candidateResults | ForEach-Object { $_ })
+            return $status
+        }
+    }
+
+    $probeScript = @'
+import base64
+import json
+import os
+import ssl
+import urllib.error
+import urllib.request
+
+ca_path = "/tmp/workload-ca.crt"
+with open(ca_path, "wb") as ca_file:
+    ca_file.write(base64.b64decode(os.environ["WORKLOAD_CA_B64"]))
+
+candidates = json.loads(os.environ["PROBE_CANDIDATES_JSON"])
+
+def request(endpoint, context):
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        urllib.request.HTTPSHandler(context=context),
+    )
+    try:
+        with opener.open(endpoint.rstrip("/") + "/version", timeout=8) as response:
+            return True, int(response.status)
+    except urllib.error.HTTPError as error:
+        return True, int(error.code)
+    except Exception:
+        return False, 0
+
+verified_context = ssl.create_default_context(cafile=ca_path)
+unverified_context = ssl._create_unverified_context()
+
+for candidate in candidates:
+    verified, status_code = request(candidate["endpoint"], verified_context)
+    reachable = verified
+    if not verified:
+        reachable, fallback_code = request(candidate["endpoint"], unverified_context)
+        if fallback_code:
+            status_code = fallback_code
+    print(json.dumps({
+        "strategy": candidate["strategy"],
+        "endpoint": candidate["endpoint"],
+        "reachable_from_management": bool(reachable),
+        "tls_verified": bool(verified),
+        "http_status": int(status_code),
+    }, sort_keys=True))
+'@
+
+    $probeEnvironmentCandidates = @($probeCandidates | ForEach-Object {
+            [ordered]@{
+                strategy = [string]$_['strategy']
+                endpoint = [string]$_['endpoint']
+            }
+        }) | ConvertTo-Json -Compress
+
+    $podManifest = [ordered]@{
+        apiVersion = "v1"
+        kind       = "Pod"
+        metadata   = [ordered]@{
+            name      = $WorkloadEndpointProbeName
+            namespace = $WorkloadEndpointProbeNamespace
+            labels    = [ordered]@{
+                "app.kubernetes.io/name"       = "devdeploy-endpoint-probe"
+                "app.kubernetes.io/managed-by" = "devdeploy-launcher"
+                "devdeploy.io/purpose"         = "endpoint-probe"
+            }
+        }
+        spec       = [ordered]@{
+            restartPolicy                = "Never"
+            automountServiceAccountToken = $false
+            activeDeadlineSeconds        = 90
+            securityContext              = [ordered]@{
+                runAsNonRoot    = $true
+                seccompProfile  = [ordered]@{ type = "RuntimeDefault" }
+            }
+            containers                   = @(
+                [ordered]@{
+                    name            = "probe"
+                    image           = $WorkloadEndpointProbeImage
+                    imagePullPolicy = "IfNotPresent"
+                    command         = @("python", "-c", $probeScript)
+                    env             = @(
+                        [ordered]@{ name = "WORKLOAD_CA_B64"; value = $caData },
+                        [ordered]@{ name = "PROBE_CANDIDATES_JSON"; value = $probeEnvironmentCandidates }
+                    )
+                    securityContext = [ordered]@{
+                        allowPrivilegeEscalation = $false
+                        readOnlyRootFilesystem   = $true
+                        runAsNonRoot             = $true
+                        runAsUser                = 10001
+                        runAsGroup               = 10001
+                        capabilities             = [ordered]@{ drop = @("ALL") }
+                    }
+                    resources       = [ordered]@{
+                        requests = [ordered]@{ cpu = "10m"; memory = "32Mi" }
+                        limits   = [ordered]@{ cpu = "100m"; memory = "128Mi" }
+                    }
+                    volumeMounts    = @(
+                        [ordered]@{ name = "tmp"; mountPath = "/tmp" }
+                    )
+                }
+            )
+            volumes                      = @(
+                [ordered]@{ name = "tmp"; emptyDir = [ordered]@{} }
+            )
+        }
+    }
+
+    try {
+        $manifestJson = $podManifest | ConvertTo-Json -Depth 12 -Compress
+        $createResult = Invoke-SanitizedInputCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "create", "--filename", "-") -StandardInput $manifestJson -TimeoutSeconds 45
+        if ($createResult.exit_code -ne 0 -or $createResult.timed_out) {
+            $status["status"] = "error"
+            $status["message"] = "The temporary endpoint probe Pod could not be created safely."
+            Add-Check -Id "workload_endpoint_probe_create" -Label "Workload endpoint probe creation" -Status "failed" -Message ([string]$status["message"]) -Details @{
+                required      = $true
+                namespace     = $WorkloadEndpointProbeNamespace
+                resource_name = $WorkloadEndpointProbeName
+                error         = $createResult.stderr
+            }
+            return $status
+        }
+
+        $probeCreated = $true
+        Add-Check -Id "workload_endpoint_probe_create" -Label "Workload endpoint probe creation" -Status "ok" -Message "The deterministic temporary endpoint probe Pod was created in devdeploy-mgmt." -Details @{
+            required      = $true
+            namespace     = $WorkloadEndpointProbeNamespace
+            resource_name = $WorkloadEndpointProbeName
+            image         = $WorkloadEndpointProbeImage
+        }
+
+        $phase = ""
+        for ($attempt = 1; $attempt -le 45; $attempt++) {
+            $phaseResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $WorkloadEndpointProbeNamespace, "get", "pod", $WorkloadEndpointProbeName, "--output", "jsonpath={.status.phase}") -TimeoutSeconds 10
+            if ($phaseResult.exit_code -eq 0 -and -not $phaseResult.timed_out) {
+                $phase = ([string]$phaseResult.stdout).Trim()
+            }
+            if ($phase -in @("Succeeded", "Failed")) {
+                break
+            }
+            Start-Sleep -Seconds 2
+        }
+
+        if ($phase -ne "Succeeded") {
+            $status["status"] = "error"
+            $status["message"] = "The temporary endpoint probe Pod did not complete successfully."
+            Add-Check -Id "workload_endpoint_probe_run" -Label "Workload endpoint probe execution" -Status "failed" -Message ([string]$status["message"]) -Details @{
+                required  = $true
+                phase     = $phase
+                namespace = $WorkloadEndpointProbeNamespace
+            }
+            return $status
+        }
+
+        $logsResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $WorkloadEndpointProbeNamespace, "logs", $WorkloadEndpointProbeName, "--container", "probe") -TimeoutSeconds 20 -PreserveStandardOutput $true
+        if ($logsResult.exit_code -ne 0 -or $logsResult.timed_out -or [string]::IsNullOrWhiteSpace($logsResult.stdout)) {
+            $status["status"] = "error"
+            $status["message"] = "Endpoint probe results could not be read safely."
+            Add-Check -Id "workload_endpoint_probe_run" -Label "Workload endpoint probe execution" -Status "failed" -Message ([string]$status["message"]) -Details @{
+                required = $true
+            }
+            return $status
+        }
+
+        foreach ($line in @(([string]$logsResult.stdout) -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+            try {
+                $probeResult = ([string]$line | ConvertFrom-Json)
+                $candidateResults.Add([ordered]@{
+                        strategy                  = [string]$probeResult.strategy
+                        endpoint                  = [string]$probeResult.endpoint
+                        reachable_from_management = [bool]$probeResult.reachable_from_management
+                        tls_verified              = [bool]$probeResult.tls_verified
+                        selected                  = $false
+                        rejected_reason           = if ([bool]$probeResult.tls_verified) { "" } elseif ([bool]$probeResult.reachable_from_management) { "Network reachability succeeded, but TLS verification failed." } else { "The endpoint was not reachable from the management-cluster probe Pod." }
+                    }) | Out-Null
+            }
+            catch {
+                Write-LauncherLog "Ignored an unparseable sanitized endpoint probe result line."
+            }
+        }
+
+        Add-Check -Id "workload_endpoint_probe_run" -Label "Workload endpoint probe execution" -Status "ok" -Message "The temporary probe completed and returned sanitized network and TLS results." -Details @{
+            required         = $true
+            candidate_count  = [int]$probeCandidates.Count
+            result_count     = [int]($candidateResults.Count - 1)
+        }
+
+        $selected = @($candidateResults | Where-Object { [bool]$_['reachable_from_management'] -and [bool]$_['tls_verified'] -and [string]$_['strategy'] -ne "host_kubeconfig_loopback" }) | Select-Object -First 1
+        if ($null -eq $selected) {
+            $status["status"] = "error"
+            $status["message"] = "No workload API endpoint passed management-cluster network and TLS verification."
+            Add-Check -Id "workload_endpoint_selection" -Label "Workload endpoint selection" -Status "failed" -Message ([string]$status["message"]) -Details @{
+                required = $true
+            }
+        }
+        else {
+            $selected["selected"] = $true
+            $selected["rejected_reason"] = ""
+            $status["discovered"] = $true
+            $status["ready"] = $true
+            $status["selected_endpoint"] = [string]$selected["endpoint"]
+            $status["selected_strategy"] = [string]$selected["strategy"]
+            $status["status"] = "ready"
+            $status["message"] = "A workload Kubernetes API endpoint passed management-cluster network and TLS verification. Registration was not performed."
+            Add-Check -Id "workload_endpoint_selection" -Label "Workload endpoint selection" -Status "ok" -Message ([string]$status["message"]) -Details @{
+                required          = $true
+                selected_strategy = [string]$selected["strategy"]
+                selected_endpoint = [string]$selected["endpoint"]
+                registration_performed = $false
+            }
+        }
+    }
+    finally {
+        $cleanupSucceeded = Remove-WorkloadEndpointProbePod -KubectlAvailable $KubectlAvailable
+        $status["cleanup_succeeded"] = $cleanupSucceeded
+        if ($cleanupSucceeded) {
+            Add-Check -Id "workload_endpoint_probe_cleanup" -Label "Workload endpoint probe cleanup" -Status "ok" -Message "The deterministic temporary endpoint probe Pod is absent after discovery." -Details @{
+                required      = $false
+                namespace     = $WorkloadEndpointProbeNamespace
+                resource_name = $WorkloadEndpointProbeName
+            }
+        }
+        else {
+            Add-Check -Id "workload_endpoint_probe_cleanup" -Label "Workload endpoint probe cleanup" -Status "warning" -Message "The temporary endpoint probe Pod could not be confirmed absent; remove only devdeploy-endpoint-probe after inspection." -Details @{
+                required      = $false
+                namespace     = $WorkloadEndpointProbeNamespace
+                resource_name = $WorkloadEndpointProbeName
+            }
+            if ([string]$status["status"] -eq "ready") {
+                $status["status"] = "warning"
+                $status["message"] = "Endpoint discovery succeeded, but temporary probe cleanup needs review."
+            }
+        }
+
+        $status["candidates"] = @($candidateResults | ForEach-Object { $_ })
+        $status["checked_at"] = [string](Get-Timestamp)
+    }
+
+    return $status
+}
+
 function New-PlatformBootstrapStatus {
     param(
         [Parameter(Mandatory = $true)]
@@ -4994,12 +5513,16 @@ function New-PlatformBootstrapStatus {
         [object]$PostgresStatusOverride = $null,
 
         [AllowNull()]
-        [object]$ArgoCDStatusOverride = $null
+        [object]$ArgoCDStatusOverride = $null,
+
+        [AllowNull()]
+        [object]$WorkloadEndpointStatusOverride = $null
     )
 
     $ingress = if ($null -ne $IngressStatusOverride) { $IngressStatusOverride } else { Get-ManagementIngressStatus -ManagementCluster $ManagementCluster -HelmAvailable $HelmAvailable -KubectlAvailable $KubectlAvailable }
     $postgres = if ($null -ne $PostgresStatusOverride) { $PostgresStatusOverride } else { Get-ManagementPostgresStatus -ManagementCluster $ManagementCluster -HelmAvailable $HelmAvailable -KubectlAvailable $KubectlAvailable }
     $argocd = if ($null -ne $ArgoCDStatusOverride) { $ArgoCDStatusOverride } else { Get-ManagementArgoCDStatus -ManagementCluster $ManagementCluster -HelmAvailable $HelmAvailable -KubectlAvailable $KubectlAvailable }
+    $workloadEndpoint = if ($null -ne $WorkloadEndpointStatusOverride) { $WorkloadEndpointStatusOverride } else { New-WorkloadClusterEndpointStatus }
     $devdeployNamespace = Get-DevDeployNamespaceStatus -ManagementCluster $ManagementCluster -KubectlAvailable $KubectlAvailable
     $status = "not_started"
     $message = "Management platform bootstrap has not started yet."
@@ -5095,6 +5618,7 @@ function New-PlatformBootstrapStatus {
             frontend_image = $FrontendImageStatus
             frontend      = $FrontendStatus
             argocd        = $argocd
+            workload_cluster_endpoint = $workloadEndpoint
         }
     }
 
@@ -5118,6 +5642,7 @@ function New-PlatformBootstrapStatus {
         frontend_image_status = [string]$FrontendImageStatus["status"]
         frontend_status = [string]$FrontendStatus["status"]
         argocd_status = [string]$argocd["status"]
+        workload_endpoint_status = [string]$workloadEndpoint["status"]
     }
 
     return $platform
@@ -6070,6 +6595,9 @@ elseif ($BootstrapManagementArgoCD) {
 elseif ($VerifyManagementArgoCD) {
     Write-LauncherLog "Starting DevDeploy Launcher strict read-only management Argo CD verify mode."
 }
+elseif ($DiscoverWorkloadClusterEndpoint) {
+    Write-LauncherLog "Starting DevDeploy Launcher explicit workload cluster endpoint discovery mode."
+}
 elseif ($InitializeManagementBackendDatabase) {
     Write-LauncherLog "Starting DevDeploy Launcher explicit management backend database initialization mode."
 }
@@ -6130,10 +6658,10 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
     $expectedCluster = if ($isManagementPort) { "devdeploy-mgmt" } elseif ($isWorkloadPort) { "devdeploy-workload" } else { "" }
     $existingClusterDetected = [bool](($isManagementPort -and $managementClusterExistsBeforePortCheck) -or ($isWorkloadPort -and $workloadClusterExistsBeforePortCheck))
     $portRequired = [bool](-not $existingClusterDetected)
-    if (($BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD) -and $isWorkloadPort) {
+    if (($BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $DiscoverWorkloadClusterEndpoint) -and $isWorkloadPort) {
         $portRequired = $false
     }
-    if ($BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementFrontendImage -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $InitializeManagementBackendDatabase -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) {
+    if ($BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementFrontendImage -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $DiscoverWorkloadClusterEndpoint -or $InitializeManagementBackendDatabase -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) {
         $portRequired = $false
     }
     $allowBusyAsOk = [bool]$existingClusterDetected
@@ -6142,7 +6670,7 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
 }
 
 if ($workloadClusterExistsBeforePortCheck) {
-    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementFrontendImage -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $InitializeManagementBackendDatabase -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) { "ok" } else { "warning" }
+    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementFrontendImage -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $DiscoverWorkloadClusterEndpoint -or $InitializeManagementBackendDatabase -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) { "ok" } else { "warning" }
     $detectedMessage = if ($CreateWorkloadCluster) {
         "devdeploy-workload already exists. This launcher mode will verify it instead of recreating it."
     }
@@ -6173,6 +6701,9 @@ if ($workloadClusterExistsBeforePortCheck) {
     elseif ($VerifyManagementArgoCD) {
         "devdeploy-workload already exists. Argo CD verify mode is read-only and targets only devdeploy-mgmt."
     }
+    elseif ($DiscoverWorkloadClusterEndpoint) {
+        "devdeploy-workload already exists. Endpoint discovery reads its metadata and does not create registration resources in it."
+    }
     elseif ($InitializeManagementBackendDatabase) {
         "devdeploy-workload already exists. Backend database initialization mode targets only the backend database in devdeploy-mgmt."
     }
@@ -6202,7 +6733,7 @@ if ($workloadClusterExistsBeforePortCheck) {
     }
 }
 
-Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres) -ManagementBackendImageBuildMode ([bool]$BuildManagementBackendImage) -ManagementBackendImageLoadMode ([bool]$LoadManagementBackendImage) -ManagementBackendSecretEnsureMode ([bool]$EnsureManagementBackendSecret) -ManagementBackendSecretVerifyMode ([bool]$VerifyManagementBackendSecret) -ManagementBackendBootstrapMode ([bool]$BootstrapManagementBackend) -ManagementBackendVerifyMode ([bool]$VerifyManagementBackend) -ManagementFrontendImageBuildMode ([bool]$BuildManagementFrontendImage) -ManagementFrontendImageLoadMode ([bool]$LoadManagementFrontendImage) -ManagementFrontendBootstrapMode ([bool]$BootstrapManagementFrontend) -ManagementBackendDatabaseInitializeMode ([bool]$InitializeManagementBackendDatabase) -ManagementFrontendVerifyMode ([bool]$VerifyManagementFrontend) -ManagementArgoCDBootstrapMode ([bool]$BootstrapManagementArgoCD) -ManagementArgoCDVerifyMode ([bool]$VerifyManagementArgoCD)
+Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres) -ManagementBackendImageBuildMode ([bool]$BuildManagementBackendImage) -ManagementBackendImageLoadMode ([bool]$LoadManagementBackendImage) -ManagementBackendSecretEnsureMode ([bool]$EnsureManagementBackendSecret) -ManagementBackendSecretVerifyMode ([bool]$VerifyManagementBackendSecret) -ManagementBackendBootstrapMode ([bool]$BootstrapManagementBackend) -ManagementBackendVerifyMode ([bool]$VerifyManagementBackend) -ManagementFrontendImageBuildMode ([bool]$BuildManagementFrontendImage) -ManagementFrontendImageLoadMode ([bool]$LoadManagementFrontendImage) -ManagementFrontendBootstrapMode ([bool]$BootstrapManagementFrontend) -ManagementBackendDatabaseInitializeMode ([bool]$InitializeManagementBackendDatabase) -ManagementFrontendVerifyMode ([bool]$VerifyManagementFrontend) -ManagementArgoCDBootstrapMode ([bool]$BootstrapManagementArgoCD) -ManagementArgoCDVerifyMode ([bool]$VerifyManagementArgoCD) -WorkloadEndpointDiscoveryMode ([bool]$DiscoverWorkloadClusterEndpoint)
 Test-KubectlContext -KubectlAvailable $kubectlAvailable
 
 $launcherMode = "preflight"
@@ -6239,6 +6770,9 @@ elseif ($BootstrapManagementArgoCD) {
 elseif ($VerifyManagementArgoCD) {
     $launcherMode = "management_argocd_verify"
 }
+elseif ($DiscoverWorkloadClusterEndpoint) {
+    $launcherMode = "workload_cluster_endpoint_discovery"
+}
 elseif ($InitializeManagementBackendDatabase) {
     $launcherMode = "management_backend_database_initialize"
 }
@@ -6272,6 +6806,7 @@ $frontendStatus = New-ManagementFrontendStatus
 $platformIngressOverride = $null
 $platformPostgresOverride = $null
 $platformArgoCDOverride = $null
+$platformWorkloadEndpointOverride = $null
 
 if ($CreateManagementCluster) {
     Write-KindConfigPreview -Id "management_kind_config" -Label "Management kind config" -ClusterName "devdeploy-mgmt" -Path $MgmtKindConfigPath -ApiServerPort 58080 -HttpHostPort 8080 -HttpsHostPort 8443
@@ -6379,6 +6914,11 @@ elseif ($VerifyManagementArgoCD) {
     $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
     $platformArgoCDOverride = Invoke-VerifyManagementArgoCD -ManagementCluster $managementCluster -HelmAvailable $helmAvailable -KubectlAvailable $kubectlAvailable
 }
+elseif ($DiscoverWorkloadClusterEndpoint) {
+    $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
+    $workloadCluster = New-WorkloadClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
+    $platformWorkloadEndpointOverride = Invoke-DiscoverWorkloadClusterEndpoint -ManagementCluster $managementCluster -WorkloadCluster $workloadCluster -DockerAvailable $dockerAvailable -DockerDaemonReachable $dockerDaemonReachable -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
+}
 elseif ($InitializeManagementBackendDatabase) {
     $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
     $databaseResult = Invoke-InitializeManagementBackendDatabase -KubectlAvailable $kubectlAvailable -ManagementCluster $managementCluster
@@ -6432,7 +6972,7 @@ if ($null -eq $workloadCluster) {
     $workloadCluster = New-WorkloadClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
 }
 $platformHelmAvailable = [bool]($helmAvailable -and -not $BuildManagementBackendImage -and -not $BuildManagementFrontendImage -and -not $LoadManagementFrontendImage -and -not $BootstrapManagementFrontend -and -not $VerifyManagementFrontend -and -not $InitializeManagementBackendDatabase -and -not $LoadManagementBackendImage -and -not $EnsureManagementBackendSecret -and -not $VerifyManagementBackendSecret -and -not $BootstrapManagementBackend -and -not $VerifyManagementBackend)
-$platformBootstrap = New-PlatformBootstrapStatus -ManagementCluster $managementCluster -HelmAvailable $platformHelmAvailable -KubectlAvailable $kubectlAvailable -BackendImageStatus $backendImageStatus -BackendSecretStatus $backendSecretStatus -BackendStatus $backendStatus -BackendDatabaseStatus $backendDatabaseStatus -FrontendImageStatus $frontendImageStatus -FrontendStatus $frontendStatus -IngressStatusOverride $platformIngressOverride -PostgresStatusOverride $platformPostgresOverride -ArgoCDStatusOverride $platformArgoCDOverride
+$platformBootstrap = New-PlatformBootstrapStatus -ManagementCluster $managementCluster -HelmAvailable $platformHelmAvailable -KubectlAvailable $kubectlAvailable -BackendImageStatus $backendImageStatus -BackendSecretStatus $backendSecretStatus -BackendStatus $backendStatus -BackendDatabaseStatus $backendDatabaseStatus -FrontendImageStatus $frontendImageStatus -FrontendStatus $frontendStatus -IngressStatusOverride $platformIngressOverride -PostgresStatusOverride $platformPostgresOverride -ArgoCDStatusOverride $platformArgoCDOverride -WorkloadEndpointStatusOverride $platformWorkloadEndpointOverride
 $stableChecks = @($Checks | ForEach-Object { $_ })
 $overallStatus = [string](Get-OverallStatus -StableChecks $stableChecks)
 $summary = New-LauncherSummary -StableChecks $stableChecks
@@ -6498,6 +7038,9 @@ if (-not $Quiet) {
     elseif ($VerifyManagementArgoCD) {
         Write-Host ("Verified management Argo CD release: {0}/{1}" -f $ArgoCDNamespace, $ArgoCDRelease)
         Write-Host ("Management Argo CD UI: {0}" -f $ArgoCDUiAccess)
+    }
+    elseif ($DiscoverWorkloadClusterEndpoint) {
+        Write-Host "Workload cluster endpoint discovery completed without registration."
     }
     elseif ($InitializeManagementBackendDatabase) {
         Write-Host ("Management backend database: {0}/devdeploy" -f $PostgresNamespace)

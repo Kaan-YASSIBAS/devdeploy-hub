@@ -391,11 +391,12 @@ The Application count may remain `0` after successful registration. Registration
 
 Recommended follow-up milestones:
 
-1. Add read-only endpoint discovery diagnostics.
-2. Implement the guarded Pod-network probe and candidate selection.
-3. Finalize namespace ownership and scoped RBAC rules.
-4. Implement `-RegisterWorkloadClusterWithArgoCD`.
-5. Implement strict read-only registration verification.
-6. Only then configure the GitOps repository and create parent Application `devdeploy-workloads`.
+1. **Completed in Phase 2G.2:** add explicit endpoint discovery with a guarded Pod-network probe, TLS validation, sanitized candidate reporting, and targeted cleanup.
+2. Finalize namespace ownership and scoped RBAC rules.
+3. Implement `-RegisterWorkloadClusterWithArgoCD` using the rediscovered and verified endpoint.
+4. Implement strict read-only registration verification.
+5. Only then configure the GitOps repository and create parent Application `devdeploy-workloads`.
 
 No runtime registration should begin until endpoint reachability and TLS identity behavior have been validated on the supported Windows Docker Desktop and kind versions.
+
+The Phase 2G.2 local validation selected `devdeploy-workload-control-plane:6443` through the shared Docker network. The host-gateway candidate was network-reachable but did not pass hostname-aware TLS verification, and the Docker gateway candidate was unreachable. These are environment observations, not permanent assumptions; the Launcher must rediscover and revalidate candidates on each explicit discovery run.

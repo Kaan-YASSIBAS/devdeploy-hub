@@ -246,10 +246,10 @@ Goal:
 Completed design baseline:
 
 - Phase 2G.1 defines endpoint discovery, Pod-network validation, credential/RBAC boundaries, the Launcher-managed cluster Secret, and sanitized registration status.
+- Phase 2G.2 implements explicit endpoint discovery, rejects host loopback, validates candidates from a temporary management-cluster Pod, verifies TLS with the workload CA, and performs targeted probe cleanup without registering the cluster.
 
 Recommended tasks:
 
-- Discover an API endpoint reachable from `devdeploy-mgmt` Pods; never register host loopback `127.0.0.1:58081`.
 - Add explicit registration and strict read-only verification Launcher modes.
 - Prefer a scoped workload ServiceAccount and document any temporary local-only cluster-admin fallback.
 - Verify successful Argo CD cluster discovery without creating Applications.
