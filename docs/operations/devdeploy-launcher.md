@@ -268,6 +268,18 @@ It waits for `deployment/devdeploy-frontend`, verifies the Service and hostless 
 
 This explicit mode is the only frontend mode that may run `kubectl apply`, and it does so only against `platform/management/frontend` in `devdeploy-mgmt`. It does not build or load images, update Secrets, apply backend manifests, run `kubectl delete`, install Helm charts or Argo CD, create clusters, or mutate `devdeploy-workload`.
 
+## Initialize The Management Backend Database
+
+After PostgreSQL and the backend are Ready, initialize or advance the management database schema with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -InitializeManagementBackendDatabase
+```
+
+This explicit mode verifies the management cluster, PostgreSQL, backend Pod, backend runtime Secret keys, and Alembic files before running `alembic -c /app/alembic.ini upgrade head` inside the existing backend container. It then verifies the current Alembic revision and confirms the `users` table exists without printing database credentials or table data.
+
+The mode is idempotent for an already-current schema. It does not run `Base.metadata.create_all`, reset or drop the database, delete data, redeploy platform components, update Secrets, build or load images, install charts, create clusters, or mutate `devdeploy-workload`.
+
 ## What It Checks
 
 The launcher checks:
@@ -355,6 +367,7 @@ devdeploy-launcher-status
 - `management_frontend_image_build`
 - `management_frontend_image_load`
 - `management_frontend_bootstrap`
+- `management_backend_database_initialize`
 
 `status` is one of:
 
@@ -426,6 +439,7 @@ Current component keys:
 - `ingress_nginx`
 - `postgres`
 - `backend`
+- `backend_database`
 - `frontend_image`
 - `frontend`
 - `argocd`
