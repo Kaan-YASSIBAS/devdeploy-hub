@@ -22,6 +22,7 @@ The Phase 2 architecture baseline is defined in:
 - [Frontend Bootstrap Preparation](./frontend-bootstrap-preparation.md)
 - [Frontend Bootstrap Manifest Strategy](./frontend-bootstrap-manifest-strategy.md)
 - [Argo CD Bootstrap Preparation](./argocd-bootstrap-preparation.md)
+- [Argo CD Bootstrap Launcher Design](./argocd-bootstrap-launcher-design.md)
 
 The target architecture uses:
 
@@ -218,10 +219,12 @@ Completed baseline:
 
 - `devdeploy-workload` exists and is Ready.
 - Phase 2F.1 documents the Argo CD installation, access, credential, registration, status, and safety decisions.
+- Phase 2F.2 defines the explicit management Argo CD bootstrap and read-only verification Launcher contracts.
 
 Future runtime tasks:
 
-- Add explicit Argo CD bootstrap and read-only verification Launcher modes.
+- Phase 2F.3: implement `-BootstrapManagementArgoCD`.
+- Phase 2F.4: implement `-VerifyManagementArgoCD`.
 - Install a pinned official Argo CD Helm chart in `devdeploy-mgmt/argocd`.
 - Expose the UI through `http://argocd.localhost:8080/`.
 - Add explicit workload registration and read-only verification Launcher modes.

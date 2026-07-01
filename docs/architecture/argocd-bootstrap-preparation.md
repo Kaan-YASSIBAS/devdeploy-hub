@@ -167,6 +167,8 @@ GitHub repository creation, repository credential setup, and CI automation remai
 
 ## 7. Future Launcher Modes
 
+The detailed bootstrap and read-only verification contracts are defined in [Argo CD Bootstrap Launcher Design](./argocd-bootstrap-launcher-design.md).
+
 Required future explicit modes:
 
 - `-BootstrapManagementArgoCD`
@@ -276,3 +278,7 @@ Status must contain only sanitized metadata and booleans. It must not contain ad
 - `platform_bootstrap.components.argocd_workload_cluster` reports `ready` without credential material.
 - No root Application or user workload is deployed as a side effect of registration.
 - No workload cluster credentials appear in Git, logs, status files, API responses, or browser storage.
+
+## 12. Phase Handoff
+
+Phase 2F.1 establishes the preparation decisions in this document. Phase 2F.2 defines the Launcher contracts for management Argo CD bootstrap and verification. Runtime installation remains future work in Phase 2F.3 and Phase 2F.4.
