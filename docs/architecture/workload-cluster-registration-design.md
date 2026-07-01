@@ -178,13 +178,13 @@ Preferred endpoint order:
 
 The Launcher must not persist a container IP when a verified stable hostname is available. It must not silently disable TLS verification.
 
-After endpoint selection, the Launcher should:
+After endpoint selection, the Launcher:
 
-1. Create or verify a dedicated Argo CD registration identity in `devdeploy-workload`.
-2. Build the Argo CD cluster configuration in memory.
-3. Create or update one labeled cluster Secret in `devdeploy-mgmt/argocd`.
-4. Verify Argo CD discovers the cluster and can connect.
-5. Leave the Argo CD Application count unchanged.
+1. Creates or verifies a dedicated Argo CD registration identity in `devdeploy-workload`.
+2. Builds the Argo CD cluster configuration in memory.
+3. Creates or updates one labeled cluster Secret in `devdeploy-mgmt/argocd`.
+4. Verifies the non-sensitive cluster Secret contract and authorization state.
+5. Leaves the Argo CD Application count unchanged.
 
 ## 7. Endpoint Discovery and Probe Flow
 
@@ -243,9 +243,13 @@ If scoped RBAC blocks the first local smoke implementation, a cluster-admin regi
 
 Cluster-admin must not become the silent default for future external clusters.
 
+Phase 2G.3 does not use this fallback. The identity is `kube-system/devdeploy-argocd-manager`, bound to a read-only registration role that permits selected metadata discovery but no workload writes. The Argo CD cluster Secret is limited to `devdeploy-workloads` with cluster-resource management disabled. Workload reconciliation permissions remain blocked on the namespace ownership decision described above and must be added before parent Application creation.
+
 ### Token lifecycle
 
 Argo CD needs a durable credential. The implementation must deliberately choose between a restricted ServiceAccount token Secret with documented local-only lifecycle or a renewable token mechanism. Short-lived TokenRequest credentials must not be registered without an implemented rotation path.
+
+Phase 2G.3 uses the local-only durable option: a manually requested `kubernetes.io/service-account-token` Secret named `devdeploy-argocd-manager-token`. The launcher reads the populated token and CA only in memory while reconciling the Argo CD cluster Secret. Their values are never printed, logged, or written to launcher status. Rotation remains future hardening work.
 
 ## 9. Argo CD Cluster Secret
 
@@ -281,19 +285,18 @@ The operation should be idempotent:
 
 ### Registration mode
 
-Future explicit mode:
+Implemented explicit mode:
 
 ```powershell
 -RegisterWorkloadClusterWithArgoCD
 ```
 
-This mode may:
+This mode:
 
-- Inspect Docker networking.
-- Create and delete a temporary management-cluster probe Pod.
+- Consumes the fresh endpoint selected by the separate discovery mode.
 - Create or reconcile the dedicated workload ServiceAccount and RBAC.
 - Create or reconcile the Argo CD cluster Secret.
-- Perform sanitized connectivity verification.
+- Performs sanitized metadata and authorization verification.
 
 It must not:
 
@@ -327,11 +330,15 @@ Proposed sanitized shape:
   "target_context": "kind-devdeploy-workload",
   "registration_method": "launcher-managed-cluster-secret",
   "endpoint_strategy": "not_selected",
-  "server_endpoint_redacted_or_host_only": null,
+  "server_endpoint": null,
   "cluster_secret_present": false,
-  "cluster_secret_name": "devdeploy-workload-cluster",
-  "argocd_visible": false,
-  "argocd_connection_status": "unknown",
+  "cluster_secret_name": "argocd-cluster-devdeploy-workload",
+  "cluster_secret_label_present": false,
+  "service_account_namespace": "kube-system",
+  "service_account_name": "devdeploy-argocd-manager",
+  "rbac_mode": "scoped-read-only-registration",
+  "argocd_visible": null,
+  "application_count": null,
   "status": "not_started",
   "message": "Workload cluster registration has not been requested.",
   "checked_at": "<ISO-8601 timestamp>"
@@ -345,7 +352,7 @@ Allowed endpoint strategies should be stable identifiers such as:
 - `docker_gateway`
 - `not_selected`
 
-`server_endpoint_redacted_or_host_only` may contain only a hostname and port, for example `devdeploy-workload-control-plane:6443`. It must not contain credentials or serialized configuration.
+`server_endpoint` may contain only the verified API URL, for example `https://devdeploy-workload-control-plane:6443`. It must not contain credentials, query parameters, or serialized configuration.
 
 ## 12. Verification Design
 
@@ -392,9 +399,9 @@ The Application count may remain `0` after successful registration. Registration
 Recommended follow-up milestones:
 
 1. **Completed in Phase 2G.2:** add explicit endpoint discovery with a guarded Pod-network probe, TLS validation, sanitized candidate reporting, and targeted cleanup.
-2. Finalize namespace ownership and scoped RBAC rules.
-3. Implement `-RegisterWorkloadClusterWithArgoCD` using the rediscovered and verified endpoint.
-4. Implement strict read-only registration verification.
+2. **Completed in Phase 2G.3:** implement `-RegisterWorkloadClusterWithArgoCD` using the discovered endpoint, a launcher-managed cluster Secret, a durable local-only token, and read-only registration RBAC.
+3. Implement strict read-only registration verification, including Argo CD connection status when it can be obtained without persisting an API session.
+4. Finalize namespace ownership and add scoped workload reconciliation permissions before creating the parent Application.
 5. Only then configure the GitOps repository and create parent Application `devdeploy-workloads`.
 
 No runtime registration should begin until endpoint reachability and TLS identity behavior have been validated on the supported Windows Docker Desktop and kind versions.

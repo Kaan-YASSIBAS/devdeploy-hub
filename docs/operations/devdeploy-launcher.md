@@ -336,6 +336,27 @@ The status includes the selected strategy and endpoint, candidate reachability/T
 
 This mode does not register the workload cluster, create an Argo CD cluster Secret, create workload ServiceAccounts or RBAC, create Applications, deploy workloads, or mutate `devdeploy-workload`.
 
+## Register The Workload Cluster With Argo CD
+
+After endpoint discovery succeeds, explicitly register `devdeploy-workload` with Argo CD in `devdeploy-mgmt`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -RegisterWorkloadClusterWithArgoCD
+```
+
+This mode consumes the fresh, TLS-verified endpoint recorded by `-DiscoverWorkloadClusterEndpoint`. It rejects the host-only `https://127.0.0.1:58081` endpoint and fails with guidance to rerun discovery when the persisted result is missing, invalid, or older than 24 hours.
+
+For the local MVP, the launcher reconciles:
+
+- ServiceAccount `kube-system/devdeploy-argocd-manager` in `devdeploy-workload`.
+- A local-only long-lived ServiceAccount token Secret in `devdeploy-workload`.
+- A read-only ClusterRole and ClusterRoleBinding for registration discovery and metadata checks. It grants no workload deployment write access.
+- Cluster Secret `argocd/argocd-cluster-devdeploy-workload` in `devdeploy-mgmt`, labeled `argocd.argoproj.io/secret-type=cluster`.
+
+The durable token is an explicit local-kind simplification. Launcher status reports it as a warning and marks credential rotation as future hardening work. The cluster Secret is restricted to the future `devdeploy-workloads` namespace with cluster-resource management disabled. Workload write permissions remain a separate future step before parent Application creation. The token, CA data, kubeconfig, client credentials, and cluster Secret config are never printed or written to status/logs.
+
+Registration is idempotent: rerunning the mode reconciles the same named resources and reuses its own fresh persisted, TLS-verified endpoint provenance when the separate discovery component is no longer present in the latest status document. It does not create an Argo CD Application, configure a Git repository, deploy a user workload, run Helm, build/load images, or touch the backend database. The Argo CD Application count therefore remains unchanged.
+
 ## Verify The Management Frontend
 
 To run strict read-only verification of the deployed frontend:
@@ -451,6 +472,7 @@ devdeploy-launcher-status
 - `management_argocd_bootstrap`
 - `management_argocd_verify`
 - `workload_cluster_endpoint_discovery`
+- `workload_cluster_argocd_registration`
 - `management_backend_database_initialize`
 
 `status` is one of:
@@ -597,6 +619,12 @@ When `-DiscoverWorkloadClusterEndpoint` is used, the local status includes:
 
 - `platform_bootstrap`
 - `platform_bootstrap.components.workload_cluster_endpoint`
+
+When `-RegisterWorkloadClusterWithArgoCD` is used, the local status includes:
+
+- `platform_bootstrap.components.argocd_workload_cluster`
+
+That component reports the selected endpoint strategy, cluster Secret and ServiceAccount names, RBAC mode, registration readiness, Argo CD visibility based on the cluster Secret contract, and Application count. It contains no credential material.
 
 The `next_actions` array contains safe, non-destructive guidance. For example:
 

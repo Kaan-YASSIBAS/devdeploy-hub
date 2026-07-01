@@ -247,12 +247,13 @@ Completed design baseline:
 
 - Phase 2G.1 defines endpoint discovery, Pod-network validation, credential/RBAC boundaries, the Launcher-managed cluster Secret, and sanitized registration status.
 - Phase 2G.2 implements explicit endpoint discovery, rejects host loopback, validates candidates from a temporary management-cluster Pod, verifies TLS with the workload CA, and performs targeted probe cleanup without registering the cluster.
+- Phase 2G.3 implements explicit, idempotent workload registration with a launcher-managed Argo CD cluster Secret. The local MVP uses a dedicated ServiceAccount, a local-only durable token, and read-only registration RBAC while keeping the Application count unchanged.
 
 Recommended tasks:
 
-- Add explicit registration and strict read-only verification Launcher modes.
-- Prefer a scoped workload ServiceAccount and document any temporary local-only cluster-admin fallback.
-- Verify successful Argo CD cluster discovery without creating Applications.
+- Add a strict read-only registration verification Launcher mode.
+- Add scoped workload reconciliation permissions after namespace ownership is finalized; registration currently remains read-only.
+- Verify Argo CD connection health without creating Applications or persisting an API session.
 - Configure repository access without exposing credentials.
 - Create or verify parent Application `devdeploy-workloads`.
 - Ensure `devdeploy-workloads` targets `devdeploy-workload`.
