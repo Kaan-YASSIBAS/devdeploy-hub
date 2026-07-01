@@ -21,6 +21,7 @@ The Phase 2 architecture baseline is defined in:
 - [Backend Bootstrap Launcher Design](./backend-bootstrap-launcher-design.md)
 - [Frontend Bootstrap Preparation](./frontend-bootstrap-preparation.md)
 - [Frontend Bootstrap Manifest Strategy](./frontend-bootstrap-manifest-strategy.md)
+- [Argo CD Bootstrap Preparation](./argocd-bootstrap-preparation.md)
 
 The target architecture uses:
 
@@ -163,7 +164,7 @@ Goal:
 
 - Bootstrap and verify the initial management ingress, PostgreSQL, and backend components in `devdeploy-mgmt`.
 
-The Phase 2D backend baseline is complete. The Launcher can build and load `devdeploy-backend:local`, ensure and verify the runtime Secret, and bootstrap and verify backend resources through explicit modes.
+The Phase 2D backend baseline is complete. The Launcher can build and load `devdeploy-backend:local`, ensure and verify the runtime Secret, bootstrap and verify backend resources, and initialize the database schema through explicit modes.
 
 Completed baseline:
 
@@ -174,12 +175,13 @@ Completed baseline:
 - Backend image build/load and runtime Secret modes are implemented.
 - Backend Deployment, Service, and Ingress are deployed and verified.
 - Backend health verification succeeds.
+- Alembic migrations are initialized and the `users` table is present.
 - Launcher status reports backend image, Secret, and runtime state without exposing credentials.
 
 Expected output:
 
 - Management ingress, PostgreSQL, and backend are healthy in `devdeploy-mgmt`.
-- `platform_bootstrap.status` remains `partial` until frontend and Argo CD bootstrap are complete.
+- `platform_bootstrap.status` remains `partial` until Argo CD bootstrap is complete.
 - `devdeploy-workload` remains isolated from management platform bootstrap.
 
 ## 10. Phase 2E - Management Frontend Bootstrap
@@ -188,19 +190,16 @@ Goal:
 
 - Prepare, deploy, and verify the DevDeploy frontend in `devdeploy-mgmt`.
 
-Completed design baseline:
+Completed baseline:
 
 - Phase 2E.1 documents the frontend build, Nginx runtime, API routing, image, and security requirements.
 - Phase 2E.2 defines the future manifest layout, hostless ingress model, Service port decision, status contract, and Launcher mode boundaries.
-- Phase 2E.3 adds renderable Deployment, Service, Ingress, and Kustomization resources under `platform/management/frontend`; they are not deployed yet.
-
-Future implementation tasks:
-
+- Phase 2E.3 adds the frontend Deployment, Service, Ingress, and Kustomization under `platform/management/frontend`.
 - Build `devdeploy-frontend:local` with `VITE_API_BASE_URL=/api/v1`.
 - Load the local image only into `devdeploy-mgmt`.
-- Add explicit frontend build, load, bootstrap, and read-only verify Launcher modes.
+- Explicit frontend build, load, bootstrap, and read-only verify Launcher modes are implemented.
 - Route frontend `/` and backend `/api` through management ingress.
-- Verify the UI page through `http://devdeploy.localhost:8080/`.
+- Verify the UI page through `http://localhost:8080/`.
 
 Expected output:
 
@@ -209,46 +208,52 @@ Expected output:
 - The UI is reachable without routine port-forwarding.
 - Platform status remains `partial` until Argo CD is installed.
 
-## 11. Phase 2F - Workload Cluster Creation
+## 11. Phase 2F - Argo CD Bootstrap and Workload Cluster Integration
 
 Goal:
 
-- Create or verify `devdeploy-workload` through the Launcher.
+- Install and verify Argo CD in `devdeploy-mgmt`, then register the existing `devdeploy-workload` cluster as a deployment target.
 
-Recommended tasks:
+Completed baseline:
 
-- Check whether `devdeploy-workload` already exists.
-- Verify API server reachability.
-- Verify expected port mappings.
-- Install or verify workload ingress.
-- Create or verify generated workload namespace.
-- Keep workload bootstrap separate from management bootstrap.
+- `devdeploy-workload` exists and is Ready.
+- Phase 2F.1 documents the Argo CD installation, access, credential, registration, status, and safety decisions.
+
+Future runtime tasks:
+
+- Add explicit Argo CD bootstrap and read-only verification Launcher modes.
+- Install a pinned official Argo CD Helm chart in `devdeploy-mgmt/argocd`.
+- Expose the UI through `http://argocd.localhost:8080/`.
+- Add explicit workload registration and read-only verification Launcher modes.
+- Register `devdeploy-workload` with narrowly scoped credentials where practical.
+- Keep registration separate from root Application creation and workload deployment.
 
 Expected output:
 
-- `devdeploy-workload` is reachable.
-- Workload ingress is ready.
-- User app URLs can use `http://<app-name>.localhost:8081`.
+- Argo CD is Ready in `devdeploy-mgmt`.
+- Argo CD UI is reachable without routine port-forwarding.
+- `devdeploy-workload` is registered and reported reachable.
+- No user workloads are deployed as a side effect of registration.
 
-## 12. Phase 2G - Argo CD Workload Registration
+## 12. Phase 2G - GitOps Root Application and Repository Integration
 
 Goal:
 
-- Register `devdeploy-workload` with Argo CD running in `devdeploy-mgmt`.
+- Connect Argo CD to the GitOps source and create or verify the parent workload Application.
 
 Recommended tasks:
 
-- Register workload cluster credentials with Argo CD.
-- Scope credentials to workload namespaces where practical.
-- Verify Argo CD can reach `devdeploy-workload`.
+- Configure repository access without exposing credentials.
 - Create or verify parent Application `devdeploy-workloads`.
 - Ensure `devdeploy-workloads` targets `devdeploy-workload`.
 - Ensure Git source path is `infra/kubernetes/generated/workloads`.
+- Keep GitHub repository creation and CI automation as later, separately reviewed work.
 
 Expected output:
 
-- Argo CD in `devdeploy-mgmt` can sync generated workloads to `devdeploy-workload`.
+- Argo CD can read the configured GitOps source.
 - The parent Application exists and has the correct destination.
+- GitOps source changes remain the only normal path to workload reconciliation.
 
 ## 13. Phase 2H - Setup Wizard Multi-Cluster UI Integration
 
