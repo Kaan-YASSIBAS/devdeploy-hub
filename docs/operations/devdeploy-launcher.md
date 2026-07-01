@@ -357,6 +357,28 @@ The durable token is an explicit local-kind simplification. Launcher status repo
 
 Registration is idempotent: rerunning the mode reconciles the same named resources and reuses its own fresh persisted, TLS-verified endpoint provenance when the separate discovery component is no longer present in the latest status document. It does not create an Argo CD Application, configure a Git repository, deploy a user workload, run Helm, build/load images, or touch the backend database. The Argo CD Application count therefore remains unchanged.
 
+## Verify Workload Cluster Registration
+
+To verify the existing registration without reconciling any resource:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -VerifyWorkloadClusterRegistration
+```
+
+This strict read-only mode uses kubectl and does not require Helm. It verifies:
+
+- Both kind clusters and their kubectl contexts are usable.
+- Management Argo CD is installed and sufficiently healthy.
+- Cluster Secret `argocd/argocd-cluster-devdeploy-workload` has the expected type, label, cluster name, and non-loopback server endpoint.
+- ServiceAccount `kube-system/devdeploy-argocd-manager`, its token Secret metadata, read-only ClusterRole, and ClusterRoleBinding exist.
+- The identity can read registration metadata but cannot create Deployments.
+- Argo CD controller visibility when current controller logs contain assignment evidence.
+- The current Argo CD Application count.
+
+Only the Secret `name` and `server` fields are decoded in memory. The verifier never reads or prints the Secret config, bearer token, CA data, client certificate, or key. If fresh endpoint-discovery provenance is unavailable, `endpoint_tls_verified` is reported as `null` rather than inventing a successful TLS check.
+
+The mode does not run `kubectl apply`, `delete`, or `patch`; it does not run Helm install/upgrade, create Applications, grant workload write RBAC, deploy workloads, build/load images, run database migrations, or modify backend/frontend resources.
+
 ## Verify The Management Frontend
 
 To run strict read-only verification of the deployed frontend:
@@ -473,6 +495,7 @@ devdeploy-launcher-status
 - `management_argocd_verify`
 - `workload_cluster_endpoint_discovery`
 - `workload_cluster_argocd_registration`
+- `workload_cluster_argocd_registration_verify`
 - `management_backend_database_initialize`
 
 `status` is one of:
@@ -625,6 +648,8 @@ When `-RegisterWorkloadClusterWithArgoCD` is used, the local status includes:
 - `platform_bootstrap.components.argocd_workload_cluster`
 
 That component reports the selected endpoint strategy, cluster Secret and ServiceAccount names, RBAC mode, registration readiness, Argo CD visibility based on the cluster Secret contract, and Application count. It contains no credential material.
+
+When `-VerifyWorkloadClusterRegistration` is used, the same component includes `mode: verify`, `service_account_present`, `write_rbac_configured`, and read-only verification results. Successful verification remains `status: warning` with `ready: true` while workload write RBAC and the parent Application are intentionally absent.
 
 The `next_actions` array contains safe, non-destructive guidance. For example:
 

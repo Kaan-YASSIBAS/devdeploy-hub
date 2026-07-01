@@ -308,13 +308,13 @@ It must not:
 
 ### Verification mode
 
-A separate future mode should verify registration without reconciling it, for example:
+Phase 2G.4 implements strict read-only registration verification:
 
 ```powershell
--VerifyWorkloadClusterArgoCDRegistration
+-VerifyWorkloadClusterRegistration
 ```
 
-It should read cluster/Secret metadata and Argo CD connection status only. It must not recreate credentials, patch RBAC, or replace the cluster Secret.
+It reads cluster/Secret metadata, identity and RBAC metadata, authorization boundaries, Application inventory, and controller visibility evidence. It does not recreate credentials, patch RBAC, replace the cluster Secret, or create Applications. The verifier confirms that workload Deployment creation remains denied; registration readiness does not imply deployment permission.
 
 ## 11. Status Contract
 
@@ -336,9 +336,13 @@ Proposed sanitized shape:
   "cluster_secret_label_present": false,
   "service_account_namespace": "kube-system",
   "service_account_name": "devdeploy-argocd-manager",
+  "service_account_present": false,
   "rbac_mode": "scoped-read-only-registration",
+  "credential_lifecycle": "local-only-long-lived-service-account-token",
   "argocd_visible": null,
   "application_count": null,
+  "write_rbac_configured": null,
+  "mode": "not_started",
   "status": "not_started",
   "message": "Workload cluster registration has not been requested.",
   "checked_at": "<ISO-8601 timestamp>"
@@ -400,7 +404,7 @@ Recommended follow-up milestones:
 
 1. **Completed in Phase 2G.2:** add explicit endpoint discovery with a guarded Pod-network probe, TLS validation, sanitized candidate reporting, and targeted cleanup.
 2. **Completed in Phase 2G.3:** implement `-RegisterWorkloadClusterWithArgoCD` using the discovered endpoint, a launcher-managed cluster Secret, a durable local-only token, and read-only registration RBAC.
-3. Implement strict read-only registration verification, including Argo CD connection status when it can be obtained without persisting an API session.
+3. **Completed in Phase 2G.4:** implement strict read-only registration verification, including cluster Secret, endpoint, identity/RBAC boundary, controller visibility evidence, and Application inventory checks.
 4. Finalize namespace ownership and add scoped workload reconciliation permissions before creating the parent Application.
 5. Only then configure the GitOps repository and create parent Application `devdeploy-workloads`.
 
