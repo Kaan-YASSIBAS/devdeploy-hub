@@ -306,6 +306,7 @@ Goal:
 Completed design baseline:
 
 - Phase 2I.1 defines Setup Wizard-managed create-new and existing GitHub repository modes.
+- Phase 2I.2 implements explicit local-path GitOps structure initialization and sanitized repository status as a validation step before GitHub API integration.
 - The V1 managed source path is `gitops/workloads/devdeploy-apps`.
 - The preferred Root Application is `argocd/devdeploy-workloads-root`.
 - The Root Application targets `https://devdeploy-workload-control-plane:6443` and namespace `devdeploy-apps`.
@@ -314,6 +315,7 @@ Completed design baseline:
 
 Recommended tasks:
 
+- Preserve local-path mode as a development/MVP validation option without treating it as configured GitHub integration.
 - Add authenticated GitHub repository selection or creation through explicit Setup Wizard/backend setup APIs.
 - Initialize or validate the deterministic GitOps path without deploying a sample workload.
 - Configure sanitized Argo CD repository access.

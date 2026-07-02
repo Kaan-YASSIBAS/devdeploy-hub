@@ -20,6 +20,54 @@ powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.p
 
 This is the default read-only preflight mode. It checks the host and writes status, but it does not generate cluster configs unless requested.
 
+## Configure A Local GitOps Repository Path
+
+To explicitly initialize or verify the local MVP GitOps source structure:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -ConfigureGitOpsRepository
+```
+
+The default repository path is the current DevDeploy repository root. An explicit Git worktree root, sanitized repository URL, and branch may be supplied:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 `
+  -ConfigureGitOpsRepository `
+  -GitOpsRepoPath "C:\path\to\gitops-repo" `
+  -GitOpsRepoUrl "https://github.com/example/devdeploy-gitops.git" `
+  -GitOpsBranch "main"
+```
+
+The mode requires a readable existing Git worktree. It creates or verifies:
+
+```text
+gitops/
+  workloads/
+    devdeploy-apps/
+      kustomization.yaml
+      apps/
+        .gitkeep
+```
+
+The initial kustomization contains `resources: []` when there are no app directories. Existing app directories are preserved. A structurally valid existing root kustomization is also preserved; an empty or incomplete file is repaired deterministically from existing app directory names.
+
+The launcher performs required structural validation itself. If `kubectl` is available, it also attempts a read-only `kubectl kustomize` render. That render is optional for local-path initialization and is reported as a warning rather than a false repository failure when the external process cannot access the selected path.
+
+This first implementation uses `provider: local_path` to validate the directory and status contracts before GitHub API integration. The product target remains Setup Wizard-managed GitHub authorization with create-new and existing-repository choices.
+
+This mode does not:
+
+- Create or connect an Argo CD Application or AppProject.
+- Create a GitHub repository or call the GitHub API.
+- Add a GitHub Actions workflow.
+- Commit or push generated files.
+- Generate a sample application.
+- Deploy or delete a workload.
+- Build or load an image.
+- Run database migrations.
+- Run Helm.
+- Mutate either kind cluster.
+
 ## Generate Kind Config Previews
 
 To run preflight and generate deterministic kind config previews:
@@ -540,6 +588,7 @@ devdeploy-launcher-status
 - `workload_cluster_argocd_registration_verify`
 - `workload_deploy_permissions_grant`
 - `workload_deploy_permissions_verify`
+- `gitops_repository_configure`
 - `management_backend_database_initialize`
 
 `status` is one of:
@@ -616,6 +665,7 @@ Current component keys:
 - `frontend_image`
 - `frontend`
 - `argocd`
+- `gitops_repository`
 
 `platform_bootstrap.status` may be:
 
@@ -702,6 +752,12 @@ When `-GrantWorkloadDeployPermissions` is used, status includes:
 The component reports the managed namespace, Role/RoleBinding presence, allowed resource summary, cluster-admin detection, managed/outside namespace authorization results, RBAC/CRD/namespace management boundaries, and Application count. The registration component also reports `write_rbac_configured: true` after successful grant verification.
 
 When `-VerifyWorkloadDeployPermissions` is used, the same component reports `mode: verify`, ServiceAccount presence, RoleBinding subject/reference validity, and the current authorization boundary. Successful verification preserves `platform_bootstrap.components.argocd_workload_cluster.write_rbac_configured: true` and keeps platform status `partial` until the GitOps Application model is configured.
+
+When `-ConfigureGitOpsRepository` is used, status includes:
+
+- `platform_bootstrap.components.gitops_repository`
+
+The component reports `provider: local_path`, the resolved Git worktree path, sanitized repository URL, branch, fixed source path, directory and kustomization readiness, optional `kustomize_render_succeeded`, and whether GitHub credentials or integration are configured. It never contains a GitHub token or credential-bearing URL. Successful local-path configuration keeps `platform_bootstrap.status: partial` because no Root Application or workload exists yet.
 
 The `next_actions` array contains safe, non-destructive guidance. For example:
 

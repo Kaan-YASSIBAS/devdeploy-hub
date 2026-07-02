@@ -54,6 +54,14 @@ param(
 
     [switch]$VerifyWorkloadDeployPermissions,
 
+    [switch]$ConfigureGitOpsRepository,
+
+    [string]$GitOpsRepoPath = "",
+
+    [string]$GitOpsRepoUrl = "",
+
+    [string]$GitOpsBranch = "",
+
     [switch]$InitializeManagementBackendDatabase,
 
     [switch]$Quiet
@@ -123,6 +131,8 @@ $ExpectedWorkloadArgoCDEndpoint = "https://devdeploy-workload-control-plane:6443
 $WorkloadManagedNamespace = "devdeploy-apps"
 $WorkloadDeployRoleName = "devdeploy-argocd-deployer"
 $WorkloadDeployRoleBindingName = "devdeploy-argocd-deployer"
+$GitOpsSourcePath = "gitops/workloads/devdeploy-apps"
+$GitOpsSourceRelativeWindowsPath = "gitops\workloads\devdeploy-apps"
 
 $PortPlan = [ordered]@{
     management_api   = 58080
@@ -748,6 +758,23 @@ function New-NextActions {
         }
         else {
             $actions.Add("Review the sanitized permission verification checks. Use -GrantWorkloadDeployPermissions only when you explicitly intend to reconcile the permission resources.") | Out-Null
+        }
+    }
+
+    if ($LauncherMode -eq "gitops_repository_configure") {
+        $gitOpsRepositoryStatus = "not_started"
+        try {
+            $gitOpsRepositoryStatus = [string]$PlatformBootstrap["components"]["gitops_repository"]["status"]
+        }
+        catch {
+            $gitOpsRepositoryStatus = "unknown"
+        }
+
+        if ($gitOpsRepositoryStatus -eq "ready") {
+            $actions.Add("The local GitOps repository path is ready. Root Application bootstrap remains a separate future step.") | Out-Null
+        }
+        else {
+            $actions.Add("Review the GitOps repository checks and rerun -ConfigureGitOpsRepository after resolving the local path or Git worktree issue.") | Out-Null
         }
     }
 
@@ -3836,7 +3863,9 @@ function Test-KindClusters {
 
         [bool]$WorkloadDeployPermissionGrantMode = $false,
 
-        [bool]$WorkloadDeployPermissionVerifyMode = $false
+        [bool]$WorkloadDeployPermissionVerifyMode = $false,
+
+        [bool]$GitOpsRepositoryConfigureMode = $false
     )
 
     if (-not $KindAvailable) {
@@ -3965,6 +3994,10 @@ function Test-KindClusters {
     elseif ($WorkloadDeployPermissionVerifyMode -and $mgmtExists -and $workloadExists) {
         $status = "ok"
         $message = "Both DevDeploy clusters exist. This mode verifies devdeploy-apps permissions without mutating either cluster."
+    }
+    elseif ($GitOpsRepositoryConfigureMode -and ($mgmtExists -or $workloadExists)) {
+        $status = "ok"
+        $message = "Existing DevDeploy clusters were detected. Local GitOps repository configuration does not use, modify, or delete them."
     }
 
     Add-Check -Id "kind_clusters" -Label "Existing kind clusters" -Status $status -Message $message -Details @{
@@ -6778,6 +6811,365 @@ function Invoke-VerifyWorkloadDeployPermissions {
     return $status
 }
 
+function Protect-GitRepositoryUrl {
+    param(
+        [AllowNull()]
+        [string]$Url
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Url)) {
+        return ""
+    }
+
+    $sanitized = [string]$Url.Trim()
+    $sanitized = $sanitized -replace '(?i)^([a-z][a-z0-9+.-]*://)[^/@\s]+@', '$1'
+    $sanitized = $sanitized -replace '[?#].*$', ''
+    return [string](Protect-LogText $sanitized)
+}
+
+function New-GitOpsRepositoryStatus {
+    param(
+        [string]$RepoPath = "",
+
+        [string]$DefaultBranch = "main",
+
+        [string]$RepoUrlSanitized = ""
+    )
+
+    return [ordered]@{
+        configured                = $false
+        ready                     = $false
+        provider                  = "local_path"
+        mode                      = "local_path"
+        owner                     = ""
+        repo                      = ""
+        default_branch            = [string]$DefaultBranch
+        repo_path                 = [string]$RepoPath
+        repo_url_sanitized        = [string]$RepoUrlSanitized
+        source_path               = $GitOpsSourcePath
+        path_initialized          = $false
+        kustomization_present     = $false
+        apps_directory_present    = $false
+        kustomize_render_succeeded = $null
+        credentials_configured    = $false
+        github_integration_enabled = $false
+        status                    = "not_started"
+        message                   = "Local GitOps repository configuration has not started."
+        checked_at                = [string](Get-Timestamp)
+    }
+}
+
+function Test-GitOpsKustomizationContent {
+    param(
+        [AllowNull()]
+        [string]$Content
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Content)) {
+        return $false
+    }
+
+    $hasApiVersion = $Content -match '(?m)^\s*apiVersion\s*:\s*kustomize\.config\.k8s\.io/v1beta1\s*(?:#.*)?$'
+    $hasKind = $Content -match '(?m)^\s*kind\s*:\s*Kustomization\s*(?:#.*)?$'
+    $hasResources = $Content -match '(?m)^\s*resources\s*:'
+    return [bool]($hasApiVersion -and $hasKind -and $hasResources)
+}
+
+function Invoke-ConfigureGitOpsRepository {
+    param(
+        [bool]$GitAvailable,
+
+        [bool]$KubectlAvailable,
+
+        [string]$RequestedRepoPath,
+
+        [string]$RequestedRepoUrl,
+
+        [string]$RequestedBranch
+    )
+
+    $candidatePath = if ([string]::IsNullOrWhiteSpace($RequestedRepoPath)) {
+        [string]$RepoRoot
+    }
+    elseif ([System.IO.Path]::IsPathRooted($RequestedRepoPath)) {
+        [string]$RequestedRepoPath
+    }
+    else {
+        [string](Join-Path $RepoRoot $RequestedRepoPath)
+    }
+
+    $status = New-GitOpsRepositoryStatus -RepoPath $candidatePath
+
+    if (-not $GitAvailable) {
+        $status["status"] = "error"
+        $status["message"] = "GitOps repository configuration requires the Git CLI."
+        Add-Check -Id "gitops_repository_configure" -Label "GitOps repository configuration" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required = $true
+            provider = "local_path"
+        }
+        return $status
+    }
+
+    if (-not (Test-Path -LiteralPath $candidatePath -PathType Container)) {
+        $status["status"] = "error"
+        $status["message"] = "The requested local GitOps repository path does not exist."
+        Add-Check -Id "gitops_repository_path" -Label "GitOps repository path" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required = $true
+            repo_path = [string]$candidatePath
+        }
+        return $status
+    }
+
+    try {
+        $candidatePath = [string](Resolve-Path -LiteralPath $candidatePath).Path
+        $status["repo_path"] = $candidatePath
+    }
+    catch {
+        $status["status"] = "error"
+        $status["message"] = "The local GitOps repository path could not be resolved safely."
+        Add-Check -Id "gitops_repository_path" -Label "GitOps repository path" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required = $true
+            repo_path = [string]$candidatePath
+        }
+        return $status
+    }
+
+    Add-Check -Id "gitops_repository_path" -Label "GitOps repository path" -Status "ok" -Message "The local GitOps repository path exists." -Details @{
+        required = $true
+        repo_path = [string]$candidatePath
+    }
+
+    $repoResult = Invoke-ReadOnlyCommand -FileName "git" -Arguments @("-C", $candidatePath, "rev-parse", "--show-toplevel") -TimeoutSeconds 10 -PreserveStandardOutput $true
+    if ($repoResult.exit_code -ne 0 -or $repoResult.timed_out -or [string]::IsNullOrWhiteSpace($repoResult.stdout)) {
+        $status["status"] = "error"
+        $status["message"] = "The requested local path is not a readable Git worktree."
+        Add-Check -Id "gitops_repository_detected" -Label "Git repository detection" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required = $true
+            repo_path = [string]$candidatePath
+        }
+        return $status
+    }
+
+    try {
+        $gitRoot = [string](Resolve-Path -LiteralPath ([string]$repoResult.stdout.Trim())).Path
+    }
+    catch {
+        $gitRoot = ""
+    }
+
+    $normalizedGitRoot = $gitRoot.TrimEnd([char[]]"\/")
+    $normalizedCandidatePath = $candidatePath.TrimEnd([char[]]"\/")
+    if ([string]::IsNullOrWhiteSpace($gitRoot) -or -not [string]::Equals($normalizedGitRoot, $normalizedCandidatePath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $status["status"] = "error"
+        $status["message"] = "GitOpsRepoPath must identify the root of a readable Git worktree."
+        Add-Check -Id "gitops_repository_detected" -Label "Git repository detection" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required = $true
+            repo_path = [string]$candidatePath
+        }
+        return $status
+    }
+
+    Add-Check -Id "gitops_repository_detected" -Label "Git repository detection" -Status "ok" -Message "A readable Git worktree was detected at the configured local path." -Details @{
+        required = $true
+        repo_path = [string]$candidatePath
+    }
+
+    $workingTreeResult = Invoke-ReadOnlyCommand -FileName "git" -Arguments @("-C", $candidatePath, "status", "--porcelain=v1", "--untracked-files=normal") -TimeoutSeconds 15 -PreserveStandardOutput $true
+    if ($workingTreeResult.exit_code -ne 0 -or $workingTreeResult.timed_out) {
+        $status["status"] = "error"
+        $status["message"] = "The Git working tree status could not be read safely."
+        Add-Check -Id "gitops_repository_worktree" -Label "Git working tree status" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required = $true
+            repo_path = [string]$candidatePath
+        }
+        return $status
+    }
+
+    $workingTreeClean = [string]::IsNullOrWhiteSpace([string]$workingTreeResult.stdout)
+    Add-Check -Id "gitops_repository_worktree" -Label "Git working tree status" -Status "ok" -Message $(if ($workingTreeClean) { "The Git working tree status is readable and clean." } else { "The Git working tree status is readable. Existing changes will be preserved." }) -Details @{
+        required = $true
+        clean_before_initialize = [bool]$workingTreeClean
+    }
+
+    $branch = [string]$RequestedBranch.Trim()
+    if (-not [string]::IsNullOrWhiteSpace($branch)) {
+        $branchIsSafe = $branch.Length -le 255 -and $branch -notmatch '[\s\x00-\x1F\x7F]' -and -not $branch.StartsWith("-")
+        if (-not $branchIsSafe) {
+            $status["status"] = "error"
+            $status["message"] = "The requested GitOps branch name is not valid for launcher status."
+            Add-Check -Id "gitops_repository_branch" -Label "GitOps repository branch" -Status "failed" -Message ([string]$status["message"]) -Details @{
+                required = $true
+            }
+            return $status
+        }
+    }
+    else {
+        $branchResult = Invoke-ReadOnlyCommand -FileName "git" -Arguments @("-C", $candidatePath, "branch", "--show-current") -TimeoutSeconds 10 -PreserveStandardOutput $true
+        if ($branchResult.exit_code -eq 0 -and -not $branchResult.timed_out -and -not [string]::IsNullOrWhiteSpace($branchResult.stdout)) {
+            $branch = [string]$branchResult.stdout.Trim()
+        }
+        else {
+            $branch = "main"
+        }
+    }
+    $status["default_branch"] = $branch
+
+    $repoUrl = [string]$RequestedRepoUrl.Trim()
+    if ([string]::IsNullOrWhiteSpace($repoUrl)) {
+        $remoteResult = Invoke-ReadOnlyCommand -FileName "git" -Arguments @("-C", $candidatePath, "remote", "get-url", "origin") -TimeoutSeconds 10 -PreserveStandardOutput $true
+        if ($remoteResult.exit_code -eq 0 -and -not $remoteResult.timed_out) {
+            $repoUrl = [string]$remoteResult.stdout.Trim()
+        }
+    }
+    $status["repo_url_sanitized"] = [string](Protect-GitRepositoryUrl -Url $repoUrl)
+
+    Add-Check -Id "gitops_repository_metadata" -Label "GitOps repository metadata" -Status "ok" -Message "GitOps branch and sanitized repository metadata were resolved." -Details @{
+        required       = $true
+        provider       = "local_path"
+        mode           = "local_path"
+        default_branch = [string]$branch
+        source_path    = $GitOpsSourcePath
+    }
+
+    $sourceRoot = Join-Path $candidatePath $GitOpsSourceRelativeWindowsPath
+    $appsPath = Join-Path $sourceRoot "apps"
+    $gitKeepPath = Join-Path $appsPath ".gitkeep"
+    $kustomizationPath = Join-Path $sourceRoot "kustomization.yaml"
+
+    try {
+        New-Item -ItemType Directory -Force -Path $appsPath | Out-Null
+        if (-not (Test-Path -LiteralPath $gitKeepPath -PathType Leaf)) {
+            New-Item -ItemType File -Path $gitKeepPath -Force | Out-Null
+        }
+    }
+    catch {
+        $status["status"] = "error"
+        $status["message"] = "The GitOps directory structure could not be initialized."
+        Add-Check -Id "gitops_repository_directories" -Label "GitOps directory structure" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required    = $true
+            source_path = $GitOpsSourcePath
+        }
+        return $status
+    }
+
+    $appDirectories = @(Get-ChildItem -LiteralPath $appsPath -Directory -ErrorAction SilentlyContinue | Sort-Object -Property Name)
+    Add-Check -Id "gitops_repository_directories" -Label "GitOps directory structure" -Status "ok" -Message "The GitOps source and apps directories are present. Existing app directories were preserved." -Details @{
+        required             = $true
+        source_path          = $GitOpsSourcePath
+        apps_directory       = "$GitOpsSourcePath/apps"
+        existing_app_count   = [int]$appDirectories.Count
+        sample_app_generated = $false
+    }
+
+    $existingKustomizationValid = $false
+    if (Test-Path -LiteralPath $kustomizationPath -PathType Leaf) {
+        try {
+            $existingContent = [string](Get-Content -LiteralPath $kustomizationPath -Raw)
+            $existingKustomizationValid = Test-GitOpsKustomizationContent -Content $existingContent
+        }
+        catch {
+            $existingKustomizationValid = $false
+        }
+    }
+
+    $kustomizationChanged = $false
+    if (-not $existingKustomizationValid) {
+        $lines = New-Object System.Collections.Generic.List[string]
+        $lines.Add("apiVersion: kustomize.config.k8s.io/v1beta1") | Out-Null
+        $lines.Add("kind: Kustomization") | Out-Null
+        if ($appDirectories.Count -eq 0) {
+            $lines.Add("resources: []") | Out-Null
+        }
+        else {
+            $lines.Add("resources:") | Out-Null
+            foreach ($directory in $appDirectories) {
+                $lines.Add(("  - apps/{0}" -f [string]$directory.Name)) | Out-Null
+            }
+        }
+
+        try {
+            $kustomizationContent = [string](($lines -join "`n") + "`n")
+            Set-Content -LiteralPath $kustomizationPath -Value $kustomizationContent -Encoding UTF8
+            $kustomizationChanged = $true
+        }
+        catch {
+            $status["status"] = "error"
+            $status["message"] = "The GitOps root kustomization could not be initialized."
+            Add-Check -Id "gitops_repository_kustomization" -Label "GitOps root kustomization" -Status "failed" -Message ([string]$status["message"]) -Details @{
+                required    = $true
+                source_path = $GitOpsSourcePath
+            }
+            return $status
+        }
+    }
+
+    $finalContent = [string](Get-Content -LiteralPath $kustomizationPath -Raw)
+    $kustomizationValid = Test-GitOpsKustomizationContent -Content $finalContent
+    if (-not $kustomizationValid) {
+        $status["status"] = "error"
+        $status["message"] = "The GitOps root kustomization is missing required Kustomize fields."
+        Add-Check -Id "gitops_repository_kustomization" -Label "GitOps root kustomization" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required    = $true
+            source_path = $GitOpsSourcePath
+        }
+        return $status
+    }
+
+    Add-Check -Id "gitops_repository_kustomization" -Label "GitOps root kustomization" -Status "ok" -Message $(if ($kustomizationChanged) { "A valid deterministic GitOps root kustomization was initialized." } else { "The existing valid GitOps root kustomization was preserved." }) -Details @{
+        required      = $true
+        source_path   = $GitOpsSourcePath
+        file          = "$GitOpsSourcePath/kustomization.yaml"
+        changed       = [bool]$kustomizationChanged
+        app_count     = [int]$appDirectories.Count
+    }
+
+    if ($KubectlAvailable) {
+        $renderResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("kustomize", $sourceRoot) -TimeoutSeconds 30
+        $renderSucceeded = [bool]($renderResult.exit_code -eq 0 -and -not $renderResult.timed_out)
+        $status["kustomize_render_succeeded"] = $renderSucceeded
+        Add-Check -Id "gitops_repository_kustomize_render" -Label "GitOps Kustomize render" -Status $(if ($renderSucceeded) { "ok" } else { "warning" }) -Message $(if ($renderSucceeded) { "The GitOps source path renders successfully." } else { "Optional kubectl render validation could not complete. Structural validation passed and existing app content was not modified." }) -Details @{
+            required    = $false
+            source_path = $GitOpsSourcePath
+        }
+    }
+    else {
+        Add-Check -Id "gitops_repository_kustomize_render" -Label "GitOps Kustomize render" -Status "skipped" -Message "kubectl is unavailable; structural kustomization validation passed, but render validation was skipped." -Details @{
+            required    = $false
+            source_path = $GitOpsSourcePath
+        }
+    }
+
+    $status["configured"] = $true
+    $status["path_initialized"] = [bool](Test-Path -LiteralPath $sourceRoot -PathType Container)
+    $status["kustomization_present"] = [bool](Test-Path -LiteralPath $kustomizationPath -PathType Leaf)
+    $status["apps_directory_present"] = [bool](Test-Path -LiteralPath $appsPath -PathType Container)
+    $status["ready"] = [bool]($status["path_initialized"] -and $status["kustomization_present"] -and $status["apps_directory_present"] -and $kustomizationValid)
+    $status["status"] = if ([bool]$status["ready"]) { "ready" } else { "error" }
+    $status["message"] = if ([bool]$status["ready"]) {
+        "Local GitOps repository path is initialized and ready. No Argo CD Application or workload was created."
+    }
+    else {
+        "Local GitOps repository path was initialized, but validation did not complete successfully."
+    }
+    $status["checked_at"] = [string](Get-Timestamp)
+
+    Add-Check -Id "gitops_repository_ready" -Label "GitOps repository readiness" -Status $(if ([bool]$status["ready"]) { "ok" } else { "failed" }) -Message ([string]$status["message"]) -Details @{
+        required                   = $true
+        provider                   = "local_path"
+        mode                       = "local_path"
+        source_path                = $GitOpsSourcePath
+        path_initialized           = [bool]$status["path_initialized"]
+        kustomization_present      = [bool]$status["kustomization_present"]
+        apps_directory_present     = [bool]$status["apps_directory_present"]
+        credentials_configured     = $false
+        github_integration_enabled = $false
+        application_created        = $false
+        sample_app_generated       = $false
+    }
+
+    return $status
+}
+
 function New-PlatformBootstrapStatus {
     param(
         [Parameter(Mandatory = $true)]
@@ -6821,7 +7213,10 @@ function New-PlatformBootstrapStatus {
         [object]$ArgoCDWorkloadClusterStatusOverride = $null,
 
         [AllowNull()]
-        [object]$WorkloadDeployPermissionsStatusOverride = $null
+        [object]$WorkloadDeployPermissionsStatusOverride = $null,
+
+        [AllowNull()]
+        [object]$GitOpsRepositoryStatusOverride = $null
     )
 
     $ingress = if ($null -ne $IngressStatusOverride) { $IngressStatusOverride } else { Get-ManagementIngressStatus -ManagementCluster $ManagementCluster -HelmAvailable $HelmAvailable -KubectlAvailable $KubectlAvailable }
@@ -6830,6 +7225,7 @@ function New-PlatformBootstrapStatus {
     $workloadEndpoint = if ($null -ne $WorkloadEndpointStatusOverride) { $WorkloadEndpointStatusOverride } else { New-WorkloadClusterEndpointStatus }
     $argocdWorkloadCluster = if ($null -ne $ArgoCDWorkloadClusterStatusOverride) { $ArgoCDWorkloadClusterStatusOverride } else { New-ArgoCDWorkloadClusterStatus }
     $workloadDeployPermissions = if ($null -ne $WorkloadDeployPermissionsStatusOverride) { $WorkloadDeployPermissionsStatusOverride } else { New-WorkloadDeployPermissionsStatus }
+    $gitOpsRepository = if ($null -ne $GitOpsRepositoryStatusOverride) { $GitOpsRepositoryStatusOverride } else { New-GitOpsRepositoryStatus -RepoPath $RepoRoot }
     $devdeployNamespace = Get-DevDeployNamespaceStatus -ManagementCluster $ManagementCluster -KubectlAvailable $KubectlAvailable
     $status = "not_started"
     $message = "Management platform bootstrap has not started yet."
@@ -6840,6 +7236,7 @@ function New-PlatformBootstrapStatus {
     $backendDatabaseFailedChecks = @($Checks | Where-Object { $_.id -like "management_backend_database_*" -and $_.status -eq "failed" }).Count
     $frontendFailedChecks = @($Checks | Where-Object { $_.id -like "management_frontend_*" -and $_.status -eq "failed" }).Count
     $argocdFailedChecks = @($Checks | Where-Object { $_.id -like "management_argocd_*" -and $_.status -eq "failed" }).Count
+    $gitOpsRepositoryFailedChecks = @($Checks | Where-Object { $_.id -like "gitops_repository_*" -and $_.status -eq "failed" }).Count
 
     if ($ingressFailedChecks -gt 0 -and [string]$ingress["status"] -ne "ready") {
         $ingress["status"] = "failed"
@@ -6872,6 +7269,14 @@ function New-PlatformBootstrapStatus {
     elseif ($argocdFailedChecks -gt 0 -and [string]$argocd["status"] -ne "ready") {
         $status = "failed"
         $message = "Management Argo CD bootstrap failed."
+    }
+    elseif ($gitOpsRepositoryFailedChecks -gt 0 -and [string]$gitOpsRepository["status"] -ne "ready") {
+        $status = "failed"
+        $message = "GitOps repository configuration failed."
+    }
+    elseif ([string]$ingress["status"] -eq "ready" -and [string]$postgres["status"] -eq "ready" -and [string]$BackendStatus["status"] -in @("ready", "warning") -and [string]$BackendDatabaseStatus["status"] -eq "ready" -and [string]$FrontendStatus["status"] -in @("ready", "warning") -and [string]$argocd["status"] -eq "ready" -and [string]$argocdWorkloadCluster["status"] -in @("ready", "warning") -and [string]$workloadDeployPermissions["status"] -eq "ready" -and [string]$gitOpsRepository["status"] -eq "ready") {
+        $status = "partial"
+        $message = "Management platform, workload registration, deploy permissions, and the local GitOps repository path are ready. The GitOps Root Application is not configured yet."
     }
     elseif ([string]$ingress["status"] -eq "ready" -and [string]$postgres["status"] -eq "ready" -and [string]$BackendStatus["status"] -in @("ready", "warning") -and [string]$BackendDatabaseStatus["status"] -eq "ready" -and [string]$FrontendStatus["status"] -in @("ready", "warning") -and [string]$argocd["status"] -eq "ready" -and [string]$argocdWorkloadCluster["status"] -in @("ready", "warning") -and [string]$workloadDeployPermissions["status"] -eq "ready") {
         $status = "partial"
@@ -6909,6 +7314,10 @@ function New-PlatformBootstrapStatus {
         $status = "partial"
         $message = "Management Argo CD is ready. Workload registration and the GitOps Application model are not configured yet."
     }
+    elseif ([string]$gitOpsRepository["status"] -eq "ready") {
+        $status = "partial"
+        $message = "The local GitOps repository path is ready. Other platform readiness remains independently reported, and the GitOps Root Application is not configured yet."
+    }
     elseif ([string]$ingress["status"] -eq "ready" -or [string]$postgres["status"] -eq "ready") {
         $status = "partial"
         $message = "Management platform bootstrap is partially ready. Frontend and Argo CD are not installed yet."
@@ -6944,6 +7353,7 @@ function New-PlatformBootstrapStatus {
             workload_cluster_endpoint = $workloadEndpoint
             argocd_workload_cluster = $argocdWorkloadCluster
             workload_deploy_permissions = $workloadDeployPermissions
+            gitops_repository = $gitOpsRepository
         }
     }
 
@@ -6970,6 +7380,7 @@ function New-PlatformBootstrapStatus {
         workload_endpoint_status = [string]$workloadEndpoint["status"]
         argocd_workload_cluster_status = [string]$argocdWorkloadCluster["status"]
         workload_deploy_permissions_status = [string]$workloadDeployPermissions["status"]
+        gitops_repository_status = [string]$gitOpsRepository["status"]
     }
 
     return $platform
@@ -7937,6 +8348,9 @@ elseif ($GrantWorkloadDeployPermissions) {
 elseif ($VerifyWorkloadDeployPermissions) {
     Write-LauncherLog "Starting DevDeploy Launcher strict read-only workload deploy permission verification mode."
 }
+elseif ($ConfigureGitOpsRepository) {
+    Write-LauncherLog "Starting DevDeploy Launcher explicit local GitOps repository configuration mode."
+}
 elseif ($InitializeManagementBackendDatabase) {
     Write-LauncherLog "Starting DevDeploy Launcher explicit management backend database initialization mode."
 }
@@ -7962,15 +8376,15 @@ else {
     Write-LauncherLog "Starting DevDeploy Launcher read-only preflight."
 }
 
-$dockerAvailable = Test-CommandAvailable -Name "docker" -Label "Docker CLI" -Required ([bool](-not ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $VerifyWorkloadDeployPermissions -or $InitializeManagementBackendDatabase)))
-$kindAvailable = Test-CommandAvailable -Name "kind" -Label "kind CLI" -Required ([bool](-not ($BuildManagementBackendImage -or $BuildManagementFrontendImage)))
-$kubectlAvailable = Test-CommandAvailable -Name "kubectl" -Label "kubectl CLI" -Required ([bool](-not ($BuildManagementBackendImage -or $BuildManagementFrontendImage)))
-[void](Test-CommandAvailable -Name "git" -Label "git CLI" -Required $false)
+$dockerAvailable = Test-CommandAvailable -Name "docker" -Label "Docker CLI" -Required ([bool](-not ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $VerifyWorkloadDeployPermissions -or $ConfigureGitOpsRepository -or $InitializeManagementBackendDatabase)))
+$kindAvailable = Test-CommandAvailable -Name "kind" -Label "kind CLI" -Required ([bool](-not ($BuildManagementBackendImage -or $BuildManagementFrontendImage -or $ConfigureGitOpsRepository)))
+$kubectlAvailable = Test-CommandAvailable -Name "kubectl" -Label "kubectl CLI" -Required ([bool](-not ($BuildManagementBackendImage -or $BuildManagementFrontendImage -or $ConfigureGitOpsRepository)))
+$gitAvailable = Test-CommandAvailable -Name "git" -Label "git CLI" -Required ([bool]$ConfigureGitOpsRepository)
 $helmAvailable = Test-CommandAvailable -Name "helm" -Label "Helm CLI" -Required ([bool]($BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $RegisterWorkloadClusterWithArgoCD))
 
-if ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $VerifyWorkloadDeployPermissions -or $InitializeManagementBackendDatabase) {
+if ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $VerifyWorkloadDeployPermissions -or $ConfigureGitOpsRepository -or $InitializeManagementBackendDatabase) {
     $dockerDaemonReachable = $false
-    Add-Check -Id "docker_daemon" -Label "Docker daemon" -Status "skipped" -Message "Docker daemon check is not required for this Secret, verification, or frontend bootstrap mode." -Details @{
+    Add-Check -Id "docker_daemon" -Label "Docker daemon" -Status "skipped" -Message "Docker daemon check is not required for this launcher mode." -Details @{
         required = $false
     }
 }
@@ -8000,7 +8414,7 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
     if (($BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $DiscoverWorkloadClusterEndpoint -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $VerifyWorkloadDeployPermissions) -and $isWorkloadPort) {
         $portRequired = $false
     }
-    if ($BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementFrontendImage -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $DiscoverWorkloadClusterEndpoint -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $VerifyWorkloadDeployPermissions -or $InitializeManagementBackendDatabase -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) {
+    if ($BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementFrontendImage -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $DiscoverWorkloadClusterEndpoint -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $VerifyWorkloadDeployPermissions -or $ConfigureGitOpsRepository -or $InitializeManagementBackendDatabase -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) {
         $portRequired = $false
     }
     $allowBusyAsOk = [bool]$existingClusterDetected
@@ -8009,7 +8423,7 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
 }
 
 if ($workloadClusterExistsBeforePortCheck) {
-    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementFrontendImage -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $DiscoverWorkloadClusterEndpoint -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $VerifyWorkloadDeployPermissions -or $InitializeManagementBackendDatabase -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) { "ok" } else { "warning" }
+    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementFrontendImage -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $DiscoverWorkloadClusterEndpoint -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $VerifyWorkloadDeployPermissions -or $ConfigureGitOpsRepository -or $InitializeManagementBackendDatabase -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) { "ok" } else { "warning" }
     $detectedMessage = if ($CreateWorkloadCluster) {
         "devdeploy-workload already exists. This launcher mode will verify it instead of recreating it."
     }
@@ -8055,6 +8469,9 @@ if ($workloadClusterExistsBeforePortCheck) {
     elseif ($VerifyWorkloadDeployPermissions) {
         "devdeploy-workload already exists. Permission verification reads namespace, RBAC, and authorization state without modifying the workload cluster."
     }
+    elseif ($ConfigureGitOpsRepository) {
+        "devdeploy-workload already exists. Local GitOps repository configuration does not use, modify, or delete it."
+    }
     elseif ($InitializeManagementBackendDatabase) {
         "devdeploy-workload already exists. Backend database initialization mode targets only the backend database in devdeploy-mgmt."
     }
@@ -8084,7 +8501,7 @@ if ($workloadClusterExistsBeforePortCheck) {
     }
 }
 
-Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres) -ManagementBackendImageBuildMode ([bool]$BuildManagementBackendImage) -ManagementBackendImageLoadMode ([bool]$LoadManagementBackendImage) -ManagementBackendSecretEnsureMode ([bool]$EnsureManagementBackendSecret) -ManagementBackendSecretVerifyMode ([bool]$VerifyManagementBackendSecret) -ManagementBackendBootstrapMode ([bool]$BootstrapManagementBackend) -ManagementBackendVerifyMode ([bool]$VerifyManagementBackend) -ManagementFrontendImageBuildMode ([bool]$BuildManagementFrontendImage) -ManagementFrontendImageLoadMode ([bool]$LoadManagementFrontendImage) -ManagementFrontendBootstrapMode ([bool]$BootstrapManagementFrontend) -ManagementBackendDatabaseInitializeMode ([bool]$InitializeManagementBackendDatabase) -ManagementFrontendVerifyMode ([bool]$VerifyManagementFrontend) -ManagementArgoCDBootstrapMode ([bool]$BootstrapManagementArgoCD) -ManagementArgoCDVerifyMode ([bool]$VerifyManagementArgoCD) -WorkloadEndpointDiscoveryMode ([bool]$DiscoverWorkloadClusterEndpoint) -WorkloadArgoCDRegistrationMode ([bool]$RegisterWorkloadClusterWithArgoCD) -WorkloadArgoCDVerificationMode ([bool]$VerifyWorkloadClusterRegistration) -WorkloadDeployPermissionGrantMode ([bool]$GrantWorkloadDeployPermissions) -WorkloadDeployPermissionVerifyMode ([bool]$VerifyWorkloadDeployPermissions)
+Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres) -ManagementBackendImageBuildMode ([bool]$BuildManagementBackendImage) -ManagementBackendImageLoadMode ([bool]$LoadManagementBackendImage) -ManagementBackendSecretEnsureMode ([bool]$EnsureManagementBackendSecret) -ManagementBackendSecretVerifyMode ([bool]$VerifyManagementBackendSecret) -ManagementBackendBootstrapMode ([bool]$BootstrapManagementBackend) -ManagementBackendVerifyMode ([bool]$VerifyManagementBackend) -ManagementFrontendImageBuildMode ([bool]$BuildManagementFrontendImage) -ManagementFrontendImageLoadMode ([bool]$LoadManagementFrontendImage) -ManagementFrontendBootstrapMode ([bool]$BootstrapManagementFrontend) -ManagementBackendDatabaseInitializeMode ([bool]$InitializeManagementBackendDatabase) -ManagementFrontendVerifyMode ([bool]$VerifyManagementFrontend) -ManagementArgoCDBootstrapMode ([bool]$BootstrapManagementArgoCD) -ManagementArgoCDVerifyMode ([bool]$VerifyManagementArgoCD) -WorkloadEndpointDiscoveryMode ([bool]$DiscoverWorkloadClusterEndpoint) -WorkloadArgoCDRegistrationMode ([bool]$RegisterWorkloadClusterWithArgoCD) -WorkloadArgoCDVerificationMode ([bool]$VerifyWorkloadClusterRegistration) -WorkloadDeployPermissionGrantMode ([bool]$GrantWorkloadDeployPermissions) -WorkloadDeployPermissionVerifyMode ([bool]$VerifyWorkloadDeployPermissions) -GitOpsRepositoryConfigureMode ([bool]$ConfigureGitOpsRepository)
 Test-KubectlContext -KubectlAvailable $kubectlAvailable
 
 $launcherMode = "preflight"
@@ -8136,6 +8553,9 @@ elseif ($GrantWorkloadDeployPermissions) {
 elseif ($VerifyWorkloadDeployPermissions) {
     $launcherMode = "workload_deploy_permissions_verify"
 }
+elseif ($ConfigureGitOpsRepository) {
+    $launcherMode = "gitops_repository_configure"
+}
 elseif ($InitializeManagementBackendDatabase) {
     $launcherMode = "management_backend_database_initialize"
 }
@@ -8172,6 +8592,7 @@ $platformArgoCDOverride = $null
 $platformWorkloadEndpointOverride = $null
 $platformArgoCDWorkloadClusterOverride = $null
 $platformWorkloadDeployPermissionsOverride = $null
+$platformGitOpsRepositoryOverride = $null
 
 if ($CreateManagementCluster) {
     Write-KindConfigPreview -Id "management_kind_config" -Label "Management kind config" -ClusterName "devdeploy-mgmt" -Path $MgmtKindConfigPath -ApiServerPort 58080 -HttpHostPort 8080 -HttpsHostPort 8443
@@ -8318,6 +8739,9 @@ elseif ($VerifyWorkloadDeployPermissions) {
         $platformArgoCDWorkloadClusterOverride["message"] = "Workload cluster registration and namespace-scoped deploy RBAC passed read-only verification. No Application exists yet."
     }
 }
+elseif ($ConfigureGitOpsRepository) {
+    $platformGitOpsRepositoryOverride = Invoke-ConfigureGitOpsRepository -GitAvailable $gitAvailable -KubectlAvailable $kubectlAvailable -RequestedRepoPath $GitOpsRepoPath -RequestedRepoUrl $GitOpsRepoUrl -RequestedBranch $GitOpsBranch
+}
 elseif ($InitializeManagementBackendDatabase) {
     $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
     $databaseResult = Invoke-InitializeManagementBackendDatabase -KubectlAvailable $kubectlAvailable -ManagementCluster $managementCluster
@@ -8371,7 +8795,7 @@ if ($null -eq $workloadCluster) {
     $workloadCluster = New-WorkloadClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
 }
 $platformHelmAvailable = [bool]($helmAvailable -and -not $BuildManagementBackendImage -and -not $BuildManagementFrontendImage -and -not $LoadManagementFrontendImage -and -not $BootstrapManagementFrontend -and -not $VerifyManagementFrontend -and -not $InitializeManagementBackendDatabase -and -not $LoadManagementBackendImage -and -not $EnsureManagementBackendSecret -and -not $VerifyManagementBackendSecret -and -not $BootstrapManagementBackend -and -not $VerifyManagementBackend)
-$platformBootstrap = New-PlatformBootstrapStatus -ManagementCluster $managementCluster -HelmAvailable $platformHelmAvailable -KubectlAvailable $kubectlAvailable -BackendImageStatus $backendImageStatus -BackendSecretStatus $backendSecretStatus -BackendStatus $backendStatus -BackendDatabaseStatus $backendDatabaseStatus -FrontendImageStatus $frontendImageStatus -FrontendStatus $frontendStatus -IngressStatusOverride $platformIngressOverride -PostgresStatusOverride $platformPostgresOverride -ArgoCDStatusOverride $platformArgoCDOverride -WorkloadEndpointStatusOverride $platformWorkloadEndpointOverride -ArgoCDWorkloadClusterStatusOverride $platformArgoCDWorkloadClusterOverride -WorkloadDeployPermissionsStatusOverride $platformWorkloadDeployPermissionsOverride
+$platformBootstrap = New-PlatformBootstrapStatus -ManagementCluster $managementCluster -HelmAvailable $platformHelmAvailable -KubectlAvailable $kubectlAvailable -BackendImageStatus $backendImageStatus -BackendSecretStatus $backendSecretStatus -BackendStatus $backendStatus -BackendDatabaseStatus $backendDatabaseStatus -FrontendImageStatus $frontendImageStatus -FrontendStatus $frontendStatus -IngressStatusOverride $platformIngressOverride -PostgresStatusOverride $platformPostgresOverride -ArgoCDStatusOverride $platformArgoCDOverride -WorkloadEndpointStatusOverride $platformWorkloadEndpointOverride -ArgoCDWorkloadClusterStatusOverride $platformArgoCDWorkloadClusterOverride -WorkloadDeployPermissionsStatusOverride $platformWorkloadDeployPermissionsOverride -GitOpsRepositoryStatusOverride $platformGitOpsRepositoryOverride
 $stableChecks = @($Checks | ForEach-Object { $_ })
 $overallStatus = [string](Get-OverallStatus -StableChecks $stableChecks)
 $summary = New-LauncherSummary -StableChecks $stableChecks
@@ -8452,6 +8876,10 @@ if (-not $Quiet) {
     }
     elseif ($VerifyWorkloadDeployPermissions) {
         Write-Host "Namespace-scoped workload deploy permissions passed read-only verification. No resources were reconciled."
+    }
+    elseif ($ConfigureGitOpsRepository) {
+        Write-Host ("Local GitOps source path: {0}" -f (Join-Path ([string]$platformBootstrap["components"]["gitops_repository"]["repo_path"]) $GitOpsSourceRelativeWindowsPath))
+        Write-Host "No Argo CD Application or user workload was created."
     }
     elseif ($InitializeManagementBackendDatabase) {
         Write-Host ("Management backend database: {0}/devdeploy" -f $PostgresNamespace)

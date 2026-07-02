@@ -61,6 +61,12 @@ In either mode, DevDeploy Hub:
 
 A path in the DevDeploy product repository may remain available for development or demonstrations. It is not the primary end-user model and must not make product setup depend on a source checkout on the user's host.
 
+### 3.1 Initial local-path validation step
+
+Phase 2I.2 first implements `-ConfigureGitOpsRepository` with `provider: local_path`. The mode accepts an existing local Git worktree, defaults to the current repository root, and initializes or verifies `gitops/workloads/devdeploy-apps` without committing, pushing, calling GitHub, creating an Argo CD Application, or deploying a workload.
+
+This is a launcher and status-contract validation step, not the final product repository experience. The Setup Wizard-managed GitHub create/select model remains the V1 product target. Local-path metadata must not be treated as proof that GitHub credentials or Argo CD repository access are configured.
+
 ## 4. CD and CI Boundary
 
 V1 focuses on continuous delivery:
@@ -439,10 +445,10 @@ Status and logs may contain owner, repository name, sanitized URL, branch, path,
 
 ## 13. Implementation Sequence
 
-1. Implement authenticated GitHub connection and minimum-scope credential storage.
-2. Implement create-new and existing-repository validation through explicit setup APIs.
-3. Implement deterministic GitOps path initialization without deploying a workload.
-4. Add `platform_bootstrap.components.gitops_repository` status.
+1. **Completed in Phase 2I.2:** implement local-path Git worktree initialization and `platform_bootstrap.components.gitops_repository` status without GitHub or cluster mutation.
+2. Implement authenticated GitHub connection and minimum-scope credential storage.
+3. Implement create-new and existing-repository validation through explicit setup APIs.
+4. Adapt deterministic path initialization to the selected GitHub repository without deploying a workload.
 5. Decide whether the earliest MVP uses `default` or a dedicated AppProject.
 6. Implement guarded Root Application bootstrap after registration and permission verification are ready.
 7. Implement strict read-only Root Application verification.
