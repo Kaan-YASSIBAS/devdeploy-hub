@@ -379,6 +379,27 @@ Only the Secret `name` and `server` fields are decoded in memory. The verifier n
 
 The mode does not run `kubectl apply`, `delete`, or `patch`; it does not run Helm install/upgrade, create Applications, grant workload write RBAC, deploy workloads, build/load images, run database migrations, or modify backend/frontend resources.
 
+## Grant Workload Deploy Permissions
+
+To explicitly grant Argo CD namespace-scoped workload permissions:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -GrantWorkloadDeployPermissions
+```
+
+This guarded mode reconciles only:
+
+- Launcher-owned namespace `devdeploy-apps` in `devdeploy-workload`.
+- Role `devdeploy-apps/devdeploy-argocd-deployer`.
+- RoleBinding `devdeploy-apps/devdeploy-argocd-deployer` to `kube-system/devdeploy-argocd-manager`.
+- The non-sensitive `namespaces=devdeploy-apps` and `clusterResources=false` scope fields on the existing Argo CD cluster Secret.
+
+The Role permits reviewed namespaced workload resources, including Deployments, StatefulSets, DaemonSets, Services, ConfigMaps, Secrets, ServiceAccounts, PVCs, Ingresses, Jobs, CronJobs, HPAs, and PodDisruptionBudgets. Pods, Events, and ReplicaSets remain read-only.
+
+After reconciliation, the launcher uses impersonated `kubectl auth can-i` checks. It requires expected writes inside `devdeploy-apps` while confirming that RBAC resources, CRDs, namespaces, cluster role bindings, and Deployment writes in `default` remain denied. It also rejects cluster-admin or any unexpected cluster-wide binding for the registration ServiceAccount.
+
+This mode does not create an Argo CD Application or workload, run Helm, build/load images, run database migrations, modify backend/frontend resources, rotate registration credentials, or perform broad deletion. Tokens, Secret config, certificates, keys, CA data, and Secret values are never written to status or logs.
+
 ## Verify The Management Frontend
 
 To run strict read-only verification of the deployed frontend:
@@ -496,6 +517,7 @@ devdeploy-launcher-status
 - `workload_cluster_endpoint_discovery`
 - `workload_cluster_argocd_registration`
 - `workload_cluster_argocd_registration_verify`
+- `workload_deploy_permissions_grant`
 - `management_backend_database_initialize`
 
 `status` is one of:
@@ -650,6 +672,12 @@ When `-RegisterWorkloadClusterWithArgoCD` is used, the local status includes:
 That component reports the selected endpoint strategy, cluster Secret and ServiceAccount names, RBAC mode, registration readiness, Argo CD visibility based on the cluster Secret contract, and Application count. It contains no credential material.
 
 When `-VerifyWorkloadClusterRegistration` is used, the same component includes `mode: verify`, `service_account_present`, `write_rbac_configured`, and read-only verification results. Successful verification remains `status: warning` with `ready: true` while workload write RBAC and the parent Application are intentionally absent.
+
+When `-GrantWorkloadDeployPermissions` is used, status includes:
+
+- `platform_bootstrap.components.workload_deploy_permissions`
+
+The component reports the managed namespace, Role/RoleBinding presence, allowed resource summary, cluster-admin detection, managed/outside namespace authorization results, RBAC/CRD/namespace management boundaries, and Application count. The registration component also reports `write_rbac_configured: true` after successful grant verification.
 
 The `next_actions` array contains safe, non-destructive guidance. For example:
 

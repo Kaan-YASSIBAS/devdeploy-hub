@@ -66,24 +66,27 @@ The existing ServiceAccount remains the Argo CD workload identity:
 kube-system/devdeploy-argocd-manager
 ```
 
-The future grant mode will add a namespaced Role and RoleBinding in `devdeploy-apps`. Suggested names are:
+Phase 2H.2 implements a namespaced Role and RoleBinding in `devdeploy-apps`:
 
 ```text
-Role:        devdeploy-argocd-workload-deployer
-RoleBinding: devdeploy-argocd-workload-deployer
+Role:        devdeploy-argocd-deployer
+RoleBinding: devdeploy-argocd-deployer
 ```
 
 The RoleBinding references the existing ServiceAccount across namespaces. The existing read-only registration ClusterRole and ClusterRoleBinding remain separate and unchanged.
 
 ### Write permissions
 
-The initial Role permits `get`, `list`, `watch`, `create`, `update`, `patch`, and `delete` for:
+The implemented Role permits `get`, `list`, `watch`, `create`, `update`, `patch`, and `delete` for:
 
 | API group | Resources | Purpose |
 | --- | --- | --- |
-| Core (`""`) | `configmaps`, `secrets`, `services`, `serviceaccounts` | Basic application configuration, credentials references, networking, and workload identities |
-| `apps` | `deployments` | Primary V1 workload controller |
+| Core (`""`) | `configmaps`, `secrets`, `services`, `serviceaccounts`, `persistentvolumeclaims` | Application configuration, credentials references, networking, workload identities, and namespaced storage claims |
+| `apps` | `deployments`, `statefulsets`, `daemonsets` | V1 workload controllers |
 | `networking.k8s.io` | `ingresses` | Local workload ingress |
+| `batch` | `jobs`, `cronjobs` | Batch workloads |
+| `autoscaling` | `horizontalpodautoscalers` | Namespaced workload autoscaling |
+| `policy` | `poddisruptionbudgets` | Namespaced availability policy |
 
 Secret access is confined to `devdeploy-apps`. Secret values must never be copied into Launcher status or logs. Git remains unsuitable for raw secret values; a separate workload-secret delivery model is still required for sensitive production-style inputs.
 
@@ -96,18 +99,7 @@ The Role permits `get`, `list`, and `watch` for:
 | Core (`""`) | `pods`, `events` | Health and reconciliation visibility |
 | `apps` | `replicasets` | Deployment rollout visibility |
 
-### Deferred resources
-
-The following are excluded until their product and security behavior is defined:
-
-- `persistentvolumeclaims`
-- `statefulsets`
-- `daemonsets`
-- `jobs` and `cronjobs`
-- `horizontalpodautoscalers`
-- `poddisruptionbudgets`
-
-They may be added to the namespaced Role through separately reviewed capability increments. They must not require a cluster-wide grant.
+These resources remain namespaced and do not require cluster-wide grants. StorageClasses, PersistentVolumes, and other cluster storage resources remain prohibited.
 
 ### Explicitly prohibited permissions
 
@@ -127,8 +119,8 @@ Cluster-admin and wildcard API group/resource/verb grants are prohibited.
 The Launcher owns:
 
 - Namespace `devdeploy-apps`.
-- Role `devdeploy-apps/devdeploy-argocd-workload-deployer`.
-- RoleBinding `devdeploy-apps/devdeploy-argocd-workload-deployer`.
+- Role `devdeploy-apps/devdeploy-argocd-deployer`.
+- RoleBinding `devdeploy-apps/devdeploy-argocd-deployer`.
 
 Argo CD owns only resources declared by the GitOps source inside `devdeploy-apps`. Once this model is implemented, generated GitOps content must not include a Namespace manifest because namespace ownership belongs to the Launcher.
 
@@ -192,20 +184,30 @@ Suggested shape:
   "service_account_namespace": "kube-system",
   "service_account_name": "devdeploy-argocd-manager",
   "rbac_scope": "namespace",
-  "role_name": "devdeploy-argocd-workload-deployer",
-  "role_binding_name": "devdeploy-argocd-workload-deployer",
+  "role_name": "devdeploy-argocd-deployer",
+  "role_binding_name": "devdeploy-argocd-deployer",
   "cluster_admin": false,
-  "allowed_resource_groups": ["", "apps", "networking.k8s.io"],
+  "allowed_resource_groups": ["", "apps", "networking.k8s.io", "batch", "autoscaling", "policy"],
   "allowed_resources_summary": [
     "configmaps",
     "secrets",
     "services",
     "serviceaccounts",
+    "persistentvolumeclaims",
     "deployments",
-    "ingresses"
+    "statefulsets",
+    "daemonsets",
+    "ingresses",
+    "jobs",
+    "cronjobs",
+    "horizontalpodautoscalers",
+    "poddisruptionbudgets"
   ],
   "can_write_managed_namespace": null,
   "can_write_outside_managed_namespace": null,
+  "can_manage_rbac": null,
+  "can_manage_crds": null,
+  "can_manage_namespaces": null,
   "status": "not_started",
   "message": "Workload deployment permissions have not been granted.",
   "checked_at": "<ISO-8601 timestamp>"
@@ -269,7 +271,7 @@ Repository updates remain separate from cluster authorization. GitHub Actions ma
 
 ## 12. Implementation Sequence
 
-1. Implement `-GrantWorkloadDeployPermissions` with deterministic namespace, Role, RoleBinding, and cluster Secret scope reconciliation.
+1. **Completed in Phase 2H.2:** implement `-GrantWorkloadDeployPermissions` with deterministic namespace, Role, RoleBinding, cluster Secret scope reconciliation, and authorization boundary checks.
 2. Implement `-VerifyWorkloadDeployPermissions` as strict read-only authorization verification.
 3. Validate managed-namespace writes and outside-namespace denial without creating test resources.
 4. Define the GitOps source migration to `devdeploy-apps` and remove Namespace ownership from generated workload content.
