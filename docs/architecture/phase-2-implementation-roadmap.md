@@ -24,6 +24,7 @@ The Phase 2 architecture baseline is defined in:
 - [Argo CD Bootstrap Preparation](./argocd-bootstrap-preparation.md)
 - [Argo CD Bootstrap Launcher Design](./argocd-bootstrap-launcher-design.md)
 - [Workload Cluster Registration Design](./workload-cluster-registration-design.md)
+- [GitOps Repository and Root Application Design](./gitops-repository-root-application-design.md)
 
 The target architecture uses:
 
@@ -47,7 +48,7 @@ The backend must not directly apply, delete, patch, scale, or restart normal use
 - Preserve the current GitOps deployment flow while redirecting the target architecture toward `devdeploy-workload`.
 - Introduce a script-first Bootstrapper / Launcher before any graphical launcher.
 - Use deterministic kind configs and predictable localhost ports.
-- Keep the first Argo CD model simple with one parent Application named `devdeploy-workloads`.
+- Keep the first Argo CD model simple with one Root Application named `devdeploy-workloads-root`.
 - Preserve compatibility with a future App of Apps model.
 - Keep security boundaries explicit through the implementation.
 
@@ -109,7 +110,7 @@ Recommended sequence:
 6. Prepare, deploy, and verify the frontend in `devdeploy-mgmt`.
 7. Implement workload cluster creation and verification in the Launcher.
 8. Register `devdeploy-workload` in Argo CD running in `devdeploy-mgmt`.
-9. Create or verify parent Argo CD Application `devdeploy-workloads` targeting `devdeploy-workload`.
+9. Configure a Setup Wizard-selected GitOps repository and create or verify Root Application `devdeploy-workloads-root` targeting `devdeploy-workload/devdeploy-apps`.
 10. Update Setup Wizard to show runtime, Launcher, management cluster, workload cluster, GitOps, Argo CD, and demo statuses.
 11. Run demo app deployment through the normal GitOps path.
 12. Add read-only workload observability and status mapping.
@@ -224,11 +225,11 @@ Completed baseline:
 - Phase 2F.3 implements explicit, pinned Argo CD Helm bootstrap in `devdeploy-mgmt/argocd` with hostless `/argocd` local ingress and sanitized Launcher status.
 - Phase 2F.4 implements strict read-only management Argo CD verification, including release metadata, component readiness, ingress access, credential Secret presence, and Application inventory.
 
-Future runtime tasks:
+Completed runtime baseline:
 
-- Add explicit workload registration and read-only verification Launcher modes.
-- Register `devdeploy-workload` with narrowly scoped credentials where practical.
-- Keep registration separate from root Application creation and workload deployment.
+- Explicit workload registration and strict read-only verification Launcher modes are implemented.
+- `devdeploy-workload` is registered through a dedicated identity with scoped registration visibility.
+- Registration remains separate from Root Application creation and workload deployment.
 
 Expected output:
 
@@ -241,7 +242,7 @@ Expected output:
 
 Goal:
 
-- Register `devdeploy-workload` with management Argo CD, then connect Argo CD to the GitOps source and create or verify the parent workload Application.
+- Register `devdeploy-workload` with management Argo CD and establish the authorization prerequisites for a future GitOps Root Application.
 
 Completed design baseline:
 
@@ -252,21 +253,17 @@ Completed design baseline:
 
 Recommended tasks:
 
-- Add scoped workload reconciliation permissions after namespace ownership is finalized; registration currently remains read-only.
-- Verify Argo CD connection health without creating Applications or persisting an API session.
-- Configure repository access without exposing credentials.
-- Create or verify parent Application `devdeploy-workloads`.
-- Ensure `devdeploy-workloads` targets `devdeploy-workload`.
-- Ensure Git source path is `infra/kubernetes/generated/workloads`.
-- Keep GitHub repository creation and CI automation as later, separately reviewed work.
+- Keep repository setup and Root Application creation separate from registration and permission grants.
+- Continue to verify Argo CD connection health without requiring a persisted API session.
+- Carry the verified registration and authorization boundaries into Phase 2I repository and Root Application setup.
 
 Expected output:
 
 - `devdeploy-workload` is registered and reachable from Argo CD.
 - Registration credentials and endpoint details are sanitized.
-- Argo CD can read the configured GitOps source.
-- The parent Application exists and has the correct destination.
-- GitOps source changes remain the only normal path to workload reconciliation.
+- Argo CD registration is ready for a future source and Application.
+- Namespace-scoped deployment authorization can be introduced and verified independently.
+- No Application or user workload is created as a side effect of registration.
 
 ## 13. Phase 2H - Workload Permissions and Setup Wizard Integration
 
@@ -300,17 +297,31 @@ Expected output:
 - Setup Wizard guides users through the multi-cluster lifecycle without pretending to run host commands from the browser.
 - Setup completion reflects actual platform readiness.
 
-## 14. Phase 2I - GitOps Smoke Demo App
+## 14. Phase 2I - GitOps Repository, Root Application, and Smoke Demo App
 
 Goal:
 
-- Validate the normal GitOps workload path using a small demo app.
+- Configure the user-selected GitOps source, bootstrap the first Root Application, and then validate the normal GitOps workload path with an explicit demo app.
+
+Completed design baseline:
+
+- Phase 2I.1 defines Setup Wizard-managed create-new and existing GitHub repository modes.
+- The V1 managed source path is `gitops/workloads/devdeploy-apps`.
+- The preferred Root Application is `argocd/devdeploy-workloads-root`.
+- The Root Application targets `https://devdeploy-workload-control-plane:6443` and namespace `devdeploy-apps`.
+- Initial automated sync uses `selfHeal=true`, `prune=false`, and `CreateNamespace=false`.
+- V1 CD accepts an existing image reference; source builds, registry pushes, and image promotion remain a later CI phase.
 
 Recommended tasks:
 
+- Add authenticated GitHub repository selection or creation through explicit Setup Wizard/backend setup APIs.
+- Initialize or validate the deterministic GitOps path without deploying a sample workload.
+- Configure sanitized Argo CD repository access.
+- Create or verify `devdeploy-workloads-root` only after registration and workload permission checks are ready.
+- Define safe prune/delete behavior before claiming GitOps deletion is complete.
 - Add or reuse a known safe demo image.
-- Generate the demo app under `infra/kubernetes/generated/workloads/apps/<demo-app>`.
-- Update the parent generated workload kustomization.
+- Generate the demo app under `gitops/workloads/devdeploy-apps/apps/<demo-app>`.
+- Update the GitOps root kustomization.
 - Validate rendered manifests.
 - Update Git according to repository policy.
 - Let Argo CD sync to `devdeploy-workload`.
@@ -325,6 +336,7 @@ Expected output:
   ```
 
 - The demo app is observable with the same status model as normal apps.
+- The Root Application source and destination match the Phase 2I.1 contract.
 
 ## 15. Phase 2J - Observability and Status Integration
 
@@ -410,11 +422,11 @@ Phase 2-specific validation:
 - DevDeploy platform runs in `devdeploy-mgmt`.
 - `devdeploy-workload` can be created or verified.
 - Argo CD can reach `devdeploy-workload`.
-- Parent Application `devdeploy-workloads` targets `devdeploy-workload`.
-- Generated workload manifests render.
+- Root Application `devdeploy-workloads-root` targets `devdeploy-workload/devdeploy-apps`.
+- GitOps source path `gitops/workloads/devdeploy-apps` renders.
 - Demo app deploys through the GitOps path.
 - Demo app URL works at `http://<app-name>.localhost:8081`.
-- Delete flow removes Git state and lets Argo CD prune.
+- Delete flow removes Git state and uses the separately reviewed safe-prune policy before reporting cluster deletion complete.
 - No normal workload deployment occurs directly from backend.
 - No normal workload deployment occurs directly from GitHub Actions.
 - No secrets appear in Git, logs, API responses, or browser localStorage.
@@ -450,8 +462,8 @@ Phase 2 is complete when:
 - DevDeploy Hub runs in `devdeploy-mgmt`.
 - `devdeploy-workload` can be created locally.
 - Argo CD in `devdeploy-mgmt` can deploy to `devdeploy-workload`.
-- Parent Application `devdeploy-workloads` exists.
-- Parent Application `devdeploy-workloads` targets `devdeploy-workload`.
+- Root Application `devdeploy-workloads-root` exists.
+- Root Application `devdeploy-workloads-root` targets `devdeploy-workload/devdeploy-apps`.
 - Demo app deploys through:
 
   ```text
