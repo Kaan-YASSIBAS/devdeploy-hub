@@ -268,14 +268,21 @@ Expected output:
 - The parent Application exists and has the correct destination.
 - GitOps source changes remain the only normal path to workload reconciliation.
 
-## 13. Phase 2H - Setup Wizard Multi-Cluster UI Integration
+## 13. Phase 2H - Workload Permissions and Setup Wizard Integration
 
 Goal:
 
-- Make the Setup Wizard accurately represent multi-cluster setup progress.
+- Add a controlled namespace-scoped workload deployment boundary, then make the Setup Wizard accurately represent multi-cluster setup progress.
+
+Completed design baseline:
+
+- Phase 2H.1 defines Launcher-owned namespace `devdeploy-apps`, namespaced Argo CD workload RBAC, explicit grant/verify modes, sanitized permission status, and prohibited cluster-wide grants.
 
 Recommended tasks:
 
+- Implement `-GrantWorkloadDeployPermissions` without cluster-admin or cluster-wide workload writes.
+- Implement strict read-only `-VerifyWorkloadDeployPermissions`.
+- Align the Argo CD cluster Secret namespace scope and future GitOps source with `devdeploy-apps`.
 - Show runtime mode.
 - Show Launcher availability.
 - Show host preflight status.
@@ -288,6 +295,8 @@ Recommended tasks:
 
 Expected output:
 
+- Argo CD can reconcile reviewed workload resource types only in `devdeploy-apps`.
+- Representative writes outside `devdeploy-apps` remain denied.
 - Setup Wizard guides users through the multi-cluster lifecycle without pretending to run host commands from the browser.
 - Setup completion reflects actual platform readiness.
 

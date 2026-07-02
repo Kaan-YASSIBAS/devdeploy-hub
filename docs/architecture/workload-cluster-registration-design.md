@@ -10,6 +10,7 @@ It refines the registration direction established by:
 - [Bootstrapper / Launcher Design](./bootstrapper-launcher-design.md)
 - [Argo CD Bootstrap Preparation](./argocd-bootstrap-preparation.md)
 - [Security Boundaries and Credentials Model](./security-credentials-boundaries.md)
+- [GitOps Workload Permission Design](./gitops-workload-permission-design.md)
 
 Registration is a platform bootstrap operation. It is separate from GitOps repository configuration, Argo CD Application creation, and normal user workload deployment.
 
