@@ -152,15 +152,15 @@ The mode must be idempotent. It must not create an Argo CD Application, Git repo
 
 ### `-VerifyWorkloadDeployPermissions`
 
-This strict read-only mode will:
+Phase 2H.3 implements this strict read-only mode. It:
 
 1. Verify namespace, Role, and RoleBinding metadata.
-2. Compare Role rules against the expected versioned permission set.
-3. Verify the ServiceAccount can perform expected workload operations in `devdeploy-apps`.
-4. Verify representative write operations remain denied outside `devdeploy-apps`.
-5. Verify no cluster-admin binding targets `devdeploy-argocd-manager`.
-6. Report the current Application count without requiring it to be zero after applications exist.
-7. Write only sanitized status.
+2. Verifies the RoleBinding subject and Role reference.
+3. Verifies the ServiceAccount can perform expected workload operations in `devdeploy-apps`.
+4. Verifies Role, RoleBinding, ClusterRole, ClusterRoleBinding, CRD, namespace, and representative outside-namespace writes remain denied.
+5. Verifies effective cluster-admin access is absent.
+6. Reports the current Application count without requiring it to be zero after applications exist.
+7. Writes only sanitized status.
 
 Authorization checks must use `kubectl auth can-i` or equivalent review APIs. Verification must not create test resources.
 
@@ -272,7 +272,7 @@ Repository updates remain separate from cluster authorization. GitHub Actions ma
 ## 12. Implementation Sequence
 
 1. **Completed in Phase 2H.2:** implement `-GrantWorkloadDeployPermissions` with deterministic namespace, Role, RoleBinding, cluster Secret scope reconciliation, and authorization boundary checks.
-2. Implement `-VerifyWorkloadDeployPermissions` as strict read-only authorization verification.
+2. **Completed in Phase 2H.3:** implement `-VerifyWorkloadDeployPermissions` as strict read-only metadata and authorization verification.
 3. Validate managed-namespace writes and outside-namespace denial without creating test resources.
 4. Define the GitOps source migration to `devdeploy-apps` and remove Namespace ownership from generated workload content.
 5. Configure repository access and create the parent Application only after permission verification is `ready`.

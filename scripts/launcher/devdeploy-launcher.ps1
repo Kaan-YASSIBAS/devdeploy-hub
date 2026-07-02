@@ -52,6 +52,8 @@ param(
 
     [switch]$GrantWorkloadDeployPermissions,
 
+    [switch]$VerifyWorkloadDeployPermissions,
+
     [switch]$InitializeManagementBackendDatabase,
 
     [switch]$Quiet
@@ -729,6 +731,23 @@ function New-NextActions {
         }
         else {
             $actions.Add("Review the sanitized workload permission checks and rerun -GrantWorkloadDeployPermissions after resolving the namespace or RBAC issue.") | Out-Null
+        }
+    }
+
+    if ($LauncherMode -eq "workload_deploy_permissions_verify") {
+        $permissionStatus = "not_started"
+        try {
+            $permissionStatus = [string]$PlatformBootstrap["components"]["workload_deploy_permissions"]["status"]
+        }
+        catch {
+            $permissionStatus = "unknown"
+        }
+
+        if ($permissionStatus -eq "ready") {
+            $actions.Add("Namespace-scoped workload permissions passed read-only verification. The GitOps parent Application remains a separate future step.") | Out-Null
+        }
+        else {
+            $actions.Add("Review the sanitized permission verification checks. Use -GrantWorkloadDeployPermissions only when you explicitly intend to reconcile the permission resources.") | Out-Null
         }
     }
 
@@ -3815,7 +3834,9 @@ function Test-KindClusters {
 
         [bool]$WorkloadArgoCDVerificationMode = $false,
 
-        [bool]$WorkloadDeployPermissionGrantMode = $false
+        [bool]$WorkloadDeployPermissionGrantMode = $false,
+
+        [bool]$WorkloadDeployPermissionVerifyMode = $false
     )
 
     if (-not $KindAvailable) {
@@ -3940,6 +3961,10 @@ function Test-KindClusters {
     elseif ($WorkloadDeployPermissionGrantMode -and $mgmtExists -and $workloadExists) {
         $status = "ok"
         $message = "Both DevDeploy clusters exist. This explicit mode reconciles only devdeploy-apps and its namespaced deploy authorization boundary."
+    }
+    elseif ($WorkloadDeployPermissionVerifyMode -and $mgmtExists -and $workloadExists) {
+        $status = "ok"
+        $message = "Both DevDeploy clusters exist. This mode verifies devdeploy-apps permissions without mutating either cluster."
     }
 
     Add-Check -Id "kind_clusters" -Label "Existing kind clusters" -Status $status -Message $message -Details @{
@@ -6262,6 +6287,11 @@ function Invoke-VerifyWorkloadClusterRegistration {
 }
 
 function New-WorkloadDeployPermissionsStatus {
+    param(
+        [ValidateSet("not_started", "grant", "verify")]
+        [string]$Mode = "not_started"
+    )
+
     return [ordered]@{
         granted                            = $false
         ready                              = $false
@@ -6271,11 +6301,14 @@ function New-WorkloadDeployPermissionsStatus {
         namespace_present                  = $false
         service_account_namespace          = $ArgoCDWorkloadServiceAccountNamespace
         service_account_name               = $ArgoCDWorkloadServiceAccountName
+        service_account_present            = $false
         rbac_scope                         = "namespace"
         role_name                          = $WorkloadDeployRoleName
         role_present                       = $false
         role_binding_name                  = $WorkloadDeployRoleBindingName
         role_binding_present               = $false
+        role_binding_subject_valid         = $false
+        role_binding_ref_valid             = $false
         cluster_admin                      = $null
         write_rbac_configured              = $false
         can_write_managed_namespace        = $null
@@ -6284,6 +6317,7 @@ function New-WorkloadDeployPermissionsStatus {
         can_manage_crds                    = $null
         can_manage_namespaces              = $null
         application_count                  = $null
+        mode                               = $Mode
         allowed_resource_groups            = @("", "apps", "networking.k8s.io", "batch", "autoscaling", "policy")
         allowed_resources_summary          = @(
             "pods", "services", "configmaps", "secrets", "serviceaccounts", "persistentvolumeclaims", "events",
@@ -6340,7 +6374,7 @@ function Invoke-GrantWorkloadDeployPermissions {
         [object]$RegistrationStatus
     )
 
-    $status = New-WorkloadDeployPermissionsStatus
+    $status = New-WorkloadDeployPermissionsStatus -Mode "grant"
     if (-not $KubectlAvailable -or [string]$ManagementCluster["status"] -ne "ready" -or [string]$WorkloadCluster["status"] -ne "ready" -or -not [bool]$RegistrationStatus["registered"] -or -not [bool]$RegistrationStatus["ready"]) {
         $status["status"] = "error"
         $status["message"] = "Both clusters and the existing Argo CD workload registration must be ready before granting deploy permissions."
@@ -6498,6 +6532,9 @@ function Invoke-GrantWorkloadDeployPermissions {
     $status["namespace_present"] = $namespacePresent
     $status["role_present"] = $rolePresent
     $status["role_binding_present"] = $roleBindingPresent
+    $status["service_account_present"] = [bool]$RegistrationStatus["service_account_present"]
+    $status["role_binding_subject_valid"] = $roleBindingPresent
+    $status["role_binding_ref_valid"] = $roleBindingPresent
     Add-Check -Id "workload_deploy_permissions_metadata" -Label "Workload deploy permission metadata" -Status $(if ($namespacePresent -and $rolePresent -and $roleBindingPresent -and $clusterScopeReady) { "ok" } else { "failed" }) -Message $(if ($namespacePresent -and $rolePresent -and $roleBindingPresent -and $clusterScopeReady) { "Namespace, namespaced RBAC, and Argo CD namespace scope match the V1 contract." } else { "Namespace, RBAC, or Argo CD namespace scope verification failed." }) -Details @{
         required                   = $true
         namespace_present          = $namespacePresent
@@ -6582,6 +6619,160 @@ function Invoke-GrantWorkloadDeployPermissions {
         workload_created    = $false
         cluster_admin       = $status["cluster_admin"]
         rbac_scope          = "namespace"
+    }
+
+    return $status
+}
+
+function Invoke-VerifyWorkloadDeployPermissions {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ManagementCluster,
+
+        [Parameter(Mandatory = $true)]
+        [object]$WorkloadCluster,
+
+        [bool]$KubectlAvailable,
+
+        [Parameter(Mandatory = $true)]
+        [object]$RegistrationStatus
+    )
+
+    $status = New-WorkloadDeployPermissionsStatus -Mode "verify"
+    if (-not $KubectlAvailable -or [string]$ManagementCluster["status"] -ne "ready" -or [string]$WorkloadCluster["status"] -ne "ready" -or -not [bool]$RegistrationStatus["registered"] -or -not [bool]$RegistrationStatus["ready"] -or -not [bool]$RegistrationStatus["cluster_secret_present"]) {
+        $status["status"] = "error"
+        $status["message"] = "Both clusters and the existing Argo CD workload registration must be ready for read-only permission verification."
+        Add-Check -Id "workload_deploy_permissions_verify_prerequisites" -Label "Workload deploy permission verification prerequisites" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required                  = $true
+            kubectl_available         = $KubectlAvailable
+            management_cluster_status = [string]$ManagementCluster["status"]
+            workload_cluster_status   = [string]$WorkloadCluster["status"]
+            registration_status       = [string]$RegistrationStatus["status"]
+            cluster_secret_present    = [bool]$RegistrationStatus["cluster_secret_present"]
+            read_only                 = $true
+        }
+        return $status
+    }
+
+    Add-Check -Id "workload_deploy_permissions_verify_prerequisites" -Label "Workload deploy permission verification prerequisites" -Status "ok" -Message "Both clusters, Argo CD, and the existing workload registration are ready for read-only permission verification." -Details @{
+        required          = $true
+        managed_namespace = $WorkloadManagedNamespace
+        read_only         = $true
+    }
+
+    $namespaceResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-workload", "get", "namespace", $WorkloadManagedNamespace, "--output", "name") -TimeoutSeconds 20
+    $serviceAccountResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-workload", "--namespace", $ArgoCDWorkloadServiceAccountNamespace, "get", "serviceaccount", $ArgoCDWorkloadServiceAccountName, "--output", "name") -TimeoutSeconds 20
+    $roleResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-workload", "--namespace", $WorkloadManagedNamespace, "get", "role", $WorkloadDeployRoleName, "--output", "name") -TimeoutSeconds 20
+    $bindingNameResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-workload", "--namespace", $WorkloadManagedNamespace, "get", "rolebinding", $WorkloadDeployRoleBindingName, "--output", "name") -TimeoutSeconds 20
+    $bindingRoleResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-workload", "--namespace", $WorkloadManagedNamespace, "get", "rolebinding", $WorkloadDeployRoleBindingName, "--output", "jsonpath={.roleRef.kind}/{.roleRef.name}") -TimeoutSeconds 20
+    $bindingSubjectResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-workload", "--namespace", $WorkloadManagedNamespace, "get", "rolebinding", $WorkloadDeployRoleBindingName, "--output", "jsonpath={.subjects[0].kind}/{.subjects[0].namespace}/{.subjects[0].name}") -TimeoutSeconds 20
+
+    $namespacePresent = [bool]($namespaceResult.exit_code -eq 0 -and -not $namespaceResult.timed_out)
+    $serviceAccountPresent = [bool]($serviceAccountResult.exit_code -eq 0 -and -not $serviceAccountResult.timed_out)
+    $rolePresent = [bool]($roleResult.exit_code -eq 0 -and -not $roleResult.timed_out)
+    $roleBindingPresent = [bool]($bindingNameResult.exit_code -eq 0 -and -not $bindingNameResult.timed_out)
+    $roleBindingRefValid = [bool]($bindingRoleResult.exit_code -eq 0 -and -not $bindingRoleResult.timed_out -and ([string]$bindingRoleResult.stdout).Trim() -eq "Role/$WorkloadDeployRoleName")
+    $roleBindingSubjectValid = [bool]($bindingSubjectResult.exit_code -eq 0 -and -not $bindingSubjectResult.timed_out -and ([string]$bindingSubjectResult.stdout).Trim() -eq "ServiceAccount/${ArgoCDWorkloadServiceAccountNamespace}/${ArgoCDWorkloadServiceAccountName}")
+    $metadataReady = [bool]($namespacePresent -and $serviceAccountPresent -and $rolePresent -and $roleBindingPresent -and $roleBindingRefValid -and $roleBindingSubjectValid)
+
+    $status["namespace_present"] = $namespacePresent
+    $status["service_account_present"] = $serviceAccountPresent
+    $status["role_present"] = $rolePresent
+    $status["role_binding_present"] = $roleBindingPresent
+    $status["role_binding_ref_valid"] = $roleBindingRefValid
+    $status["role_binding_subject_valid"] = $roleBindingSubjectValid
+
+    Add-Check -Id "workload_deploy_permissions_verify_metadata" -Label "Workload deploy permission metadata verification" -Status $(if ($metadataReady) { "ok" } else { "failed" }) -Message $(if ($metadataReady) { "Namespace, ServiceAccount, Role, and RoleBinding metadata match the V1 permission contract." } else { "One or more namespace, ServiceAccount, Role, or RoleBinding metadata checks failed." }) -Details @{
+        required                   = $true
+        namespace_present          = $namespacePresent
+        service_account_present    = $serviceAccountPresent
+        role_present               = $rolePresent
+        role_binding_present       = $roleBindingPresent
+        role_binding_ref_valid     = $roleBindingRefValid
+        role_binding_subject_valid = $roleBindingSubjectValid
+        read_only                  = $true
+    }
+
+    $managedChecks = @(
+        Get-KubectlAuthorizationDecision -Verb "create" -Resource "deployments.apps" -Namespace $WorkloadManagedNamespace
+        Get-KubectlAuthorizationDecision -Verb "create" -Resource "services" -Namespace $WorkloadManagedNamespace
+        Get-KubectlAuthorizationDecision -Verb "create" -Resource "ingresses.networking.k8s.io" -Namespace $WorkloadManagedNamespace
+        Get-KubectlAuthorizationDecision -Verb "create" -Resource "configmaps" -Namespace $WorkloadManagedNamespace
+        Get-KubectlAuthorizationDecision -Verb "create" -Resource "secrets" -Namespace $WorkloadManagedNamespace
+    )
+    $managedKnown = [bool](@($managedChecks | Where-Object { -not [bool]$_['known'] }).Count -eq 0)
+    $managedAllowed = [bool]($managedKnown -and @($managedChecks | Where-Object { $_['allowed'] -ne $true }).Count -eq 0)
+
+    $roleBindingDecision = Get-KubectlAuthorizationDecision -Verb "create" -Resource "rolebindings.rbac.authorization.k8s.io" -Namespace $WorkloadManagedNamespace
+    $roleDecision = Get-KubectlAuthorizationDecision -Verb "create" -Resource "roles.rbac.authorization.k8s.io" -Namespace $WorkloadManagedNamespace
+    $clusterRoleBindingDecision = Get-KubectlAuthorizationDecision -Verb "create" -Resource "clusterrolebindings.rbac.authorization.k8s.io"
+    $clusterRoleDecision = Get-KubectlAuthorizationDecision -Verb "create" -Resource "clusterroles.rbac.authorization.k8s.io"
+    $crdDecision = Get-KubectlAuthorizationDecision -Verb "create" -Resource "customresourcedefinitions.apiextensions.k8s.io"
+    $namespaceDecision = Get-KubectlAuthorizationDecision -Verb "create" -Resource "namespaces"
+    $outsideDeploymentDecision = Get-KubectlAuthorizationDecision -Verb "create" -Resource "deployments.apps" -Namespace "default"
+    $clusterAdminDecision = Get-KubectlAuthorizationDecision -Verb "*" -Resource "*"
+
+    $rbacDecisions = @($roleBindingDecision, $roleDecision, $clusterRoleBindingDecision, $clusterRoleDecision)
+    $rbacKnown = [bool](@($rbacDecisions | Where-Object { -not [bool]$_['known'] }).Count -eq 0)
+    $rbacDenied = [bool]($rbacKnown -and @($rbacDecisions | Where-Object { $_['allowed'] -ne $false }).Count -eq 0)
+    $crdDenied = [bool]($crdDecision['known'] -and $crdDecision['allowed'] -eq $false)
+    $namespaceDenied = [bool]($namespaceDecision['known'] -and $namespaceDecision['allowed'] -eq $false)
+    $outsideWriteDenied = [bool]($outsideDeploymentDecision['known'] -and $outsideDeploymentDecision['allowed'] -eq $false)
+    $clusterAdmin = if ($clusterAdminDecision['known']) { [bool]$clusterAdminDecision['allowed'] } else { $null }
+
+    $status["cluster_admin"] = $clusterAdmin
+    $status["can_write_managed_namespace"] = if ($managedKnown) { $managedAllowed } else { $null }
+    $status["can_write_outside_managed_namespace"] = if ($outsideDeploymentDecision['known']) { [bool]$outsideDeploymentDecision['allowed'] } else { $null }
+    $status["can_manage_rbac"] = if ($rbacKnown) { [bool](-not $rbacDenied) } else { $null }
+    $status["can_manage_crds"] = if ($crdDecision['known']) { [bool]$crdDecision['allowed'] } else { $null }
+    $status["can_manage_namespaces"] = if ($namespaceDecision['known']) { [bool]$namespaceDecision['allowed'] } else { $null }
+    $authorizationReady = [bool]($managedAllowed -and $rbacDenied -and $crdDenied -and $namespaceDenied -and $outsideWriteDenied -and $clusterAdmin -eq $false)
+
+    Add-Check -Id "workload_deploy_permissions_verify_authorization" -Label "Workload deploy permission authorization verification" -Status $(if ($authorizationReady) { "ok" } else { "failed" }) -Message $(if ($authorizationReady) { "Allowed workload writes are confined to devdeploy-apps, while RBAC, CRD, namespace, outside-namespace, and cluster-admin access remain denied." } else { "The expected namespace-scoped authorization boundary was not verified." }) -Details @{
+        required                            = $true
+        can_write_managed_namespace         = $status["can_write_managed_namespace"]
+        can_write_outside_managed_namespace = $status["can_write_outside_managed_namespace"]
+        can_manage_rbac                     = $status["can_manage_rbac"]
+        can_manage_crds                     = $status["can_manage_crds"]
+        can_manage_namespaces               = $status["can_manage_namespaces"]
+        cluster_admin                       = $status["cluster_admin"]
+        read_only                           = $true
+    }
+
+    $applicationsResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $ArgoCDNamespace, "get", "applications.argoproj.io", "--output", "jsonpath={.items[*].metadata.name}") -TimeoutSeconds 20
+    $applicationCountKnown = [bool]($applicationsResult.exit_code -eq 0 -and -not $applicationsResult.timed_out)
+    if ($applicationCountKnown) {
+        $applicationNames = @(([string]$applicationsResult.stdout) -split "\s+" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $status["application_count"] = [int]$applicationNames.Count
+    }
+
+    Add-Check -Id "workload_deploy_permissions_verify_applications" -Label "Argo CD Application inventory" -Status $(if ($applicationCountKnown) { "ok" } else { "failed" }) -Message $(if ($applicationCountKnown) { "Argo CD Application inventory was read without creating or modifying Applications." } else { "Argo CD Application inventory could not be read." }) -Details @{
+        required            = $true
+        application_count   = $status["application_count"]
+        application_created = $false
+        read_only           = $true
+    }
+
+    $verificationReady = [bool]($metadataReady -and $authorizationReady -and $applicationCountKnown)
+    $status["granted"] = $verificationReady
+    $status["ready"] = $verificationReady
+    $status["write_rbac_configured"] = $verificationReady
+    $status["checked_at"] = [string](Get-Timestamp)
+    if ($verificationReady) {
+        $status["status"] = "ready"
+        $status["message"] = "Namespace-scoped workload deploy permissions are verified. No Application or workload was created or modified."
+    }
+    else {
+        $status["status"] = "error"
+        $status["message"] = "Workload deploy permissions did not pass all required read-only verification checks."
+    }
+
+    Add-Check -Id "workload_deploy_permissions_verify_ready" -Label "Workload deploy permission verification" -Status $(if ($verificationReady) { "ok" } else { "failed" }) -Message ([string]$status["message"]) -Details @{
+        required                  = [bool](-not $verificationReady)
+        application_count         = $status["application_count"]
+        write_rbac_configured      = $status["write_rbac_configured"]
+        cluster_admin              = $status["cluster_admin"]
+        verification_mutated_state = $false
     }
 
     return $status
@@ -7743,6 +7934,9 @@ elseif ($VerifyWorkloadClusterRegistration) {
 elseif ($GrantWorkloadDeployPermissions) {
     Write-LauncherLog "Starting DevDeploy Launcher explicit namespace-scoped workload deploy permission grant mode."
 }
+elseif ($VerifyWorkloadDeployPermissions) {
+    Write-LauncherLog "Starting DevDeploy Launcher strict read-only workload deploy permission verification mode."
+}
 elseif ($InitializeManagementBackendDatabase) {
     Write-LauncherLog "Starting DevDeploy Launcher explicit management backend database initialization mode."
 }
@@ -7768,13 +7962,13 @@ else {
     Write-LauncherLog "Starting DevDeploy Launcher read-only preflight."
 }
 
-$dockerAvailable = Test-CommandAvailable -Name "docker" -Label "Docker CLI" -Required ([bool](-not ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $InitializeManagementBackendDatabase)))
+$dockerAvailable = Test-CommandAvailable -Name "docker" -Label "Docker CLI" -Required ([bool](-not ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $VerifyWorkloadDeployPermissions -or $InitializeManagementBackendDatabase)))
 $kindAvailable = Test-CommandAvailable -Name "kind" -Label "kind CLI" -Required ([bool](-not ($BuildManagementBackendImage -or $BuildManagementFrontendImage)))
 $kubectlAvailable = Test-CommandAvailable -Name "kubectl" -Label "kubectl CLI" -Required ([bool](-not ($BuildManagementBackendImage -or $BuildManagementFrontendImage)))
 [void](Test-CommandAvailable -Name "git" -Label "git CLI" -Required $false)
 $helmAvailable = Test-CommandAvailable -Name "helm" -Label "Helm CLI" -Required ([bool]($BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $RegisterWorkloadClusterWithArgoCD))
 
-if ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $InitializeManagementBackendDatabase) {
+if ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $VerifyWorkloadDeployPermissions -or $InitializeManagementBackendDatabase) {
     $dockerDaemonReachable = $false
     Add-Check -Id "docker_daemon" -Label "Docker daemon" -Status "skipped" -Message "Docker daemon check is not required for this Secret, verification, or frontend bootstrap mode." -Details @{
         required = $false
@@ -7803,10 +7997,10 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
     $expectedCluster = if ($isManagementPort) { "devdeploy-mgmt" } elseif ($isWorkloadPort) { "devdeploy-workload" } else { "" }
     $existingClusterDetected = [bool](($isManagementPort -and $managementClusterExistsBeforePortCheck) -or ($isWorkloadPort -and $workloadClusterExistsBeforePortCheck))
     $portRequired = [bool](-not $existingClusterDetected)
-    if (($BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $DiscoverWorkloadClusterEndpoint -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions) -and $isWorkloadPort) {
+    if (($BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $DiscoverWorkloadClusterEndpoint -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $VerifyWorkloadDeployPermissions) -and $isWorkloadPort) {
         $portRequired = $false
     }
-    if ($BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementFrontendImage -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $DiscoverWorkloadClusterEndpoint -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $InitializeManagementBackendDatabase -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) {
+    if ($BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementFrontendImage -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $DiscoverWorkloadClusterEndpoint -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $VerifyWorkloadDeployPermissions -or $InitializeManagementBackendDatabase -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) {
         $portRequired = $false
     }
     $allowBusyAsOk = [bool]$existingClusterDetected
@@ -7815,7 +8009,7 @@ foreach ($entry in $PortPlan.GetEnumerator()) {
 }
 
 if ($workloadClusterExistsBeforePortCheck) {
-    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementFrontendImage -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $DiscoverWorkloadClusterEndpoint -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $InitializeManagementBackendDatabase -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) { "ok" } else { "warning" }
+    $detectedStatus = if ($CreateWorkloadCluster -or $BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BuildManagementBackendImage -or $BuildManagementFrontendImage -or $LoadManagementFrontendImage -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $DiscoverWorkloadClusterEndpoint -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $VerifyWorkloadDeployPermissions -or $InitializeManagementBackendDatabase -or $LoadManagementBackendImage -or $EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $BootstrapManagementBackend -or $VerifyManagementBackend) { "ok" } else { "warning" }
     $detectedMessage = if ($CreateWorkloadCluster) {
         "devdeploy-workload already exists. This launcher mode will verify it instead of recreating it."
     }
@@ -7858,6 +8052,9 @@ if ($workloadClusterExistsBeforePortCheck) {
     elseif ($GrantWorkloadDeployPermissions) {
         "devdeploy-workload already exists. This explicit mode reconciles only devdeploy-apps and its namespaced Role/RoleBinding."
     }
+    elseif ($VerifyWorkloadDeployPermissions) {
+        "devdeploy-workload already exists. Permission verification reads namespace, RBAC, and authorization state without modifying the workload cluster."
+    }
     elseif ($InitializeManagementBackendDatabase) {
         "devdeploy-workload already exists. Backend database initialization mode targets only the backend database in devdeploy-mgmt."
     }
@@ -7887,7 +8084,7 @@ if ($workloadClusterExistsBeforePortCheck) {
     }
 }
 
-Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres) -ManagementBackendImageBuildMode ([bool]$BuildManagementBackendImage) -ManagementBackendImageLoadMode ([bool]$LoadManagementBackendImage) -ManagementBackendSecretEnsureMode ([bool]$EnsureManagementBackendSecret) -ManagementBackendSecretVerifyMode ([bool]$VerifyManagementBackendSecret) -ManagementBackendBootstrapMode ([bool]$BootstrapManagementBackend) -ManagementBackendVerifyMode ([bool]$VerifyManagementBackend) -ManagementFrontendImageBuildMode ([bool]$BuildManagementFrontendImage) -ManagementFrontendImageLoadMode ([bool]$LoadManagementFrontendImage) -ManagementFrontendBootstrapMode ([bool]$BootstrapManagementFrontend) -ManagementBackendDatabaseInitializeMode ([bool]$InitializeManagementBackendDatabase) -ManagementFrontendVerifyMode ([bool]$VerifyManagementFrontend) -ManagementArgoCDBootstrapMode ([bool]$BootstrapManagementArgoCD) -ManagementArgoCDVerifyMode ([bool]$VerifyManagementArgoCD) -WorkloadEndpointDiscoveryMode ([bool]$DiscoverWorkloadClusterEndpoint) -WorkloadArgoCDRegistrationMode ([bool]$RegisterWorkloadClusterWithArgoCD) -WorkloadArgoCDVerificationMode ([bool]$VerifyWorkloadClusterRegistration) -WorkloadDeployPermissionGrantMode ([bool]$GrantWorkloadDeployPermissions)
+Test-KindClusters -KindAvailable $kindAvailable -ManagementCreateMode ([bool]$CreateManagementCluster) -WorkloadCreateMode ([bool]$CreateWorkloadCluster) -ManagementIngressBootstrapMode ([bool]$BootstrapManagementIngress) -ManagementPostgresBootstrapMode ([bool]$BootstrapManagementPostgres) -ManagementBackendImageBuildMode ([bool]$BuildManagementBackendImage) -ManagementBackendImageLoadMode ([bool]$LoadManagementBackendImage) -ManagementBackendSecretEnsureMode ([bool]$EnsureManagementBackendSecret) -ManagementBackendSecretVerifyMode ([bool]$VerifyManagementBackendSecret) -ManagementBackendBootstrapMode ([bool]$BootstrapManagementBackend) -ManagementBackendVerifyMode ([bool]$VerifyManagementBackend) -ManagementFrontendImageBuildMode ([bool]$BuildManagementFrontendImage) -ManagementFrontendImageLoadMode ([bool]$LoadManagementFrontendImage) -ManagementFrontendBootstrapMode ([bool]$BootstrapManagementFrontend) -ManagementBackendDatabaseInitializeMode ([bool]$InitializeManagementBackendDatabase) -ManagementFrontendVerifyMode ([bool]$VerifyManagementFrontend) -ManagementArgoCDBootstrapMode ([bool]$BootstrapManagementArgoCD) -ManagementArgoCDVerifyMode ([bool]$VerifyManagementArgoCD) -WorkloadEndpointDiscoveryMode ([bool]$DiscoverWorkloadClusterEndpoint) -WorkloadArgoCDRegistrationMode ([bool]$RegisterWorkloadClusterWithArgoCD) -WorkloadArgoCDVerificationMode ([bool]$VerifyWorkloadClusterRegistration) -WorkloadDeployPermissionGrantMode ([bool]$GrantWorkloadDeployPermissions) -WorkloadDeployPermissionVerifyMode ([bool]$VerifyWorkloadDeployPermissions)
 Test-KubectlContext -KubectlAvailable $kubectlAvailable
 
 $launcherMode = "preflight"
@@ -7935,6 +8132,9 @@ elseif ($VerifyWorkloadClusterRegistration) {
 }
 elseif ($GrantWorkloadDeployPermissions) {
     $launcherMode = "workload_deploy_permissions_grant"
+}
+elseif ($VerifyWorkloadDeployPermissions) {
+    $launcherMode = "workload_deploy_permissions_verify"
 }
 elseif ($InitializeManagementBackendDatabase) {
     $launcherMode = "management_backend_database_initialize"
@@ -8107,6 +8307,17 @@ elseif ($GrantWorkloadDeployPermissions) {
         $platformArgoCDWorkloadClusterOverride["message"] = "Workload cluster registration is verified and namespace-scoped deploy RBAC is configured. No Application exists yet."
     }
 }
+elseif ($VerifyWorkloadDeployPermissions) {
+    $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
+    $workloadCluster = New-WorkloadClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
+    $platformArgoCDOverride = Get-ManagementArgoCDRuntimeStatus -ManagementCluster $managementCluster -KubectlAvailable $kubectlAvailable
+    $platformArgoCDWorkloadClusterOverride = Invoke-VerifyWorkloadClusterRegistration -ManagementCluster $managementCluster -WorkloadCluster $workloadCluster -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable -ArgoCDStatus $platformArgoCDOverride
+    $platformWorkloadDeployPermissionsOverride = Invoke-VerifyWorkloadDeployPermissions -ManagementCluster $managementCluster -WorkloadCluster $workloadCluster -KubectlAvailable $kubectlAvailable -RegistrationStatus $platformArgoCDWorkloadClusterOverride
+    if ([bool]$platformWorkloadDeployPermissionsOverride["ready"]) {
+        $platformArgoCDWorkloadClusterOverride["write_rbac_configured"] = $true
+        $platformArgoCDWorkloadClusterOverride["message"] = "Workload cluster registration and namespace-scoped deploy RBAC passed read-only verification. No Application exists yet."
+    }
+}
 elseif ($InitializeManagementBackendDatabase) {
     $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
     $databaseResult = Invoke-InitializeManagementBackendDatabase -KubectlAvailable $kubectlAvailable -ManagementCluster $managementCluster
@@ -8238,6 +8449,9 @@ if (-not $Quiet) {
     }
     elseif ($GrantWorkloadDeployPermissions) {
         Write-Host "Namespace-scoped workload deploy permissions were reconciled. No Application or workload was created."
+    }
+    elseif ($VerifyWorkloadDeployPermissions) {
+        Write-Host "Namespace-scoped workload deploy permissions passed read-only verification. No resources were reconciled."
     }
     elseif ($InitializeManagementBackendDatabase) {
         Write-Host ("Management backend database: {0}/devdeploy" -f $PostgresNamespace)

@@ -278,10 +278,10 @@ Completed design baseline:
 
 - Phase 2H.1 defines Launcher-owned namespace `devdeploy-apps`, namespaced Argo CD workload RBAC, explicit grant/verify modes, sanitized permission status, and prohibited cluster-wide grants.
 - Phase 2H.2 implements guarded permission grant mode for `devdeploy-apps`, the namespaced deploy Role/RoleBinding, cluster Secret namespace scope, and post-grant authorization boundary verification without creating an Application or workload.
+- Phase 2H.3 implements strict read-only verification for namespace/RBAC metadata, RoleBinding ownership, allowed workload writes, denied dangerous/outside writes, cluster-admin absence, and Application inventory.
 
 Recommended tasks:
 
-- Implement strict read-only `-VerifyWorkloadDeployPermissions`.
 - Align the Argo CD cluster Secret namespace scope and future GitOps source with `devdeploy-apps`.
 - Show runtime mode.
 - Show Launcher availability.

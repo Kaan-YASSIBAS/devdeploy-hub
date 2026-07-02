@@ -400,6 +400,27 @@ After reconciliation, the launcher uses impersonated `kubectl auth can-i` checks
 
 This mode does not create an Argo CD Application or workload, run Helm, build/load images, run database migrations, modify backend/frontend resources, rotate registration credentials, or perform broad deletion. Tokens, Secret config, certificates, keys, CA data, and Secret values are never written to status or logs.
 
+## Verify Workload Deploy Permissions
+
+To verify the existing namespace-scoped permission boundary without reconciling resources:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -VerifyWorkloadDeployPermissions
+```
+
+This strict read-only mode verifies:
+
+- Namespace `devdeploy-apps` exists.
+- ServiceAccount `kube-system/devdeploy-argocd-manager` exists.
+- Role and RoleBinding `devdeploy-argocd-deployer` exist in `devdeploy-apps`.
+- The RoleBinding references the expected Role and ServiceAccount.
+- Deployment, Service, Ingress, ConfigMap, and Secret writes are allowed in `devdeploy-apps`.
+- Role, RoleBinding, ClusterRole, ClusterRoleBinding, CRD, namespace, and outside-namespace Deployment writes remain denied.
+- Effective cluster-admin access is absent.
+- The Argo CD cluster Secret remains present and the Application inventory is readable.
+
+The mode uses only read operations and impersonated `kubectl auth can-i` reviews. It does not run `apply`, `delete`, or `patch`; create Applications or workloads; run Helm; build/load images; run database operations; or modify backend/frontend resources.
+
 ## Verify The Management Frontend
 
 To run strict read-only verification of the deployed frontend:
@@ -518,6 +539,7 @@ devdeploy-launcher-status
 - `workload_cluster_argocd_registration`
 - `workload_cluster_argocd_registration_verify`
 - `workload_deploy_permissions_grant`
+- `workload_deploy_permissions_verify`
 - `management_backend_database_initialize`
 
 `status` is one of:
@@ -678,6 +700,8 @@ When `-GrantWorkloadDeployPermissions` is used, status includes:
 - `platform_bootstrap.components.workload_deploy_permissions`
 
 The component reports the managed namespace, Role/RoleBinding presence, allowed resource summary, cluster-admin detection, managed/outside namespace authorization results, RBAC/CRD/namespace management boundaries, and Application count. The registration component also reports `write_rbac_configured: true` after successful grant verification.
+
+When `-VerifyWorkloadDeployPermissions` is used, the same component reports `mode: verify`, ServiceAccount presence, RoleBinding subject/reference validity, and the current authorization boundary. Successful verification preserves `platform_bootstrap.components.argocd_workload_cluster.write_rbac_configured: true` and keeps platform status `partial` until the GitOps Application model is configured.
 
 The `next_actions` array contains safe, non-destructive guidance. For example:
 
