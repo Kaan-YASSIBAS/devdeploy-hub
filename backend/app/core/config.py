@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     gitops_delete_workflow_file: str = Field(default="gitops-workload-delete.yml", alias="GITOPS_DELETE_WORKFLOW_FILE")
     github_workflow_token: str | None = Field(default=None, alias="GITHUB_WORKFLOW_TOKEN")
     gitops_target_ref: str = Field(default="main", alias="GITOPS_TARGET_REF")
+    gitops_repo_root: str | None = Field(default=None, alias="DEVDEPLOY_GITOPS_REPO_ROOT")
+    gitops_source_root: str = Field(
+        default="gitops/workloads/devdeploy-apps",
+        alias="DEVDEPLOY_GITOPS_SOURCE_ROOT",
+    )
+    gitops_branch: str = Field(default="main", alias="DEVDEPLOY_GITOPS_BRANCH")
+    gitops_remote: str = Field(default="origin", alias="DEVDEPLOY_GITOPS_REMOTE")
+    gitops_remote_branch: str = Field(default="main", alias="DEVDEPLOY_GITOPS_REMOTE_BRANCH")
 
     model_config = SettingsConfigDict(
         env_file=".env",

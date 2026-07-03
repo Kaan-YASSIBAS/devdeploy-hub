@@ -392,4 +392,6 @@ Phase 2J.5c implements a separate safe, non-force Git push adapter with remote a
 
 Phase 2J.5d composes the writer, local commit adapter, and push adapter into an internal create-only deploy operation service. It returns safe commit and push metadata, stops after the Git repository update, and does not expose an API or read Argo CD status.
 
-Phase 2J.5e can add a protected backend API endpoint around the internal operation service. Argo CD status correlation, workload exposure, and deletion remain separate future work.
+Phase 2J.5e exposes the internal operation service through the authenticated `POST /api/v1/gitops/apps` endpoint. Repository location, branch, and remote settings remain server-controlled; callers provide only workload fields. Success returns `pushed_waiting_for_argocd` and does not claim that the workload is deployed or healthy.
+
+Phase 2J.5f can validate the complete API-to-local-repository publication path with an isolated smoke test. Argo CD status correlation, frontend integration, workload exposure, and deletion remain separate future work.
