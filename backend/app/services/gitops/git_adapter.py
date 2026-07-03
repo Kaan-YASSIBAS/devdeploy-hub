@@ -17,7 +17,10 @@ KEY_VALUE_SECRET_PATTERN = re.compile(
 )
 BEARER_PATTERN = re.compile(r"(?i)\bbearer\s+[^\s,;]+")
 TOKEN_PATTERN = re.compile(r"(?i)\b(?:github_pat_|gh[pousr]_)[a-z0-9_]+")
-ALLOWED_GIT_COMMANDS = frozenset({"add", "commit", "diff", "ls-files", "rev-parse"})
+REMOTE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+BRANCH_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$")
+PUSH_REJECTION_PATTERN = re.compile(r"(?i)(?:\[rejected\]|non-fast-forward|fetch first)")
+ALLOWED_GIT_COMMANDS = frozenset({"add", "commit", "diff", "ls-files", "push", "rev-parse"})
 OPERATION_MARKERS = ("MERGE_HEAD", "CHERRY_PICK_HEAD", "rebase-merge", "rebase-apply")
 
 
@@ -33,6 +36,24 @@ class GitCommitRequest:
 class GitCommitResult:
     committed: bool
     commit_sha: str | None
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class GitPushRequest:
+    repo_root: Path | str
+    expected_branch: str = "main"
+    remote_name: str = "origin"
+    remote_branch: str = "main"
+    expected_commit_sha: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class GitPushResult:
+    pushed: bool
+    commit_sha: str
+    remote_name: str
+    remote_branch: str
     message: str
 
 
@@ -121,6 +142,49 @@ class GitAdapter:
             message="The GitOps changes were committed locally.",
         )
 
+    def push(self, request: GitPushRequest) -> GitPushResult:
+        repo_root = self._validate_repository(request.repo_root)
+        self._validate_operation_state(repo_root)
+        self._validate_branch(repo_root, request.expected_branch)
+        remote_name = self._validate_remote_name(request.remote_name)
+        remote_branch = self._validate_remote_branch(request.remote_branch)
+        commit_sha = self._read_head_sha(repo_root)
+
+        if request.expected_commit_sha is not None:
+            expected_commit_sha = self._validate_commit_sha(request.expected_commit_sha)
+            if commit_sha != expected_commit_sha:
+                raise GitOpsWriterError(
+                    "git_head_mismatch",
+                    "The local Git HEAD does not match the expected commit.",
+                )
+
+        push_result = self._run_git(
+            ("push", remote_name, f"HEAD:{remote_branch}"),
+            cwd=repo_root,
+        )
+        if push_result.return_code != 0:
+            diagnostic = f"{push_result.stderr}\n{push_result.stdout}"
+            if PUSH_REJECTION_PATTERN.search(diagnostic):
+                raise GitOpsWriterError(
+                    "git_push_rejected",
+                    self._safe_failure_message(
+                        "The remote rejected the GitOps commit without updating the branch.",
+                        push_result,
+                    ),
+                )
+            raise GitOpsWriterError(
+                "git_push_failed",
+                self._safe_failure_message("The GitOps commit could not be pushed.", push_result),
+            )
+
+        return GitPushResult(
+            pushed=True,
+            commit_sha=commit_sha,
+            remote_name=remote_name,
+            remote_branch=remote_branch,
+            message="The GitOps commit was pushed successfully.",
+        )
+
     def _validate_repository(self, repo_root: Path | str) -> Path:
         try:
             resolved_root = Path(repo_root).resolve(strict=True)
@@ -164,11 +228,7 @@ class GitAdapter:
             )
 
     def _validate_branch(self, repo_root: Path, expected_branch: object) -> None:
-        if (
-            not isinstance(expected_branch, str)
-            or not expected_branch
-            or CONTROL_CHARACTER_PATTERN.search(expected_branch)
-        ):
+        if not self._is_safe_branch_name(expected_branch):
             raise GitOpsWriterError("git_branch_mismatch", "The expected Git branch is invalid.")
         branch_result = self._require_git_success(
             ("rev-parse", "--abbrev-ref", "HEAD"),
@@ -181,6 +241,48 @@ class GitAdapter:
                 "git_branch_mismatch",
                 "The current Git branch does not match the configured branch.",
             )
+
+    @staticmethod
+    def _validate_remote_name(remote_name: object) -> str:
+        if not isinstance(remote_name, str) or not REMOTE_NAME_PATTERN.fullmatch(remote_name):
+            raise GitOpsWriterError("git_remote_invalid", "The configured Git remote name is invalid.")
+        return remote_name
+
+    @classmethod
+    def _validate_remote_branch(cls, remote_branch: object) -> str:
+        if not cls._is_safe_branch_name(remote_branch):
+            raise GitOpsWriterError("git_remote_branch_invalid", "The configured remote branch is invalid.")
+        return remote_branch
+
+    @staticmethod
+    def _is_safe_branch_name(branch: object) -> bool:
+        if not isinstance(branch, str) or not BRANCH_NAME_PATTERN.fullmatch(branch):
+            return False
+        if ".." in branch or "//" in branch or "@{" in branch:
+            return False
+        parts = branch.split("/")
+        return not (
+            branch.endswith(("/", "."))
+            or any(part.startswith(".") or part.endswith(".lock") for part in parts)
+        )
+
+    @staticmethod
+    def _validate_commit_sha(commit_sha: object) -> str:
+        if not isinstance(commit_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40,64}", commit_sha):
+            raise GitOpsWriterError("git_head_mismatch", "The expected Git commit is invalid.")
+        return commit_sha.lower()
+
+    def _read_head_sha(self, repo_root: Path) -> str:
+        result = self._require_git_success(
+            ("rev-parse", "HEAD"),
+            cwd=repo_root,
+            code="git_repo_invalid",
+            message="The local Git HEAD could not be read.",
+        )
+        commit_sha = result.stdout.strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{40,64}", commit_sha):
+            raise GitOpsWriterError("git_repo_invalid", "The local Git HEAD is invalid.")
+        return commit_sha
 
     def _validate_expected_paths(self, repo_root: Path, paths: object) -> tuple[str, ...]:
         if not isinstance(paths, (tuple, list)) or not paths or len(paths) > MAX_EXPECTED_PATHS:
