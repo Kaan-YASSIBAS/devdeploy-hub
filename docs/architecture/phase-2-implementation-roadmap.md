@@ -348,13 +348,14 @@ Completed baseline:
 - **Phase 2J.5d:** compose request validation, the create-only writer, local commit adapter, and push adapter into an internal deploy operation service. The service returns safe operation metadata after a successful push and does not expose an API or read Argo CD status.
 - **Phase 2J.5e:** expose the internal deploy operation through the authenticated `POST /api/v1/gitops/apps` endpoint with server-controlled repository configuration and strict request fields. A successful response is `pushed_waiting_for_argocd`; the endpoint does not claim deployment success or read Argo CD status.
 - **Phase 2J.5f:** document the repeatable [API-level local GitOps deploy smoke test](../operations/gitops-api-smoke-test.md), covering authentication, API submission, Git verification, passive Argo CD reconciliation, and read-only workload checks. This manual procedure adds no frontend or Argo CD polling code.
+- **Phase 2J.5g:** define the read-only [Argo CD Status Read Model](./argocd-status-read-model-design.md), including commit-to-revision correlation, Root Application signals, label-scoped workload readiness, safe status transitions, least-privilege access, polling behavior, and sanitized errors. This phase adds no status endpoint or cluster mutation.
 - V1 accepts a user-provided container image and does not require CI, an image build, or a registry push.
 - All V1 app manifests target the pre-created `devdeploy-apps` namespace.
 - App deletion remains unimplemented because the Root Application currently uses `prune=false`.
 
 Planned milestones:
 
-- **Phase 2J.5g (next):** design the Argo CD status read model needed to correlate a pushed commit with reconciliation state without mutating either cluster.
+- **Phase 2J.5h (next):** implement the authenticated backend read-only status endpoint and internal readers using the Phase 2J.5g contract.
 - Define safe prune/delete behavior before claiming GitOps deletion is complete.
 - Design and validate workload ingress exposure separately before presenting a local app URL as reachable.
 
