@@ -349,13 +349,14 @@ Completed baseline:
 - **Phase 2J.5e:** expose the internal deploy operation through the authenticated `POST /api/v1/gitops/apps` endpoint with server-controlled repository configuration and strict request fields. A successful response is `pushed_waiting_for_argocd`; the endpoint does not claim deployment success or read Argo CD status.
 - **Phase 2J.5f:** document the repeatable [API-level local GitOps deploy smoke test](../operations/gitops-api-smoke-test.md), covering authentication, API submission, Git verification, passive Argo CD reconciliation, and read-only workload checks. This manual procedure adds no frontend or Argo CD polling code.
 - **Phase 2J.5g:** define the read-only [Argo CD Status Read Model](./argocd-status-read-model-design.md), including commit-to-revision correlation, Root Application signals, label-scoped workload readiness, safe status transitions, least-privilege access, polling behavior, and sanitized errors. This phase adds no status endpoint or cluster mutation.
+- **Phase 2J.5h:** implement the authenticated `GET /api/v1/gitops/apps/{app_name}/status` endpoint, typed status snapshots, an injectable reader boundary, and a pure exact-SHA status evaluator. Fake-reader tests cover pending, synced, progressing, deployed, degraded, missing, and unavailable states; no live cluster reader or mutation is added.
 - V1 accepts a user-provided container image and does not require CI, an image build, or a registry push.
 - All V1 app manifests target the pre-created `devdeploy-apps` namespace.
 - App deletion remains unimplemented because the Root Application currently uses `prune=false`.
 
 Planned milestones:
 
-- **Phase 2J.5h (next):** implement the authenticated backend read-only status endpoint and internal readers using the Phase 2J.5g contract.
+- **Phase 2J.5i (next):** implement separate least-privilege live readers for the management Root Application and workload resources, then verify them without adding cluster mutation.
 - Define safe prune/delete behavior before claiming GitOps deletion is complete.
 - Design and validate workload ingress exposure separately before presenting a local app URL as reachable.
 

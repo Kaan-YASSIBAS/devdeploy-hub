@@ -7,7 +7,13 @@ from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.deps import get_current_user
 from app.models.user import User
-from app.schemas.gitops_app import GitOpsAppCreateRequest, GitOpsAppCreateResponse
+from app.schemas.gitops_app import (
+    GitOpsAppCreateRequest,
+    GitOpsAppCreateResponse,
+    GitOpsAppStatusResponse,
+    GitOpsRootApplicationStatusResponse,
+    GitOpsWorkloadStatusResponse,
+)
 from app.services.gitops.deploy_operation import (
     DeployWorkloadOperationRequest,
     DeployWorkloadOperationResult,
@@ -15,6 +21,13 @@ from app.services.gitops.deploy_operation import (
 )
 from app.services.gitops.git_adapter import sanitize_git_output
 from app.services.gitops.manifests import WORKLOAD_NAMESPACE
+from app.services.gitops.status_reader import (
+    GitOpsStatusError,
+    GitOpsStatusEvaluator,
+    GitOpsStatusRequest,
+    GitOpsStatusResult,
+    GitOpsStatusService,
+)
 
 
 router = APIRouter(prefix="/gitops", tags=["gitops"])
@@ -38,6 +51,13 @@ class GitOpsDeployRepositoryConfig:
     remote_branch: str
 
 
+@dataclass(frozen=True, slots=True)
+class GitOpsStatusReaderConfig:
+    root_application_name: str
+    root_application_namespace: str
+    workload_namespace: str
+
+
 def get_gitops_deploy_repository_config() -> GitOpsDeployRepositoryConfig:
     if not settings.gitops_repo_root or not settings.gitops_repo_root.strip():
         raise HTTPException(
@@ -55,6 +75,18 @@ def get_gitops_deploy_repository_config() -> GitOpsDeployRepositoryConfig:
 
 def get_deploy_workload_operation_service() -> DeployWorkloadOperationService:
     return DeployWorkloadOperationService()
+
+
+def get_gitops_status_reader_config() -> GitOpsStatusReaderConfig:
+    return GitOpsStatusReaderConfig(
+        root_application_name=settings.argocd_root_application_name,
+        root_application_namespace=settings.argocd_namespace,
+        workload_namespace=settings.workload_namespace,
+    )
+
+
+def get_gitops_status_service() -> GitOpsStatusService:
+    return GitOpsStatusService()
 
 
 def _safe_response_source_path(value: object) -> str:
@@ -89,6 +121,80 @@ def _response_from_result(
         message=SUCCESS_MESSAGE if success else sanitize_git_output(result.message),
         error_code=result.error_code,
     )
+
+
+def _status_response_from_result(result: GitOpsStatusResult) -> GitOpsAppStatusResponse:
+    return GitOpsAppStatusResponse(
+        status=result.status,
+        app_name=result.app_name,
+        namespace=result.namespace,
+        commit_sha=result.commit_sha,
+        observed_revision=result.observed_revision,
+        root_application=GitOpsRootApplicationStatusResponse(
+            name=result.root_application.name,
+            sync_status=result.root_application.sync_status,
+            health_status=result.root_application.health_status,
+            observed_commit_match=result.root_application.observed_commit_match,
+        ),
+        workload=GitOpsWorkloadStatusResponse(
+            deployment_ready=result.workload.deployment_ready,
+            service_ready=result.workload.service_ready,
+            pods_ready=result.workload.pods_ready,
+            desired_replicas=result.workload.desired_replicas,
+            ready_replicas=result.workload.ready_replicas,
+            available_replicas=result.workload.available_replicas,
+            pod_count=result.workload.pod_count,
+            ready_pod_count=result.workload.ready_pod_count,
+        ),
+        message=sanitize_git_output(result.message),
+        error_code=result.error_code,
+    )
+
+
+@router.get(
+    "/apps/{app_name}/status",
+    response_model=GitOpsAppStatusResponse,
+    responses={
+        status.HTTP_400_BAD_REQUEST: {"description": "Invalid app name or commit SHA"},
+        status.HTTP_403_FORBIDDEN: {"model": GitOpsAppStatusResponse},
+        status.HTTP_503_SERVICE_UNAVAILABLE: {"model": GitOpsAppStatusResponse},
+    },
+)
+def get_gitops_app_status(
+    app_name: str,
+    commit_sha: str,
+    current_user: User = Depends(get_current_user),
+    config: GitOpsStatusReaderConfig = Depends(get_gitops_status_reader_config),
+    status_service: GitOpsStatusService = Depends(get_gitops_status_service),
+) -> GitOpsAppStatusResponse | JSONResponse:
+    _ = current_user
+    try:
+        request = GitOpsStatusRequest(
+            app_name=app_name,
+            commit_sha=commit_sha,
+            namespace=config.workload_namespace,
+            root_application_name=config.root_application_name,
+            root_application_namespace=config.root_application_namespace,
+        )
+    except GitOpsStatusError as error:
+        response_status = (
+            status.HTTP_503_SERVICE_UNAVAILABLE
+            if error.code == "status_configuration_invalid"
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=response_status, detail=error.message) from None
+
+    try:
+        result = status_service.read_status(request)
+    except Exception:
+        result = GitOpsStatusEvaluator.unavailable_result(request, "status_reader_unavailable")
+
+    response = _status_response_from_result(result)
+    if result.error_code == "permission_denied":
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content=response.model_dump())
+    if result.error_code == "status_reader_unavailable":
+        return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=response.model_dump())
+    return response
 
 
 @router.post(

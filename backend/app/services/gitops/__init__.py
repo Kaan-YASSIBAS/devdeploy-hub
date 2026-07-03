@@ -13,6 +13,11 @@ from app.services.gitops.git_adapter import (
 )
 from app.services.gitops.models import WorkloadWriteRequest
 from app.services.gitops.render import StructuralRenderValidator
+from app.services.gitops.status_reader import (
+    GitOpsStatusRequest,
+    GitOpsStatusResult,
+    GitOpsStatusService,
+)
 from app.services.gitops.writer import GitOpsWorkloadWriter, WorkloadWriteResult
 
 __all__ = [
@@ -26,6 +31,9 @@ __all__ = [
     "GitCommitResult",
     "GitPushRequest",
     "GitPushResult",
+    "GitOpsStatusRequest",
+    "GitOpsStatusResult",
+    "GitOpsStatusService",
     "StructuralRenderValidator",
     "WorkloadWriteRequest",
     "WorkloadWriteResult",

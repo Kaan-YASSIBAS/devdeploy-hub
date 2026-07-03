@@ -388,13 +388,8 @@ A future App of Apps model may create one Argo CD Application per workload. That
 
 Phase 2J.5g defines the read model only. It adds no endpoint, client, RBAC resource, frontend behavior, or cluster mutation.
 
-Phase 2J.5h should implement:
+Phase 2J.5h implements the typed snapshots, injectable reader boundary, pure exact-SHA evaluator, safe error mapping, and authenticated `GET /api/v1/gitops/apps/{app_name}/status` endpoint. Tests use fake snapshots only. The default reader returns `status_reader_unavailable`, so this phase adds no live Kubernetes client, Argo CD API client, credential, RBAC resource, or cluster access.
 
-1. Typed internal Root Application and workload status models.
-2. Separate read-only management and workload reader interfaces.
-3. Commit observation using exact SHA or controlled ancestry checks.
-4. Deterministic status aggregation and safe error mapping.
-5. An authenticated read-only status endpoint based on the response contract above.
-6. Unit tests with fake clients before any live-cluster smoke verification.
+Phase 2J.5i should implement the separate read-only management and workload readers, least-privilege runtime configuration, and live-cluster verification. Controlled Git ancestry support may also be added there; Phase 2J.5h intentionally supports exact SHA matching only.
 
-Frontend polling should begin only after the backend read endpoint and least-privilege access model are implemented and verified.
+Frontend polling should begin only after the live readers and least-privilege access model are implemented and verified.

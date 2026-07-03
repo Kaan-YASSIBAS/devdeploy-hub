@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     gitops_branch: str = Field(default="main", alias="DEVDEPLOY_GITOPS_BRANCH")
     gitops_remote: str = Field(default="origin", alias="DEVDEPLOY_GITOPS_REMOTE")
     gitops_remote_branch: str = Field(default="main", alias="DEVDEPLOY_GITOPS_REMOTE_BRANCH")
+    argocd_root_application_name: str = Field(
+        default="devdeploy-workloads-root",
+        alias="DEVDEPLOY_ARGOCD_ROOT_APPLICATION_NAME",
+    )
+    argocd_namespace: str = Field(default="argocd", alias="DEVDEPLOY_ARGOCD_NAMESPACE")
+    workload_namespace: str = Field(default="devdeploy-apps", alias="DEVDEPLOY_WORKLOAD_NAMESPACE")
 
     model_config = SettingsConfigDict(
         env_file=".env",

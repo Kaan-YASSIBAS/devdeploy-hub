@@ -33,3 +33,44 @@ class GitOpsAppCreateResponse(BaseModel):
     commit_sha: str | None = None
     message: str
     error_code: str | None = None
+
+
+GitOpsAppStatusValue = Literal[
+    "pushed_waiting_for_argocd",
+    "argocd_observing",
+    "argocd_synced",
+    "workload_progressing",
+    "deployed",
+    "degraded",
+    "unknown",
+]
+
+
+class GitOpsRootApplicationStatusResponse(BaseModel):
+    name: str
+    sync_status: str | None = None
+    health_status: str | None = None
+    observed_commit_match: bool
+
+
+class GitOpsWorkloadStatusResponse(BaseModel):
+    deployment_ready: bool
+    service_ready: bool
+    pods_ready: bool
+    desired_replicas: int | None = None
+    ready_replicas: int | None = None
+    available_replicas: int | None = None
+    pod_count: int
+    ready_pod_count: int
+
+
+class GitOpsAppStatusResponse(BaseModel):
+    status: GitOpsAppStatusValue
+    app_name: str
+    namespace: str
+    commit_sha: str
+    observed_revision: str | None = None
+    root_application: GitOpsRootApplicationStatusResponse
+    workload: GitOpsWorkloadStatusResponse
+    message: str
+    error_code: str | None = None
