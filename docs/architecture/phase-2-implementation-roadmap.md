@@ -297,11 +297,11 @@ Expected output:
 - Setup Wizard guides users through the multi-cluster lifecycle without pretending to run host commands from the browser.
 - Setup completion reflects actual platform readiness.
 
-## 14. Phase 2I - GitOps Repository, Root Application, and Smoke Demo App
+## 14. Phase 2I - GitOps Repository and Root Application
 
 Goal:
 
-- Configure the user-selected GitOps source, bootstrap the first Root Application, and then validate the normal GitOps workload path with an explicit demo app.
+- Configure the GitOps source, bootstrap the first Root Application, and verify the empty-root baseline without deploying a user workload.
 
 Completed design baseline:
 
@@ -322,27 +322,48 @@ Recommended tasks:
 - Initialize or validate the deterministic GitOps path without deploying a sample workload.
 - Configure sanitized Argo CD repository access.
 - Preserve strict read-only Root Application verification as the required post-bootstrap health check.
-- Define safe prune/delete behavior before claiming GitOps deletion is complete.
-- Add or reuse a known safe demo image.
-- Generate the demo app under `gitops/workloads/devdeploy-apps/apps/<demo-app>`.
-- Update the GitOps root kustomization.
-- Validate rendered manifests.
-- Update Git according to repository policy.
-- Let Argo CD sync to `devdeploy-workload`.
-- Verify app URL reachability through workload ingress.
 
 Expected output:
 
-- Demo app deploys through:
+- `argocd/devdeploy-workloads-root` is `Synced` and `Healthy`.
+- Its source and destination match the Phase 2I contract.
+- `devdeploy-apps` contains no Deployment, Service, or Ingress before Phase 2J workload manifests are introduced.
+
+## 15. Phase 2J - GitOps Workload Manifests and Delivery
+
+Goal:
+
+- Define and validate the first user-workload manifest contract, then prepare the backend Git commit flow without bypassing Argo CD.
+
+Completed baseline:
+
+- **Phase 2J.1:** define the V1 Deployment, Service, optional Ingress, per-app Kustomization, and root Kustomization contracts in [GitOps Workload Manifest Design](./gitops-workload-manifest-design.md).
+- V1 accepts a user-provided container image and does not require CI, an image build, or a registry push.
+- All V1 app manifests target the pre-created `devdeploy-apps` namespace.
+- App deletion remains unimplemented because the Root Application currently uses `prune=false`.
+
+Planned milestones:
+
+- **Phase 2J.2:** generate reviewed sample GitOps workload manifests under `gitops/workloads/devdeploy-apps/apps/<app-name>` and update the root Kustomization.
+- **Phase 2J.3:** verify that Argo CD applies the sample workload to `devdeploy-workload` without direct launcher, backend, or GitHub Actions deployment.
+- **Phase 2J.4:** design the backend GitOps commit, push, conflict, retry, and failure-reporting flow.
+- **Phase 2J.5:** implement the backend GitOps workload writer with strict input and filesystem-path validation.
+- Define safe prune/delete behavior before claiming GitOps deletion is complete.
+- Design and validate workload ingress exposure separately before presenting a local app URL as reachable.
+
+Expected output:
+
+- A sample app eventually deploys through:
 
   ```text
-  Setup Wizard -> Backend -> GitHub/GitOps Repository -> Argo CD -> devdeploy-workload
+  UI -> Backend -> GitOps Repository -> Argo CD -> devdeploy-workload
   ```
 
-- The demo app is observable with the same status model as normal apps.
-- The Root Application source and destination match the Phase 2I.1 contract.
+- Generated workload folders are deterministic and render through Kustomize.
+- Argo CD remains the only normal workload applier.
+- No automatic delete behavior is claimed while the safe prune model remains unresolved.
 
-## 15. Phase 2J - Observability and Status Integration
+## 16. Phase 2K - Observability and Status Integration
 
 Goal:
 
@@ -363,7 +384,7 @@ Expected output:
 - Dashboard and Deployments views can show whether a user app is pending, syncing, healthy, degraded, unavailable, unknown, or deleting.
 - Management health and workload health are not mixed.
 
-## 16. Phase 2K - Security Hardening Pass
+## 17. Phase 2L - Security Hardening Pass
 
 Goal:
 
@@ -386,7 +407,7 @@ Expected output:
 
 - Phase 2 runtime behavior matches the security and credential model.
 
-## 17. Commit and PR Strategy
+## 18. Commit and PR Strategy
 
 Recommended commit strategy:
 
@@ -405,7 +426,7 @@ Recommended PR strategy:
 - Keep Argo CD registration separate from Setup Wizard UI integration.
 - Keep security hardening as its own reviewable pass.
 
-## 18. Validation Checklist
+## 19. Validation Checklist
 
 Baseline validation:
 
@@ -435,7 +456,7 @@ Phase 2-specific validation:
 - No normal workload deployment occurs directly from GitHub Actions.
 - No secrets appear in Git, logs, API responses, or browser localStorage.
 
-## 19. Rollback and Recovery Strategy
+## 20. Rollback and Recovery Strategy
 
 Phase 2 should support safe recovery from partial setup.
 
@@ -458,7 +479,7 @@ If a runtime milestone fails:
 - Show actionable next steps.
 - Avoid leaving the UI in a fake completed state.
 
-## 20. Definition of Done for Phase 2
+## 21. Definition of Done for Phase 2
 
 Phase 2 is complete when:
 
@@ -487,7 +508,7 @@ Phase 2 is complete when:
 - Credentials and secrets follow the security boundaries.
 - Validation checklist passes.
 
-## 21. Future Phase Handoff
+## 22. Future Phase Handoff
 
 After Phase 2, future phases may add:
 

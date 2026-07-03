@@ -121,6 +121,8 @@ Results are written to the normal launcher status file:
 
 The component `platform_bootstrap.components.gitops_root_application` includes `mode: verify`, `verified`, source and destination match booleans, sync-policy booleans, `synced`, `healthy`, and a sanitized `actual` object. Its nested `workload_namespace` object reports namespace presence and Deployment, Service, and Ingress counts. Successful verification keeps `platform_bootstrap.status: partial` because the user workload flow remains intentionally unvalidated.
 
+This empty-root result is the required baseline before the [GitOps Workload Manifest Design](../architecture/gitops-workload-manifest-design.md) introduces app folders in later Phase 2J steps.
+
 ## Generate Kind Config Previews
 
 To run preflight and generate deterministic kind config previews:
