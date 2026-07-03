@@ -341,14 +341,14 @@ Completed baseline:
 - **Phase 2J.2:** add the reviewed `nginx-demo` sample Deployment and ClusterIP Service under `gitops/workloads/devdeploy-apps/apps/nginx-demo`, with no Ingress until workload exposure is designed.
 - **Phase 2J.3:** verify the Root Application is `Synced` and `Healthy` at revision `647e486b42fc03f9d125af7c404e2b5df6dc121d`, with the `nginx-demo` Deployment, Service, and Pod healthy in `devdeploy-workload/devdeploy-apps`.
 - This confirms the GitOps chain: GitHub push -> Argo CD Root Application -> `devdeploy-workload/devdeploy-apps` -> `nginx-demo` Deployment and Service.
+- **Phase 2J.4:** define the backend repository workspace, validation, manifest generation, deterministic Kustomization update, commit/push, conflict, sanitization, and status contracts in [Backend GitOps Commit Flow Design](./backend-gitops-commit-flow-design.md).
 - V1 accepts a user-provided container image and does not require CI, an image build, or a registry push.
 - All V1 app manifests target the pre-created `devdeploy-apps` namespace.
 - App deletion remains unimplemented because the Root Application currently uses `prune=false`.
 
 Planned milestones:
 
-- **Phase 2J.4 (next):** design the backend GitOps commit, push, conflict, retry, and failure-reporting flow.
-- **Phase 2J.5:** implement the backend GitOps workload writer with strict input and filesystem-path validation.
+- **Phase 2J.5 (next):** implement the backend GitOps workload writer with strict input and filesystem-path validation.
 - Define safe prune/delete behavior before claiming GitOps deletion is complete.
 - Design and validate workload ingress exposure separately before presenting a local app URL as reachable.
 

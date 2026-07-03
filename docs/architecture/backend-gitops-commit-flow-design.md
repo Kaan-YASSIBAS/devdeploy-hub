@@ -1,0 +1,388 @@
+# Backend GitOps Commit Flow Design
+
+## 1. Purpose
+
+This document defines the future backend flow for creating and updating V1 user workloads by writing Kubernetes manifests into the configured GitOps repository, committing those changes, and pushing them for Argo CD reconciliation.
+
+V1 accepts user-provided container images. It does not build images or deploy workload resources directly from the backend.
+
+The deployment boundary remains:
+
+```text
+UI -> Backend -> GitOps Repository -> Argo CD -> devdeploy-workload
+```
+
+Argo CD is the deployment actor for normal user workloads.
+
+This design builds on:
+
+- [GitOps Workload Manifest Design](./gitops-workload-manifest-design.md)
+- [GitOps Repository and Root Application Design](./gitops-repository-root-application-design.md)
+- [GitOps Workload Permission Design](./gitops-workload-permission-design.md)
+- [Security and Credentials Boundaries](./security-credentials-boundaries.md)
+
+## 2. Scope
+
+### In scope
+
+- Creating a new V1 app definition.
+- Updating an existing app image, replica count, container port, or service port.
+- A controlled GitOps repository filesystem workspace.
+- Deterministic manifest generation.
+- Root Kustomization updates.
+- Local manifest and Kustomize validation.
+- Git commit and push behavior.
+- Concurrent-change and push-conflict handling.
+- Operation status and failure reporting.
+- Log, error, URL, and credential sanitization.
+
+### Out of scope
+
+- CI or image builds.
+- GitHub Actions workflow generation.
+- Direct `kubectl apply`, patch, or other cluster deployment from the backend.
+- Workload Ingress exposure.
+- App deletion implementation.
+- Prune or delete automation.
+- One Argo CD Application per app.
+- Dedicated AppProject enforcement.
+- Registry credential handling.
+
+## 3. High-Level Flow
+
+The future create or update operation follows this sequence:
+
+```text
+UI deploy request
+  -> backend validates the request and operation intent
+  -> backend resolves the configured GitOps repository and managed source root
+  -> backend checks branch, workspace, and remote safety
+  -> backend generates or updates the app manifests
+  -> backend updates the root Kustomization when registration changes
+  -> backend validates YAML and renders the local Kustomize tree
+  -> backend stages only operation-owned files
+  -> backend commits the change
+  -> backend pushes without force
+  -> Argo CD detects the new revision
+  -> backend and UI read GitOps, Argo CD, and workload status
+```
+
+A successful Git push means the desired state was published. It does not by itself mean the workload is deployed or healthy. Only later Argo CD and workload observations can move the operation to `deployed`.
+
+## 4. Request Model
+
+A future V1 deploy request may contain:
+
+```text
+app_name: string
+image: string
+replicas: integer
+container_port: integer
+service_port: integer
+service_type: ClusterIP
+ingress_enabled: false
+```
+
+V1 defaults and boundaries:
+
+- `service_type` defaults to `ClusterIP` and accepts no other value initially.
+- `ingress_enabled` defaults to `false` and remains unsupported until workload exposure is designed.
+- Environment variables are a future extension.
+- Resource requests and limits are a future request-model extension.
+- Health probes are a future extension.
+
+The API should distinguish create and update intent. A create operation must not silently overwrite an existing app folder, and an update operation must fail if the expected app does not exist.
+
+## 5. Validation Rules
+
+### App name
+
+- Must be a Kubernetes DNS-1123 label.
+- Must use lowercase ASCII letters, numbers, and hyphens only.
+- Must start and end with an alphanumeric character.
+- Should not exceed the V1 recommended maximum of 40 characters.
+- Must reject `/`, `\`, and platform-specific path separators.
+- Must reject `.` and `..` path traversal segments.
+- Must reject hidden names beginning with `.`.
+- Must reject any value whose resolved app path escapes the configured `apps` directory.
+
+Validation must happen before filesystem operations. Path containment must also be verified after path resolution; input validation alone is not sufficient.
+
+### Image and workload settings
+
+- `image` must be non-empty.
+- `image` must not contain whitespace or control characters.
+- V1 may validate basic image-reference syntax, but this is not a complete image trust or vulnerability guarantee.
+- `replicas` must be a positive integer. A bounded product limit should be selected before implementation.
+- `container_port` and `service_port` must be integers from 1 through 65535.
+- `service_type` must be exactly `ClusterIP` in V1.
+- `ingress_enabled` must remain `false` until a later exposure design is implemented.
+
+## 6. Filesystem Layout
+
+The managed source root is:
+
+```text
+gitops/workloads/devdeploy-apps/
+  kustomization.yaml
+  apps/
+    <app-name>/
+      kustomization.yaml
+      deployment.yaml
+      service.yaml
+      ingress.yaml
+```
+
+`ingress.yaml` is a future optional file and is not generated by the initial writer.
+
+Filesystem boundaries:
+
+- The backend writes app files only under `gitops/workloads/devdeploy-apps/apps/<app-name>`.
+- The backend updates only `gitops/workloads/devdeploy-apps/kustomization.yaml` for app registration.
+- The configured GitOps source root is treated as a security boundary.
+- Every candidate path must be normalized and verified to remain below that root.
+- Symlinks and junctions that escape the managed root must be rejected.
+- Arbitrary absolute output paths from request data are prohibited.
+- Platform manifests, launcher files, application source code, and files outside the GitOps source root are never operation-owned.
+
+The preferred runtime model is a backend-owned Git workspace or disposable operation clone. An in-cluster backend must not assume access to a user's host checkout or arbitrary host filesystem paths. A development-only local-path adapter may use an existing checkout, but it must fail rather than overwrite unrelated user edits.
+
+## 7. Manifest Generation Contract
+
+Generation follows [GitOps Workload Manifest Design](./gitops-workload-manifest-design.md).
+
+V1 rules:
+
+- Deployment and Service manifests are required.
+- The app Kustomization lists exactly the generated files.
+- Ingress is disabled initially.
+- Every resource uses namespace `devdeploy-apps`.
+- Every resource uses the managed DevDeploy labels.
+- The image comes from validated user input.
+- No Secret values are generated or committed.
+- No Namespace, Role, RoleBinding, ClusterRole, ClusterRoleBinding, or CustomResourceDefinition is generated.
+- Manifest ordering and formatting remain deterministic for equivalent input.
+- Security defaults required by repository policy remain present when manifests are updated.
+
+Structured YAML serialization should be used instead of ad hoc string replacement. Updating an app should regenerate the owned manifest fields from the validated model while preserving only explicitly supported extension points.
+
+## 8. Root Kustomization Update Contract
+
+Creating an app adds one resource entry:
+
+```yaml
+resources:
+  - apps/<app-name>
+```
+
+Rules:
+
+- Parse and write valid YAML through a structured representation.
+- Preserve the Kustomization API version and kind.
+- Add no duplicate app entries.
+- Sort app entries deterministically.
+- Require every listed app directory and app Kustomization to exist.
+- Reject entries that escape the managed source root.
+- Do not rewrite unrelated repository files.
+
+An ordinary update does not change the root Kustomization unless app registration itself changes.
+
+Removing an entry is not a complete delete operation while the Root Application uses `prune=false`. Deletion requires a separate design.
+
+## 9. Git Working Tree Safety
+
+Before writing, the repository adapter must verify:
+
+- The configured repository exists and is a Git worktree or managed clone.
+- The configured remote and branch are present.
+- The checked-out branch matches the configured branch, currently `main`.
+- The current revision is known.
+- The working tree is clean, or any changes are provably owned by the same pending backend operation.
+- No merge, rebase, cherry-pick, or unresolved conflict is in progress.
+- The managed GitOps source root exists and passes structural validation.
+
+V1 should prefer a per-operation temporary directory or isolated managed clone. This reduces interference between requests and makes failed pre-commit changes disposable.
+
+Additional rules:
+
+- Serialize writes per repository and branch.
+- Generate files in a temporary directory first.
+- Validate the complete candidate tree before replacing managed files.
+- Use atomic replacement where supported.
+- Recheck changed paths before staging.
+- Stage only the app folder and root Kustomization expected for the operation.
+- Validate YAML and run a local Kustomize render before commit.
+- Never include raw Git command output in user-facing errors without sanitization.
+
+## 10. Commit Model
+
+The commit author may later use a configured DevDeploy Hub bot identity. The identity must be configured server-side and must not require credentials in the commit message or generated files.
+
+Example commit messages:
+
+```text
+deploy: add nginx-demo workload
+deploy: update nginx-demo image
+```
+
+Commit rules:
+
+- Include only the app-owned files and root Kustomization required by the operation.
+- Reject unexpected staged paths.
+- Do not commit generated logs, temporary files, status files, or credentials.
+- Treat a no-change request as an idempotent result rather than creating an empty commit.
+- Record the resulting commit SHA after commit and after successful push.
+- Correlate the commit SHA with the deployment request or operation record.
+
+## 11. Push and Conflict Handling
+
+A push can fail because the remote branch changed after the workspace was prepared.
+
+V1 policy should be fail-fast:
+
+1. Fetch remote metadata before generation.
+2. Base the operation on the configured remote branch revision.
+3. Push without force.
+4. If the push is rejected, set `push_failed` with a sanitized conflict code.
+5. Preserve enough internal operation metadata for a safe user retry.
+6. Do not automatically force-push, overwrite remote history, or hide conflicts.
+
+V1 may retry by starting a fresh operation from the new remote revision, but it should not perform an automatic rebase of arbitrary user edits. More advanced retry and rebase behavior is future work.
+
+Repository credentials must be supplied through a controlled server-side credential mechanism. Tokens must not appear in remote URLs, command arguments that are logged, status messages, or API responses.
+
+## 12. Status Model
+
+The future deployment operation may use these statuses:
+
+- `validation_failed`
+- `repo_not_configured`
+- `working_tree_dirty`
+- `manifest_generation_failed`
+- `render_failed`
+- `commit_failed`
+- `push_failed`
+- `pushed_waiting_for_argocd`
+- `argocd_syncing`
+- `deployed`
+- `degraded`
+- `unknown`
+
+Safe response fields may include:
+
+```text
+app_name
+namespace
+source_path
+commit_sha
+sync_status
+health_status
+message
+sanitized_error_code
+```
+
+Status and logs must not contain:
+
+- Access tokens or passwords.
+- Git credential helper output.
+- Credential-bearing remote URLs.
+- Kubeconfigs.
+- Certificates, private keys, or bearer tokens.
+- Kubernetes Secret values.
+- Raw subprocess output that has not passed sanitization.
+
+Internal failures should map to stable error codes and concise safe messages. Detailed diagnostics may be retained only in sanitized server logs.
+
+## 13. Argo CD Read and Status Model
+
+The current Root Application represents all workloads together. After a successful push, the backend may read:
+
+- Root Application observed revision.
+- Root Application sync status.
+- Root Application health status.
+- Per-app Deployment, Pod, and Service state through read-only workload-cluster APIs and managed labels.
+
+The commit SHA helps correlate a pushed request with the revision observed by Argo CD. Root Application health alone is not sufficient for detailed per-app status when multiple apps exist.
+
+One Argo CD Application per app is a future model. The backend must not force an Argo CD sync in the normal V1 deploy path unless a separate explicit design later authorizes that behavior.
+
+## 14. Update Model
+
+An update operation:
+
+1. Validates that the app already exists and is registered in the root Kustomization.
+2. Loads the supported current app model.
+3. Applies validated changes to image, replicas, container port, or service port.
+4. Regenerates Deployment, Service, and app Kustomization deterministically.
+5. Leaves the root Kustomization unchanged unless registration needs repair.
+6. Renders the complete root locally.
+7. Commits and pushes a new revision.
+8. Reports `pushed_waiting_for_argocd` until the revision is observed.
+
+Argo CD automated sync and self-heal apply the Git change. The backend does not run `kubectl patch`, scale, restart, or apply for this flow.
+
+## 15. Delete Model
+
+App deletion is not implemented by this flow.
+
+Because the Root Application currently uses `prune=false`:
+
+- Removing the app folder or root Kustomization entry may leave live resources in the workload cluster.
+- Repository removal must not be reported as successful cluster deletion.
+- Safe deletion needs a separate ownership, prune, confirmation, and observed-state design.
+- Phase 2J.5 must not add deletion as an incidental extension of the create/update writer.
+
+## 16. Security Boundaries
+
+- Never grant cluster-admin for this flow.
+- The backend does not create namespaces.
+- Generated manifests do not contain RBAC or CRD resources.
+- Generated manifests do not contain Secret values.
+- Registry credential handling remains future work.
+- Repository credentials remain server-side and are never returned to the browser.
+- Path traversal and symlink escape protection are mandatory.
+- Git command arguments, output, and push errors must be sanitized.
+- Image-reference validation reduces malformed input but is not an image provenance, vulnerability, or trust guarantee.
+- The backend does not deploy directly to Kubernetes.
+- GitHub Actions do not deploy directly to Kubernetes.
+- Argo CD remains the normal workload applier.
+
+## 17. Failure Scenarios
+
+| Scenario | Expected result |
+| --- | --- |
+| Invalid app name | Reject before filesystem access with `validation_failed`. |
+| Create requested for an existing app | Reject with a stable conflict error; do not overwrite it. |
+| Update requested for a missing app | Reject with a stable not-found error. |
+| Repository missing or not configured | Return `repo_not_configured`. |
+| Working tree contains unrelated changes | Return `working_tree_dirty`; preserve user changes. |
+| Generated YAML is invalid | Return `manifest_generation_failed`; do not commit. |
+| Kustomize render fails | Return `render_failed`; do not commit or push. |
+| Commit fails | Return `commit_failed` with a sanitized error code. |
+| Remote rejects push | Return `push_failed`; never force-push. |
+| Argo CD is degraded after push | Preserve the commit SHA and report `degraded`. |
+| Workload Pod does not become Ready | Report `degraded` or `unknown` from read-only workload status; do not patch the Pod. |
+
+Failures before commit should leave no durable repository change when using an isolated workspace. Failures after commit or push must retain correlation metadata so the UI does not misrepresent the operation state.
+
+## 18. V1 Implementation Plan
+
+1. Define a repository abstraction with managed-clone and development local-path adapters.
+2. Implement canonical path validation and symlink containment helpers.
+3. Implement typed request validation for create and update operations.
+4. Implement a deterministic Deployment, Service, and app Kustomization generator.
+5. Implement a structured root Kustomization editor.
+6. Implement local YAML and Kustomize render validation.
+7. Implement a timeout-bound Git command wrapper with output sanitization and no shell interpolation.
+8. Implement the deploy app service with repository-level concurrency control.
+9. Persist operation state and commit SHA without credentials.
+10. Implement read-only Argo CD and workload status correlation.
+11. Add unit tests for validation, path containment, generation, and status transitions.
+12. Add integration tests using temporary Git repositories and simulated push conflicts.
+
+Implementation should begin with pure filesystem and Git abstractions before adding API endpoints. Cluster mutation is not needed to test the writer.
+
+## 19. Phase Handoff
+
+Phase 2J.5 can begin after this design is reviewed. Its first implementation should support create and update only, operate on user-provided images, and stop at a successful Git push plus status correlation. Workload exposure and deletion remain separate future designs.
+
