@@ -338,14 +338,14 @@ Goal:
 Completed baseline:
 
 - **Phase 2J.1:** define the V1 Deployment, Service, optional Ingress, per-app Kustomization, and root Kustomization contracts in [GitOps Workload Manifest Design](./gitops-workload-manifest-design.md).
+- **Phase 2J.2:** add the reviewed `nginx-demo` sample Deployment and ClusterIP Service under `gitops/workloads/devdeploy-apps/apps/nginx-demo`, with no Ingress until workload exposure is designed.
 - V1 accepts a user-provided container image and does not require CI, an image build, or a registry push.
 - All V1 app manifests target the pre-created `devdeploy-apps` namespace.
 - App deletion remains unimplemented because the Root Application currently uses `prune=false`.
 
 Planned milestones:
 
-- **Phase 2J.2:** generate reviewed sample GitOps workload manifests under `gitops/workloads/devdeploy-apps/apps/<app-name>` and update the root Kustomization.
-- **Phase 2J.3:** verify that Argo CD applies the sample workload to `devdeploy-workload` without direct launcher, backend, or GitHub Actions deployment.
+- **Phase 2J.3 (next):** verify that Argo CD applies the sample workload to `devdeploy-workload` without direct launcher, backend, or GitHub Actions deployment.
 - **Phase 2J.4:** design the backend GitOps commit, push, conflict, retry, and failure-reporting flow.
 - **Phase 2J.5:** implement the backend GitOps workload writer with strict input and filesystem-path validation.
 - Define safe prune/delete behavior before claiming GitOps deletion is complete.

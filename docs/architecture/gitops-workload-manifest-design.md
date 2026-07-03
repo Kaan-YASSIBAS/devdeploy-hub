@@ -353,7 +353,7 @@ This phase does not implement a status API. The current Root Application represe
 
 ## 15. Example Full Tree
 
-With `nginx-demo` and ingress enabled:
+Phase 2J.2 adds `nginx-demo` as the first sample workload manifest set. It intentionally omits Ingress because workload-cluster exposure is not designed yet:
 
 ```text
 gitops/workloads/devdeploy-apps/
@@ -364,18 +364,18 @@ gitops/workloads/devdeploy-apps/
       kustomization.yaml
       deployment.yaml
       service.yaml
-      ingress.yaml
 ```
 
-The root Kustomization lists `apps/nginx-demo`. The app Kustomization lists `deployment.yaml`, `service.yaml`, and `ingress.yaml`. All three resources use name `nginx-demo` and namespace `devdeploy-apps`.
+The root Kustomization lists `apps/nginx-demo`. The app Kustomization lists `deployment.yaml` and `service.yaml`. Both resources use name `nginx-demo` and namespace `devdeploy-apps`.
+
+The sample Deployment also uses a numeric non-root identity, RuntimeDefault seccomp, dropped capabilities, a read-only root filesystem, and ephemeral writable mounts required by nginx. These settings keep the repository's Kubernetes security scan clean without changing the V1 image, port, or Service contract.
 
 The `.gitkeep` file may remain because it is not a Kustomize resource and does not affect rendering.
 
 ## 16. Implementation Sequence
 
-1. **Phase 2J.1:** define this workload manifest contract.
-2. **Phase 2J.2:** generate a reviewed sample app tree using the contract.
+1. **Phase 2J.1 (completed):** define this workload manifest contract.
+2. **Phase 2J.2 (completed):** generate the reviewed `nginx-demo` sample app tree using the contract.
 3. **Phase 2J.3:** verify that Argo CD applies the sample workload to `devdeploy-workload`.
 4. **Phase 2J.4:** design the backend GitOps commit and failure-handling flow.
 5. **Phase 2J.5:** implement the backend GitOps workload writer without direct cluster mutation.
-
