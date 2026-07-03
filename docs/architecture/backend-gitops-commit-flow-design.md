@@ -384,5 +384,6 @@ Implementation should begin with pure filesystem and Git abstractions before add
 
 ## 19. Phase Handoff
 
-Phase 2J.5 can begin after this design is reviewed. Its first implementation should support create and update only, operate on user-provided images, and stop at a successful Git push plus status correlation. Workload exposure and deletion remain separate future designs.
+Phase 2J.5a implements the pure writer foundation with request validation, path containment, deterministic manifest generation, root Kustomization editing, structural render validation, and create-only filesystem tests. It adds no API endpoint, Git commit, or push.
 
+Phase 2J.5b can add the Git commit adapter and operation orchestration. It should continue to operate on user-provided images and stop at a successful Git push plus status correlation. Workload exposure and deletion remain separate future designs.
