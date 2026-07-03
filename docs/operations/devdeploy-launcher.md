@@ -101,6 +101,26 @@ The current empty source contains only `kustomization.yaml` and `apps/.gitkeep`,
 
 A public repository can be read without an Argo CD repository credential. A private repository may leave the Application in an unknown or error sync state until a separately reviewed credential mechanism is added. The Application can still be reported as present with `status: warning`; tokens and provider error payloads are never copied into launcher status.
 
+## Verify The GitOps Root Application
+
+After bootstrap, run the strict read-only verifier:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -VerifyGitOpsRootApplication
+```
+
+This mode reads the existing `argocd/devdeploy-workloads-root` Application as JSON and verifies its identity, unique expected-Application count, project, source, destination, automated sync settings, sync status, and health status. It also reads `devdeploy-apps` and requires the empty-root baseline to contain zero Deployments, Services, and Ingresses.
+
+The verifier uses explicit contexts and `kubectl get` only. It does not read the current kubectl context, call GitHub, inspect repository credentials, run Helm, reconcile RBAC or namespaces, apply an Application, or modify either cluster. A missing Application or workload namespace produces a sanitized failed verification result without attempting repair.
+
+Results are written to the normal launcher status file:
+
+```text
+.devdeploy/local/status/launcher-status.json
+```
+
+The component `platform_bootstrap.components.gitops_root_application` includes `mode: verify`, `verified`, source and destination match booleans, sync-policy booleans, `synced`, `healthy`, and a sanitized `actual` object. Its nested `workload_namespace` object reports namespace presence and Deployment, Service, and Ingress counts. Successful verification keeps `platform_bootstrap.status: partial` because the user workload flow remains intentionally unvalidated.
+
 ## Generate Kind Config Previews
 
 To run preflight and generate deterministic kind config previews:
@@ -801,6 +821,8 @@ When `-BootstrapGitOpsRootApplication` is used, status includes:
 - `platform_bootstrap.components.gitops_root_application`
 
 The component reports the sanitized source contract, destination, sync policy, Application presence, sync and health status, Application count, and whether any Deployment, Service, or Ingress appeared during bootstrap. `ready` describes the validated Application contract; `status` may be `warning` while repository access, destination cache access, or Argo CD reconciliation is still pending. Platform bootstrap remains `partial` until the normal user workload flow is validated.
+
+When `-VerifyGitOpsRootApplication` is used, the same component reports strict read-only verification under `mode: verify`. It exposes pass/fail booleans for the expected Application count, source, revision, destination, project, automated sync, disabled prune and namespace creation, enabled self-heal, Synced status, Healthy status, and the empty `devdeploy-apps` workload inventory. Expected and actual repository URLs are sanitized, and no Secret, token, kubeconfig, certificate, key, or raw command payload is stored.
 
 The `next_actions` array contains safe, non-destructive guidance. For example:
 
