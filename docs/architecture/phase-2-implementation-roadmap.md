@@ -343,13 +343,14 @@ Completed baseline:
 - This confirms the GitOps chain: GitHub push -> Argo CD Root Application -> `devdeploy-workload/devdeploy-apps` -> `nginx-demo` Deployment and Service.
 - **Phase 2J.4:** define the backend repository workspace, validation, manifest generation, deterministic Kustomization update, commit/push, conflict, sanitization, and status contracts in [Backend GitOps Commit Flow Design](./backend-gitops-commit-flow-design.md).
 - **Phase 2J.5a:** implement the pure backend GitOps writer foundation: typed validation, safe path resolution, deterministic Deployment and Service generation, root Kustomization editing, structural render validation, atomic create-only file writing, and temporary-directory unit tests. This phase adds no API endpoint, Git commit, or push.
+- **Phase 2J.5b:** implement the backend local Git commit adapter with repository, branch, operation-state, expected-path, staging, commit-message, and output-sanitization checks. The adapter stages only operation-owned paths and stops at a verified local commit; it does not push or call Kubernetes.
 - V1 accepts a user-provided container image and does not require CI, an image build, or a registry push.
 - All V1 app manifests target the pre-created `devdeploy-apps` namespace.
 - App deletion remains unimplemented because the Root Application currently uses `prune=false`.
 
 Planned milestones:
 
-- **Phase 2J.5b (next):** implement the backend Git commit adapter and operation orchestration without direct Kubernetes deployment.
+- **Phase 2J.5c (next):** design and implement the backend Git push adapter with non-force conflict handling, without direct Kubernetes deployment.
 - Define safe prune/delete behavior before claiming GitOps deletion is complete.
 - Design and validate workload ingress exposure separately before presenting a local app URL as reachable.
 

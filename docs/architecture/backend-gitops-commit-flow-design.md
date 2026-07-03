@@ -386,4 +386,6 @@ Implementation should begin with pure filesystem and Git abstractions before add
 
 Phase 2J.5a implements the pure writer foundation with request validation, path containment, deterministic manifest generation, root Kustomization editing, structural render validation, and create-only filesystem tests. It adds no API endpoint, Git commit, or push.
 
-Phase 2J.5b can add the Git commit adapter and operation orchestration. It should continue to operate on user-provided images and stop at a successful Git push plus status correlation. Workload exposure and deletion remain separate future designs.
+Phase 2J.5b implements the local Git commit boundary. It verifies repository and branch state, rejects unrelated changes, stages only explicit operation-owned paths, sanitizes Git diagnostics, and returns the verified local commit SHA. It adds no API endpoint or Git push.
+
+Phase 2J.5c can add a separate non-force Git push adapter and conflict handling. Workload exposure and deletion remain separate future designs.
