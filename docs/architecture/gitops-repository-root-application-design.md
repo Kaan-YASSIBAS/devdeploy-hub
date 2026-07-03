@@ -294,7 +294,7 @@ This documentation phase does not create an AppProject.
 
 ### 9.1 `-ConfigureGitOpsRepository`
 
-This future explicit setup operation is responsible for:
+Phase 2I.2 implements the local-path validation form of this explicit setup operation. The future Setup Wizard form is responsible for:
 
 - Creating or selecting a GitHub repository.
 - Verifying GitHub access.
@@ -308,7 +308,7 @@ Although shown as a Launcher-style mode for lifecycle consistency, host executio
 
 ### 9.2 `-BootstrapGitOpsRootApplication`
 
-This future explicit mutating setup operation must:
+Phase 2I.3 implements this explicit mutating setup operation. It:
 
 1. Verify management Argo CD is ready.
 2. Verify `devdeploy-workload` registration is ready.
@@ -318,7 +318,9 @@ This future explicit mutating setup operation must:
 6. Verify its repository, revision, path, destination, and sync policy.
 7. Confirm that bootstrap did not create a user workload.
 
-It must fail closed on destination, namespace, repository, or credential mismatches.
+The initial local-path implementation uses the sanitized `origin` URL captured by repository configuration and requires the empty `gitops/workloads/devdeploy-apps` source contract. It applies only `argocd/devdeploy-workloads-root`, compares workload object inventory before and after, and fails closed on destination, namespace, repository, permission, or specification mismatches.
+
+Public repositories may reconcile without repository credentials. A private repository can create a valid Application but remain in warning state until a separately reviewed Argo CD repository credential flow exists. Phase 2I.3 does not create repository credentials and never copies provider tokens or raw repository errors into status.
 
 ### 9.3 `-VerifyGitOpsRootApplication`
 
@@ -450,7 +452,7 @@ Status and logs may contain owner, repository name, sanitized URL, branch, path,
 3. Implement create-new and existing-repository validation through explicit setup APIs.
 4. Adapt deterministic path initialization to the selected GitHub repository without deploying a workload.
 5. Decide whether the earliest MVP uses `default` or a dedicated AppProject.
-6. Implement guarded Root Application bootstrap after registration and permission verification are ready.
+6. **Completed in Phase 2I.3:** implement guarded Root Application bootstrap after registration and permission verification are ready, with empty-workload inventory checks.
 7. Implement strict read-only Root Application verification.
 8. Add Setup Wizard progress and recovery states.
 9. Validate an explicitly requested demo app through the same GitOps path.
@@ -458,13 +460,12 @@ Status and logs may contain owner, repository name, sanitized URL, branch, path,
 
 ## 14. Non-Goals
 
-- No Launcher runtime changes.
-- No Argo CD Application or AppProject creation.
+- No AppProject creation.
 - No GitHub repository creation.
 - No repository credential creation.
 - No GitOps manifest generation.
 - No backend or frontend changes.
 - No user workload or demo deployment.
-- No Kubernetes resource mutation.
+- No Kubernetes mutation beyond reconciling `argocd/devdeploy-workloads-root` in Phase 2I.3.
 - No cluster mutation.
 - No full CI/image-build automation.

@@ -90,16 +90,17 @@ The implemented Role permits `get`, `list`, `watch`, `create`, `update`, `patch`
 
 Secret access is confined to `devdeploy-apps`. Secret values must never be copied into Launcher status or logs. Git remains unsuitable for raw secret values; a separate workload-secret delivery model is still required for sensitive production-style inputs.
 
-### Read-only support permissions
+### Namespace read permissions
 
-The Role permits `get`, `list`, and `watch` for:
+Argo CD discovery and comparison require visibility across namespaced resource types, including APIs that may be introduced by Kubernetes or installed extensions. Maintaining a specific read list caused repeated comparison failures as additional resources were discovered. The Role therefore permits `get`, `list`, and `watch` for all API groups and resources within `devdeploy-apps`:
 
-| API group | Resources | Purpose |
-| --- | --- | --- |
-| Core (`""`) | `pods`, `events` | Health and reconciliation visibility |
-| `apps` | `replicasets` | Deployment rollout visibility |
+```yaml
+- apiGroups: ["*"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch"]
+```
 
-These resources remain namespaced and do not require cluster-wide grants. StorageClasses, PersistentVolumes, and other cluster storage resources remain prohibited.
+Because this is a namespaced Role and RoleBinding, the wildcard does not grant access to cluster-scoped resources or other namespaces. It also grants no write verb. Resources such as `resourceclaims`, `resourcequotas`, `limitranges`, `replicationcontrollers`, pods, events, and replicasets are readable for cache, comparison, and health evaluation but are not writable unless they also appear in the explicit workload write allowlist above.
 
 ### Explicitly prohibited permissions
 
@@ -112,7 +113,7 @@ V1 does not grant Argo CD permission to manage:
 - Cluster-scoped resources generally.
 - Any resource outside `devdeploy-apps` through a workload write binding.
 
-Cluster-admin and wildcard API group/resource/verb grants are prohibited.
+Cluster-admin, wildcard write verbs, and cluster-wide wildcard grants are prohibited.
 
 ## 5. Namespace and Registration Secret Ownership
 
@@ -144,9 +145,10 @@ This explicit mutating mode will:
 3. Create or update the namespaced Role with the reviewed V1 rules.
 4. Create or update the RoleBinding to `kube-system/devdeploy-argocd-manager`.
 5. Update only the Argo CD cluster Secret namespace scope when it still targets `devdeploy-workloads`.
-6. Verify allowed writes in `devdeploy-apps` through `kubectl auth can-i` checks.
-7. Verify equivalent writes remain denied in representative namespaces outside `devdeploy-apps`.
-8. Write sanitized status without credential or Secret values.
+6. Verify namespace-wide reads and allowed writes in `devdeploy-apps` through `kubectl auth can-i` checks.
+7. Verify writes to read-only resources remain denied.
+8. Verify equivalent writes remain denied in representative namespaces outside `devdeploy-apps`.
+9. Write sanitized status without credential or Secret values.
 
 The mode must be idempotent. It must not create an Argo CD Application, Git repository, workload, cluster-scoped write binding, or cluster-admin grant.
 
@@ -156,7 +158,7 @@ Phase 2H.3 implements this strict read-only mode. It:
 
 1. Verify namespace, Role, and RoleBinding metadata.
 2. Verifies the RoleBinding subject and Role reference.
-3. Verifies the ServiceAccount can perform expected workload operations in `devdeploy-apps`.
+3. Verifies the ServiceAccount has namespace-wide read access and can perform expected allowlisted workload writes in `devdeploy-apps`.
 4. Verifies Role, RoleBinding, ClusterRole, ClusterRoleBinding, CRD, namespace, and representative outside-namespace writes remain denied.
 5. Verifies effective cluster-admin access is absent.
 6. Reports the current Application count without requiring it to be zero after applications exist.
@@ -187,21 +189,27 @@ Suggested shape:
   "role_name": "devdeploy-argocd-deployer",
   "role_binding_name": "devdeploy-argocd-deployer",
   "cluster_admin": false,
-  "allowed_resource_groups": ["", "apps", "networking.k8s.io", "batch", "autoscaling", "policy"],
+  "read_scope": "namespace-read-all",
+  "write_scope": "namespace-workload-allowlist",
+  "can_read_managed_namespace_resources": true,
+  "read_resource_groups": ["*"],
+  "read_resources_summary": ["*"],
+  "write_resource_groups": ["", "apps", "networking.k8s.io", "batch", "autoscaling", "policy"],
   "allowed_resources_summary": [
-    "configmaps",
-    "secrets",
-    "services",
-    "serviceaccounts",
-    "persistentvolumeclaims",
-    "deployments",
-    "statefulsets",
-    "daemonsets",
-    "ingresses",
-    "jobs",
-    "cronjobs",
-    "horizontalpodautoscalers",
-    "poddisruptionbudgets"
+    "read:*",
+    "write:services",
+    "write:configmaps",
+    "write:secrets",
+    "write:serviceaccounts",
+    "write:persistentvolumeclaims",
+    "write:deployments",
+    "write:statefulsets",
+    "write:daemonsets",
+    "write:ingresses",
+    "write:jobs",
+    "write:cronjobs",
+    "write:horizontalpodautoscalers",
+    "write:poddisruptionbudgets"
   ],
   "can_write_managed_namespace": null,
   "can_write_outside_managed_namespace": null,
@@ -240,7 +248,7 @@ Repository updates remain separate from cluster authorization. GitHub Actions ma
 ## 9. Security Boundaries
 
 - Never grant cluster-admin for workload deployment.
-- Never grant cluster-wide workload write access in V1.
+- Never grant cluster-wide workload read or write access in V1.
 - Never allow Argo CD to manage Kubernetes RBAC resources or CRDs in V1.
 - Never allow Argo CD to create or delete namespaces in V1.
 - Never print or persist bearer tokens, certificates, private keys, CA data, or Secret values outside Kubernetes Secrets.
@@ -256,7 +264,7 @@ Repository updates remain separate from cluster authorization. GitHub Actions ma
 - If outside-namespace writes are allowed, mark status `error` and stop before parent Application creation.
 - If the cluster Secret scope update fails, keep platform status `partial` and do not create the parent Application.
 - Permission revocation or namespace reset must be a separate explicit future operation.
-- Never repair a permission failure by adding cluster-admin or wildcard grants.
+- Never repair a permission failure by adding cluster-admin, wildcard write verbs, or cluster-wide wildcard grants.
 
 ## 11. Non-Goals
 

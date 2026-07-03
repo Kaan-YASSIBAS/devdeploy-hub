@@ -307,6 +307,7 @@ Completed design baseline:
 
 - Phase 2I.1 defines Setup Wizard-managed create-new and existing GitHub repository modes.
 - Phase 2I.2 implements explicit local-path GitOps structure initialization and sanitized repository status as a validation step before GitHub API integration.
+- Phase 2I.3 implements guarded `devdeploy-workloads-root` reconciliation, exact source/destination/sync-policy verification, and before/after workload inventory checks.
 - The V1 managed source path is `gitops/workloads/devdeploy-apps`.
 - The preferred Root Application is `argocd/devdeploy-workloads-root`.
 - The Root Application targets `https://devdeploy-workload-control-plane:6443` and namespace `devdeploy-apps`.
@@ -319,7 +320,7 @@ Recommended tasks:
 - Add authenticated GitHub repository selection or creation through explicit Setup Wizard/backend setup APIs.
 - Initialize or validate the deterministic GitOps path without deploying a sample workload.
 - Configure sanitized Argo CD repository access.
-- Create or verify `devdeploy-workloads-root` only after registration and workload permission checks are ready.
+- Add strict read-only Root Application verification as a separate mode after the guarded bootstrap baseline.
 - Define safe prune/delete behavior before claiming GitOps deletion is complete.
 - Add or reuse a known safe demo image.
 - Generate the demo app under `gitops/workloads/devdeploy-apps/apps/<demo-app>`.

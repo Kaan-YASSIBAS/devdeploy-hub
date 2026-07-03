@@ -68,6 +68,39 @@ This mode does not:
 - Run Helm.
 - Mutate either kind cluster.
 
+## Bootstrap The GitOps Root Application
+
+After local GitOps repository configuration, workload registration, and namespace-scoped deploy permission verification are ready, explicitly create or reconcile the first Root Application:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -BootstrapGitOpsRootApplication
+```
+
+This guarded mode reconciles exactly one resource in `devdeploy-mgmt`:
+
+```text
+Application argocd/devdeploy-workloads-root
+```
+
+The Application contract is:
+
+- Repository URL: sanitized URL from `platform_bootstrap.components.gitops_repository`.
+- Revision: `main`.
+- Source path: `gitops/workloads/devdeploy-apps`.
+- Destination server: `https://devdeploy-workload-control-plane:6443`.
+- Destination namespace: `devdeploy-apps`.
+- Project: `default`.
+- Automated sync: enabled.
+- `prune: false`.
+- `selfHeal: true`.
+- `CreateNamespace=false`.
+
+Before applying the Application, the launcher verifies both clusters, management Argo CD, the registered workload cluster Secret, namespace-scoped deployment permissions, the configured repository URL, the empty GitOps source path, and the existing destination namespace. It captures Deployment, Service, and Ingress inventory before and after reconciliation and fails if unexpected workload objects appear.
+
+The current empty source contains only `kustomization.yaml` and `apps/.gitkeep`, so this phase creates no user workload. The launcher does not create a Namespace, AppProject, repository credential, GitHub repository, workflow, image, database resource, or sample application.
+
+A public repository can be read without an Argo CD repository credential. A private repository may leave the Application in an unknown or error sync state until a separately reviewed credential mechanism is added. The Application can still be reported as present with `status: warning`; tokens and provider error payloads are never copied into launcher status.
+
 ## Generate Kind Config Previews
 
 To run preflight and generate deterministic kind config previews:
@@ -589,6 +622,7 @@ devdeploy-launcher-status
 - `workload_deploy_permissions_grant`
 - `workload_deploy_permissions_verify`
 - `gitops_repository_configure`
+- `gitops_root_application_bootstrap`
 - `management_backend_database_initialize`
 
 `status` is one of:
@@ -666,6 +700,7 @@ Current component keys:
 - `frontend`
 - `argocd`
 - `gitops_repository`
+- `gitops_root_application`
 
 `platform_bootstrap.status` may be:
 
@@ -749,15 +784,23 @@ When `-GrantWorkloadDeployPermissions` is used, status includes:
 
 - `platform_bootstrap.components.workload_deploy_permissions`
 
-The component reports the managed namespace, Role/RoleBinding presence, allowed resource summary, cluster-admin detection, managed/outside namespace authorization results, RBAC/CRD/namespace management boundaries, and Application count. The registration component also reports `write_rbac_configured: true` after successful grant verification.
+The component reports the managed namespace, Role/RoleBinding presence, separate read and write scopes, allowed resource summary, cluster-admin detection, managed/outside namespace authorization results, RBAC/CRD/namespace management boundaries, and Application count. The registration component also reports `write_rbac_configured: true` after successful grant verification.
 
 When `-VerifyWorkloadDeployPermissions` is used, the same component reports `mode: verify`, ServiceAccount presence, RoleBinding subject/reference validity, and the current authorization boundary. Successful verification preserves `platform_bootstrap.components.argocd_workload_cluster.write_rbac_configured: true` and keeps platform status `partial` until the GitOps Application model is configured.
+
+The namespaced Role uses `read_scope: namespace-read-all`: `get`, `list`, and `watch` cover all API groups and resources within `devdeploy-apps` so Argo CD can build its destination cache and compare discovered resource types. Its `write_scope: namespace-workload-allowlist` remains limited to the documented workload resources. Grant and verification modes explicitly confirm representative non-allowlisted writes remain denied; RBAC, CRD, namespace, cluster-wide, and outside-namespace write boundaries are unchanged.
 
 When `-ConfigureGitOpsRepository` is used, status includes:
 
 - `platform_bootstrap.components.gitops_repository`
 
 The component reports `provider: local_path`, the resolved Git worktree path, sanitized repository URL, branch, fixed source path, directory and kustomization readiness, optional `kustomize_render_succeeded`, and whether GitHub credentials or integration are configured. It never contains a GitHub token or credential-bearing URL. Successful local-path configuration keeps `platform_bootstrap.status: partial` because no Root Application or workload exists yet.
+
+When `-BootstrapGitOpsRootApplication` is used, status includes:
+
+- `platform_bootstrap.components.gitops_root_application`
+
+The component reports the sanitized source contract, destination, sync policy, Application presence, sync and health status, Application count, and whether any Deployment, Service, or Ingress appeared during bootstrap. `ready` describes the validated Application contract; `status` may be `warning` while repository access, destination cache access, or Argo CD reconciliation is still pending. Platform bootstrap remains `partial` until the normal user workload flow is validated.
 
 The `next_actions` array contains safe, non-destructive guidance. For example:
 
