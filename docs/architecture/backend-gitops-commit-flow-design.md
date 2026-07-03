@@ -390,4 +390,6 @@ Phase 2J.5b implements the local Git commit boundary. It verifies repository and
 
 Phase 2J.5c implements a separate safe, non-force Git push adapter with remote and branch validation, expected-commit pinning, sanitized failures, and remote-rejection handling. It stops after the repository update and does not read Argo CD status.
 
-Phase 2J.5d can compose the writer, local commit adapter, and push adapter into an internal deploy operation service. Argo CD status correlation, workload exposure, and deletion remain separate future work.
+Phase 2J.5d composes the writer, local commit adapter, and push adapter into an internal create-only deploy operation service. It returns safe commit and push metadata, stops after the Git repository update, and does not expose an API or read Argo CD status.
+
+Phase 2J.5e can add a protected backend API endpoint around the internal operation service. Argo CD status correlation, workload exposure, and deletion remain separate future work.

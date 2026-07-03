@@ -86,13 +86,7 @@ class GitAdapter:
         self._validate_branch(repo_root, request.expected_branch)
         expected_paths = self._validate_expected_paths(repo_root, request.expected_paths)
         commit_message = self._validate_commit_message(request.commit_message)
-
-        changed_paths = self._changed_paths(repo_root)
-        if not changed_paths.issubset(set(expected_paths)):
-            raise GitOpsWriterError(
-                "git_unexpected_changes",
-                "The Git worktree contains changes outside the expected GitOps paths.",
-            )
+        self._validate_changed_paths(repo_root, expected_paths)
 
         stage_result = self._run_git(("add", "--", *expected_paths), cwd=repo_root)
         if stage_result.return_code != 0:
@@ -141,6 +135,23 @@ class GitAdapter:
             commit_sha=revision.lower(),
             message="The GitOps changes were committed locally.",
         )
+
+    def validate_commit_preconditions(
+        self,
+        *,
+        repo_root: Path | str,
+        expected_branch: str,
+        expected_paths: Sequence[str],
+    ) -> None:
+        resolved_root = self._validate_repository(repo_root)
+        self._validate_operation_state(resolved_root)
+        self._validate_branch(resolved_root, expected_branch)
+        normalized_paths = self._validate_expected_paths(resolved_root, expected_paths)
+        self._validate_changed_paths(resolved_root, normalized_paths)
+
+    def validate_push_target(self, *, remote_name: str, remote_branch: str) -> None:
+        self._validate_remote_name(remote_name)
+        self._validate_remote_branch(remote_branch)
 
     def push(self, request: GitPushRequest) -> GitPushResult:
         repo_root = self._validate_repository(request.repo_root)
@@ -346,6 +357,13 @@ class GitAdapter:
             )
             changed.update(self._path_set_from_git(result.stdout))
         return changed
+
+    def _validate_changed_paths(self, repo_root: Path, expected_paths: Sequence[str]) -> None:
+        if not self._changed_paths(repo_root).issubset(set(expected_paths)):
+            raise GitOpsWriterError(
+                "git_unexpected_changes",
+                "The Git worktree contains changes outside the expected GitOps paths.",
+            )
 
     @staticmethod
     def _path_set_from_git(output: str) -> set[str]:

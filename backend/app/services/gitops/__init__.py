@@ -1,3 +1,8 @@
+from app.services.gitops.deploy_operation import (
+    DeployWorkloadOperationRequest,
+    DeployWorkloadOperationResult,
+    DeployWorkloadOperationService,
+)
 from app.services.gitops.errors import GitOpsWriterError
 from app.services.gitops.git_adapter import (
     GitAdapter,
@@ -11,6 +16,9 @@ from app.services.gitops.render import StructuralRenderValidator
 from app.services.gitops.writer import GitOpsWorkloadWriter, WorkloadWriteResult
 
 __all__ = [
+    "DeployWorkloadOperationRequest",
+    "DeployWorkloadOperationResult",
+    "DeployWorkloadOperationService",
     "GitOpsWorkloadWriter",
     "GitOpsWriterError",
     "GitAdapter",

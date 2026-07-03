@@ -345,13 +345,14 @@ Completed baseline:
 - **Phase 2J.5a:** implement the pure backend GitOps writer foundation: typed validation, safe path resolution, deterministic Deployment and Service generation, root Kustomization editing, structural render validation, atomic create-only file writing, and temporary-directory unit tests. This phase adds no API endpoint, Git commit, or push.
 - **Phase 2J.5b:** implement the backend local Git commit adapter with repository, branch, operation-state, expected-path, staging, commit-message, and output-sanitization checks. The adapter stages only operation-owned paths and stops at a verified local commit; it does not push or call Kubernetes.
 - **Phase 2J.5c:** implement the backend Git push adapter with safe remote and branch validation, optional expected-commit pinning, credential-safe diagnostics, and non-force rejection handling. This phase stops after publishing the local commit and does not read Argo CD status.
+- **Phase 2J.5d:** compose request validation, the create-only writer, local commit adapter, and push adapter into an internal deploy operation service. The service returns safe operation metadata after a successful push and does not expose an API or read Argo CD status.
 - V1 accepts a user-provided container image and does not require CI, an image build, or a registry push.
 - All V1 app manifests target the pre-created `devdeploy-apps` namespace.
 - App deletion remains unimplemented because the Root Application currently uses `prune=false`.
 
 Planned milestones:
 
-- **Phase 2J.5d (next):** compose the writer, local commit adapter, and push adapter into an internal deploy operation service without direct Kubernetes deployment.
+- **Phase 2J.5e (next):** add a protected backend API endpoint for GitOps deploy requests using the internal operation service, without direct Kubernetes deployment.
 - Define safe prune/delete behavior before claiming GitOps deletion is complete.
 - Design and validate workload ingress exposure separately before presenting a local app URL as reachable.
 
