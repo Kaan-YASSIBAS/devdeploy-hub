@@ -44,7 +44,6 @@
     "namespace": "Namespace",
     "node": "Node",
     "owner": "Sahip",
-    "optional": "İsteğe bağlı",
     "password": "Şifre",
     "pod": "Pod",
     "replicas": "Replica",
@@ -95,6 +94,13 @@
     "stale": "Güncel değil",
     "deletion_requested": "Silme istendi",
     "deleted": "Silindi",
+    "unknown": "Bilinmiyor"
+  },
+  "runtimeStatus": {
+    "running": "Çalışıyor",
+    "progressing": "Hazırlanıyor",
+    "ready": "Hazır",
+    "not_found": "Bulunamadı",
     "unknown": "Bilinmiyor"
   },
   "health": {
@@ -310,36 +316,22 @@
     "emptyNoResultsTitle": "Aramayla eşleşen servis yok",
     "emptyNoResultsDescription": "Aramayı temizle veya yeni bir servis kaydet.",
     "domain": {
-      "description": "Birinci sınıf servis tanımlarını ve varsayılan deployment ayarlarını yönet.",
-      "newService": "Yeni servis",
-      "searchPlaceholder": "Servis tanımlarında ad, image, açıklama, sahip veya port ara...",
-      "createTitle": "Servis tanımı oluştur",
-      "createDescription": "Tekrar kullanılabilir servis bilgilerini ve deployment varsayılanlarını DevDeploy Hub'a kaydet.",
-      "createAction": "Servis oluştur",
-      "createdToast": "Servis tanımı oluşturuldu.",
-      "createFailed": "Servis tanımı oluşturulamadı.",
+      "description": "DevDeploy Hub'ın yönettiği servisleri canlı Kubernetes runtime durumuyla birlikte görüntüle.",
+      "searchPlaceholder": "Servislerde ad, image, runtime durumu, sahip veya port ara...",
       "loadError": "Servis tanımları yüklenemedi.",
-      "emptyTitle": "Henüz servis tanımı yok",
-      "emptyDescription": "Tekrar kullanılabilir deployment varsayılanları için bir servis tanımı oluştur.",
-      "emptyNoResultsTitle": "Aramayla eşleşen servis tanımı yok",
-      "emptyNoResultsDescription": "Aramayı temizle veya yeni bir servis tanımı oluştur.",
-      "descriptionPlaceholder": "Bu servisin sorumluluğunu veya sunduğu işlevi yaz",
-      "imagePlaceholder": "nginx:latest",
+      "emptyTitle": "Henüz servis yok",
+      "emptyDescription": "Deployment oluşturduğunda ilgili servis burada görünecek.",
+      "emptyNoResultsTitle": "Aramayla eşleşen servis yok",
+      "emptyNoResultsDescription": "Tüm servisleri görmek için aramayı temizle.",
       "noDescription": "Açıklama girilmemiş.",
       "notSet": "Belirtilmedi",
       "fields": {
         "name": "Servis",
         "defaultImage": "Varsayılan image",
-        "defaultReplicas": "Varsayılan replica",
-        "defaultPort": "Varsayılan port",
+        "runtime": "Runtime durumu",
+        "defaults": "Replica / port",
         "owner": "Sahip",
         "updated": "Güncellendi"
-      },
-      "validation": {
-        "name": "Servis adı en az iki karakter olmalıdır.",
-        "image": "Varsayılan image boşluk içeremez.",
-        "replicas": "Varsayılan replica sayısı 1 ile 20 arasında olmalıdır.",
-        "port": "Varsayılan port 1 ile 65535 arasında olmalıdır."
       }
     },
     "table": {
@@ -434,6 +426,9 @@
       "emptyNoResultsDescription": "Tüm deploymentları görmek için aramayı temizle.",
       "noService": "Bağlı servis yok",
       "notPublished": "GitOps ile yayınlanmadı",
+      "desiredStateLabel": "Hedef durum: {{state}}",
+      "runtimeReplicas": "Replica {{ready}}/{{desired}} hazır",
+      "runtimePods": "Pod {{ready}}/{{total}} hazır",
       "fields": {
         "service": "Servis tanımı",
         "appName": "Deployment",
@@ -443,7 +438,7 @@
         "containerPort": "Container port",
         "servicePort": "Service port",
         "serviceType": "Service türü",
-        "desiredState": "Hedef durum",
+        "status": "Durum",
         "runtimeDefaults": "Replica / portlar",
         "gitops": "GitOps bilgisi",
         "updated": "Güncellendi"

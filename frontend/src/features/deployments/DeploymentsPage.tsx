@@ -21,6 +21,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type {
   DeploymentRecord,
+  DeploymentRuntimeStatus,
   GitOpsAppDeployInput,
   GitOpsAppDeployResponse,
   GitOpsAppDeployStatus
@@ -55,6 +56,13 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function runtimeVariant(status: DeploymentRuntimeStatus["display_status"]) {
+  if (status === "running") return "success";
+  if (status === "progressing") return "warning";
+  if (status === "not_found") return "danger";
+  return "muted";
+}
+
 export function DeploymentsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -83,6 +91,8 @@ export function DeploymentsPage() {
       setDeployResponse(response);
       setPollTimedOut(false);
       toast.success(t("deployments.gitopsDeploy.pushedToast"));
+      await queryClient.invalidateQueries({ queryKey: ["deployment-records"] });
+      await queryClient.invalidateQueries({ queryKey: ["service-definitions"] });
       await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
       await queryClient.invalidateQueries({ queryKey: ["user-summary"] });
     },
@@ -124,6 +134,8 @@ export function DeploymentsPage() {
 
     void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
     void queryClient.invalidateQueries({ queryKey: ["user-summary"] });
+    void queryClient.invalidateQueries({ queryKey: ["deployment-records"] });
+    void queryClient.invalidateQueries({ queryKey: ["service-definitions"] });
   }, [liveStatus, queryClient]);
 
   const filteredRecords = useMemo(() => {
@@ -141,6 +153,7 @@ export function DeploymentsPage() {
         record.image,
         record.namespace,
         record.desired_state,
+        record.runtime_status?.display_status ?? "",
         record.status_summary ?? "",
         record.commit_sha ?? "",
         serviceName
@@ -177,21 +190,57 @@ export function DeploymentsPage() {
     },
     {
       key: "state",
-      header: t("deployments.records.fields.desiredState"),
-      render: (record) => (
-        <Badge variant={record.desired_state === "pending" ? "warning" : "muted"}>
-          {t(`deployments.records.status.${record.desired_state}`)}
-        </Badge>
-      )
+      header: t("deployments.records.fields.status"),
+      render: (record) => {
+        const runtime = record.runtime_status;
+        return (
+          <div className="space-y-1.5">
+            <Badge variant={runtime ? runtimeVariant(runtime.display_status) : "muted"}>
+              {runtime
+                ? t(`runtimeStatus.${runtime.display_status}`)
+                : t(`deployments.records.status.${record.desired_state}`)}
+            </Badge>
+            <p className="text-xs text-slate-500">
+              {t("deployments.records.desiredStateLabel", {
+                state: t(`deployments.records.status.${record.desired_state}`)
+              })}
+            </p>
+            {record.status_summary ? (
+              <p className="max-w-[220px] text-xs text-slate-500">{record.status_summary}</p>
+            ) : null}
+          </div>
+        );
+      }
     },
     {
       key: "runtime",
       header: t("deployments.records.fields.runtimeDefaults"),
-      render: (record) => (
-        <span className="whitespace-nowrap font-mono text-xs">
-          {record.replicas} x :{record.container_port} / {record.service_port}
-        </span>
-      )
+      render: (record) => {
+        const runtime = record.runtime_status;
+        if (!runtime?.deployment_found) {
+          return (
+            <span className="whitespace-nowrap font-mono text-xs">
+              {record.replicas} x :{record.container_port} / {record.service_port}
+            </span>
+          );
+        }
+        return (
+          <div className="space-y-1 font-mono text-xs">
+            <p>
+              {t("deployments.records.runtimeReplicas", {
+                ready: runtime.ready_replicas ?? 0,
+                desired: runtime.desired_replicas ?? record.replicas
+              })}
+            </p>
+            <p className="text-slate-500">
+              {t("deployments.records.runtimePods", {
+                ready: runtime.pod_ready_count ?? 0,
+                total: runtime.pod_total_count ?? 0
+              })}
+            </p>
+          </div>
+        );
+      }
     },
     {
       key: "gitops",
@@ -210,10 +259,7 @@ export function DeploymentsPage() {
       key: "updated",
       header: t("deployments.records.fields.updated"),
       render: (record) => (
-        <div>
-          <p>{formatDate(record.updated_at)}</p>
-          {record.status_summary ? <p className="mt-1 max-w-[220px] text-xs text-slate-500">{record.status_summary}</p> : null}
-        </div>
+        <p>{formatDate(record.updated_at)}</p>
       )
     }
   ];

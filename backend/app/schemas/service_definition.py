@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.schemas.runtime_status import ServiceRuntimeStatusRead
+
 
 def _clean_name(value: str) -> str:
     cleaned = value.strip()
@@ -79,5 +81,6 @@ class ServiceDefinitionRead(BaseModel):
     default_port: int | None = None
     created_at: datetime
     updated_at: datetime
+    runtime_status: ServiceRuntimeStatusRead | None = None
 
     model_config = ConfigDict(from_attributes=True)

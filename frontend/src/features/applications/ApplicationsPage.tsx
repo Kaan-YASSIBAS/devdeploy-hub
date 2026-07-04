@@ -1,18 +1,17 @@
 import { useMemo, useState } from "react";
-import { Boxes, Plus, RefreshCw, Search } from "lucide-react";
+import { Boxes, RefreshCw, Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { getApiErrorMessage, serviceDefinitionsApi } from "@/api/client";
-import { CreateServiceDefinitionModal } from "@/components/applications/CreateServiceDefinitionModal";
+import { useQuery } from "@tanstack/react-query";
+import { serviceDefinitionsApi } from "@/api/client";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { EmptyState } from "@/components/shared/EmptyState";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/features/auth/useAuth";
-import type { ServiceDefinition, ServiceDefinitionCreateInput } from "@/types";
+import type { ServiceDefinition, ServiceRuntimeStatus } from "@/types";
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, {
@@ -23,28 +22,25 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function runtimeVariant(status: ServiceRuntimeStatus["display_status"]) {
+  if (status === "ready") return "success";
+  if (status === "not_found") return "warning";
+  return "muted";
+}
+
+function runtimePorts(runtime: ServiceRuntimeStatus) {
+  return runtime.ports?.map((port) => `${port.port}/${port.protocol ?? "TCP"}`).join(", ") ?? "-";
+}
+
 export function ApplicationsPage() {
   const { t } = useTranslation();
-  const queryClient = useQueryClient();
   const { user } = useAuth();
   const [search, setSearch] = useState("");
-  const [createModalOpen, setCreateModalOpen] = useState(false);
   const servicesQuery = useQuery({
     queryKey: ["service-definitions"],
     queryFn: serviceDefinitionsApi.list
   });
   const services = useMemo(() => servicesQuery.data ?? [], [servicesQuery.data]);
-
-  const createMutation = useMutation({
-    mutationFn: (input: ServiceDefinitionCreateInput) => serviceDefinitionsApi.create(input),
-    onSuccess: async () => {
-      toast.success(t("applications.domain.createdToast"));
-      await queryClient.invalidateQueries({ queryKey: ["service-definitions"] });
-    },
-    onError: (error) => {
-      toast.error(getApiErrorMessage(error) || t("applications.domain.createFailed"));
-    }
-  });
 
   const filteredServices = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -57,6 +53,8 @@ export function ApplicationsPage() {
         service.name,
         service.description ?? "",
         service.default_image ?? "",
+        service.runtime_status?.display_status ?? "",
+        service.runtime_status?.cluster_ip ?? "",
         String(service.default_port ?? ""),
         String(service.owner_id)
       ]
@@ -90,15 +88,33 @@ export function ApplicationsPage() {
         )
     },
     {
-      key: "replicas",
-      header: t("applications.domain.fields.defaultReplicas"),
-      render: (service) => <span className="font-mono text-xs">{service.default_replicas}</span>
+      key: "runtime",
+      header: t("applications.domain.fields.runtime"),
+      render: (service) => {
+        const runtime = service.runtime_status;
+        if (!runtime) {
+          return <Badge variant="muted">{t("runtimeStatus.unknown")}</Badge>;
+        }
+        return (
+          <div className="space-y-1.5">
+            <Badge variant={runtimeVariant(runtime.display_status)}>
+              {t(`runtimeStatus.${runtime.display_status}`)}
+            </Badge>
+            <p className="font-mono text-xs text-slate-500">
+              {runtime.service_type ?? "-"} · {runtime.cluster_ip ?? "-"}
+            </p>
+            <p className="font-mono text-xs text-slate-500">{runtimePorts(runtime)}</p>
+          </div>
+        );
+      }
     },
     {
-      key: "port",
-      header: t("applications.domain.fields.defaultPort"),
+      key: "defaults",
+      header: t("applications.domain.fields.defaults"),
       render: (service) => (
-        <span className="font-mono text-xs">{service.default_port ?? t("applications.domain.notSet")}</span>
+        <span className="whitespace-nowrap font-mono text-xs">
+          {service.default_replicas} x :{service.default_port ?? "-"}
+        </span>
       )
     },
     {
@@ -129,20 +145,10 @@ export function ApplicationsPage() {
     <div>
       <PageHeader
         actions={
-          <div className="flex flex-wrap gap-3">
-            <Button
-              disabled={servicesQuery.isFetching}
-              variant="outline"
-              onClick={() => void servicesQuery.refetch()}
-            >
-              <RefreshCw className={servicesQuery.isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-              {t("common.refresh")}
-            </Button>
-            <Button onClick={() => setCreateModalOpen(true)}>
-              <Plus className="h-4 w-4" />
-              {t("applications.domain.newService")}
-            </Button>
-          </div>
+          <Button disabled={servicesQuery.isFetching} variant="outline" onClick={() => void servicesQuery.refetch()}>
+            <RefreshCw className={servicesQuery.isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+            {t("common.refresh")}
+          </Button>
         }
         description={t("applications.domain.description")}
         title={t("applications.title")}
@@ -165,7 +171,6 @@ export function ApplicationsPage() {
             data={filteredServices}
             emptyState={
               <EmptyState
-                action={{ label: t("applications.domain.newService"), onClick: () => setCreateModalOpen(true) }}
                 description={emptyDescription}
                 icon={<Boxes className="h-5 w-5" />}
                 title={emptyTitle}
@@ -175,13 +180,6 @@ export function ApplicationsPage() {
           />
         </CardContent>
       </Card>
-
-      <CreateServiceDefinitionModal
-        isSubmitting={createMutation.isPending}
-        open={createModalOpen}
-        onCreate={(input) => createMutation.mutateAsync(input)}
-        onOpenChange={setCreateModalOpen}
-      />
     </div>
   );
 }

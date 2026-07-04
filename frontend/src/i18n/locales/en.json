@@ -44,7 +44,6 @@
     "namespace": "Namespace",
     "node": "Node",
     "owner": "Owner",
-    "optional": "Optional",
     "password": "Password",
     "pod": "Pod",
     "replicas": "Replicas",
@@ -95,6 +94,13 @@
     "stale": "Stale",
     "deletion_requested": "Deletion requested",
     "deleted": "Deleted",
+    "unknown": "Unknown"
+  },
+  "runtimeStatus": {
+    "running": "Running",
+    "progressing": "Progressing",
+    "ready": "Ready",
+    "not_found": "Not found",
     "unknown": "Unknown"
   },
   "health": {
@@ -310,36 +316,22 @@
     "emptyNoResultsTitle": "No services match your search",
     "emptyNoResultsDescription": "Clear the search or register a new service.",
     "domain": {
-      "description": "Manage first-class service definitions and their default deployment settings.",
-      "newService": "New service",
-      "searchPlaceholder": "Search service definitions by name, image, description, owner, or port...",
-      "createTitle": "Create service definition",
-      "createDescription": "Store reusable service metadata and deployment defaults in DevDeploy Hub.",
-      "createAction": "Create service",
-      "createdToast": "Service definition created.",
-      "createFailed": "Service definition could not be created.",
+      "description": "Services managed by DevDeploy Hub, enriched with live Kubernetes runtime status.",
+      "searchPlaceholder": "Search services by name, image, runtime status, owner, or port...",
       "loadError": "Service definitions could not be loaded.",
-      "emptyTitle": "No service definitions yet",
-      "emptyDescription": "Create a service definition to establish reusable deployment defaults.",
-      "emptyNoResultsTitle": "No service definitions match your search",
-      "emptyNoResultsDescription": "Clear the search or create a new service definition.",
-      "descriptionPlaceholder": "What this service owns or provides",
-      "imagePlaceholder": "nginx:latest",
+      "emptyTitle": "No services yet",
+      "emptyDescription": "Services will appear here after you create a deployment.",
+      "emptyNoResultsTitle": "No services match your search",
+      "emptyNoResultsDescription": "Clear the search to see all services.",
       "noDescription": "No description provided.",
       "notSet": "Not set",
       "fields": {
         "name": "Service",
         "defaultImage": "Default image",
-        "defaultReplicas": "Default replicas",
-        "defaultPort": "Default port",
+        "runtime": "Runtime status",
+        "defaults": "Replicas / port",
         "owner": "Owner",
         "updated": "Updated"
-      },
-      "validation": {
-        "name": "Service name must contain at least two characters.",
-        "image": "Default image cannot contain whitespace.",
-        "replicas": "Default replicas must be between 1 and 20.",
-        "port": "Default port must be between 1 and 65535."
       }
     },
     "table": {
@@ -434,6 +426,9 @@
       "emptyNoResultsDescription": "Clear the search to see all deployments.",
       "noService": "No linked service",
       "notPublished": "Not published through GitOps",
+      "desiredStateLabel": "Desired state: {{state}}",
+      "runtimeReplicas": "Replicas {{ready}}/{{desired}} ready",
+      "runtimePods": "Pods {{ready}}/{{total}} ready",
       "fields": {
         "service": "Service definition",
         "appName": "Deployment",
@@ -443,7 +438,7 @@
         "containerPort": "Container port",
         "servicePort": "Service port",
         "serviceType": "Service type",
-        "desiredState": "Desired state",
+        "status": "Status",
         "runtimeDefaults": "Replicas / ports",
         "gitops": "GitOps metadata",
         "updated": "Updated"

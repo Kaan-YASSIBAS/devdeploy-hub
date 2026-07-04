@@ -10,8 +10,11 @@ from app.services.gitops.status_reader import (
     GitOpsStatusRequest,
     GitOpsStatusSnapshot,
     RootApplicationSnapshot,
+    ServicePortSnapshot,
     WorkloadSnapshot,
 )
+from app.services.gitops.models import validate_app_name
+from app.services.gitops.status_reader import KUBERNETES_NAME_PATTERN
 
 
 ARGOCD_APPLICATION_GROUP = "argoproj.io"
@@ -80,6 +83,24 @@ class KubernetesGitOpsStatusReader:
             workload_core_api=client.CoreV1Api(workload_client),
         )
 
+    @classmethod
+    def from_workload_server_config(
+        cls,
+        *,
+        workload_kubeconfig: str | None,
+        workload_kubeconfig_context: str | None,
+    ) -> "KubernetesGitOpsStatusReader":
+        workload_client = cls._build_api_client(
+            kubeconfig_path=workload_kubeconfig,
+            kubeconfig_context=workload_kubeconfig_context,
+            allow_in_cluster=False,
+        )
+        return cls(
+            management_custom_api=None,
+            workload_apps_api=client.AppsV1Api(workload_client),
+            workload_core_api=client.CoreV1Api(workload_client),
+        )
+
     def read(self, request: GitOpsStatusRequest) -> GitOpsStatusSnapshot:
         root_application = self._read_root_application(request)
         if not root_application.exists:
@@ -88,20 +109,37 @@ class KubernetesGitOpsStatusReader:
                 workload=WorkloadSnapshot(),
             )
 
-        selector = self._label_selector(request.app_name)
+        workload = self.read_workload(request.app_name, request.namespace)
+        return GitOpsStatusSnapshot(
+            root_application=root_application,
+            workload=workload,
+        )
+
+    def read_workload(self, app_name: str, namespace: str) -> WorkloadSnapshot:
+        try:
+            validate_app_name(app_name)
+        except ValueError:
+            raise GitOpsStatusError("invalid_app_name", "The app name is invalid.") from None
+        if not isinstance(namespace, str) or len(namespace) > 63 or not KUBERNETES_NAME_PATTERN.fullmatch(namespace):
+            raise GitOpsStatusError(
+                "status_configuration_invalid",
+                "The server-side status reader configuration is invalid.",
+            )
+
+        selector = self._label_selector(app_name)
         try:
             deployments = self.workload_apps_api.list_namespaced_deployment(
-                namespace=request.namespace,
+                namespace=namespace,
                 label_selector=selector,
                 _request_timeout=self.request_timeout,
             ).items or []
             services = self.workload_core_api.list_namespaced_service(
-                namespace=request.namespace,
+                namespace=namespace,
                 label_selector=selector,
                 _request_timeout=self.request_timeout,
             ).items or []
             pods = self.workload_core_api.list_namespaced_pod(
-                namespace=request.namespace,
+                namespace=namespace,
                 label_selector=selector,
                 _request_timeout=self.request_timeout,
             ).items or []
@@ -113,12 +151,9 @@ class KubernetesGitOpsStatusReader:
                 "Deployment status is temporarily unavailable.",
             ) from None
 
-        deployment = self._named_resource(deployments, request.app_name)
-        service = self._named_resource(services, request.app_name)
-        return GitOpsStatusSnapshot(
-            root_application=root_application,
-            workload=self._workload_snapshot(deployment, service, pods),
-        )
+        deployment = self._named_resource(deployments, app_name)
+        service = self._named_resource(services, app_name)
+        return self._workload_snapshot(deployment, service, pods)
 
     def _read_root_application(self, request: GitOpsStatusRequest) -> RootApplicationSnapshot:
         try:
@@ -191,6 +226,12 @@ class KubernetesGitOpsStatusReader:
             )
 
         service_port_ready = KubernetesGitOpsStatusReader._service_ready(service)
+        service_spec = getattr(service, "spec", None)
+        service_type = KubernetesGitOpsStatusReader._string_or_none(getattr(service_spec, "type", None))
+        service_cluster_ip = KubernetesGitOpsStatusReader._string_or_none(
+            getattr(service_spec, "cluster_ip", None)
+        )
+        service_ports = KubernetesGitOpsStatusReader._service_ports(service_spec)
         pod_count = len(pods)
         running_pod_count = 0
         ready_pod_count = 0
@@ -236,7 +277,32 @@ class KubernetesGitOpsStatusReader:
             pod_phases=tuple(sorted(pod_phases)),
             failure_detected=deployment_failure or pod_failure,
             pod_crashloop_detected=crashloop,
+            service_type=service_type,
+            service_cluster_ip=service_cluster_ip,
+            service_ports=service_ports,
         )
+
+    @staticmethod
+    def _service_ports(service_spec: Any) -> tuple[ServicePortSnapshot, ...]:
+        ports: list[ServicePortSnapshot] = []
+        for port in getattr(service_spec, "ports", None) or []:
+            port_number = getattr(port, "port", None)
+            if not KubernetesGitOpsStatusReader._valid_port(port_number):
+                continue
+            target_port = getattr(port, "target_port", None)
+            if not isinstance(target_port, (int, str)) or isinstance(target_port, bool):
+                target_port = None
+            ports.append(
+                ServicePortSnapshot(
+                    name=KubernetesGitOpsStatusReader._string_or_none(getattr(port, "name", None)),
+                    port=port_number,
+                    target_port=target_port,
+                    protocol=KubernetesGitOpsStatusReader._string_or_none(
+                        getattr(port, "protocol", None)
+                    ),
+                )
+            )
+        return tuple(ports)
 
     @staticmethod
     def _deployment_failed(conditions: list[Any]) -> bool:

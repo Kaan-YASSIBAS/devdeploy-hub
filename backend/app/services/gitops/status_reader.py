@@ -68,6 +68,14 @@ class RootApplicationSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class ServicePortSnapshot:
+    name: str | None
+    port: int
+    target_port: int | str | None
+    protocol: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class WorkloadSnapshot:
     deployment_exists: bool = False
     service_exists: bool = False
@@ -86,6 +94,9 @@ class WorkloadSnapshot:
     pod_phases: tuple[str, ...] = ()
     failure_detected: bool = False
     pod_crashloop_detected: bool = False
+    service_type: str | None = None
+    service_cluster_ip: str | None = None
+    service_ports: tuple[ServicePortSnapshot, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

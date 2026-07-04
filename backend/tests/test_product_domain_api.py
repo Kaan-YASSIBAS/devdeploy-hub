@@ -8,9 +8,25 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.v1.endpoints import deployment_records, services
+from app.api.v1.runtime_status import get_product_runtime_status_service
 from app.core.deps import get_current_user, get_db
 from app.db.database import Base
 from app.models.user import User
+from app.services.gitops.status_reader import ServicePortSnapshot, WorkloadSnapshot
+from app.services.product_runtime_status import ProductRuntimeStatusService
+
+
+class FakeWorkloadRuntimeReader:
+    def __init__(self):
+        self.snapshots = {}
+        self.error: Exception | None = None
+        self.calls = []
+
+    def read_workload(self, app_name: str, namespace: str) -> WorkloadSnapshot:
+        self.calls.append((app_name, namespace))
+        if self.error is not None:
+            raise self.error
+        return self.snapshots.get((namespace, app_name), WorkloadSnapshot())
 
 
 class ProductDomainApiTestCase(unittest.TestCase):
@@ -42,6 +58,7 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.db.refresh(self.user_a)
         self.db.refresh(self.user_b)
         self.current_user = self.user_a
+        self.runtime_reader = FakeWorkloadRuntimeReader()
 
         self.app = FastAPI()
         self.app.include_router(services.router, prefix="/api/v1")
@@ -52,6 +69,10 @@ class ProductDomainApiTestCase(unittest.TestCase):
 
         self.app.dependency_overrides[get_db] = override_get_db
         self.app.dependency_overrides[get_current_user] = lambda: self.current_user
+        self.app.dependency_overrides[get_product_runtime_status_service] = lambda: ProductRuntimeStatusService(
+            reader=self.runtime_reader,
+            workload_namespace="devdeploy-apps",
+        )
         self.client = TestClient(self.app, raise_server_exceptions=False)
 
     def tearDown(self) -> None:
@@ -201,6 +222,95 @@ class ProductDomainApiTestCase(unittest.TestCase):
 
         self.assertEqual(self.client.get("/api/v1/services").status_code, 401)
         self.assertEqual(self.client.get("/api/v1/deployment-records").status_code, 401)
+
+    def test_deployment_record_list_and_get_include_running_runtime_status(self) -> None:
+        service = self.create_service("payments-api")
+        deployment = self.create_deployment(service["id"])
+        self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = WorkloadSnapshot(
+            deployment_exists=True,
+            service_exists=True,
+            desired_replicas=2,
+            ready_replicas=2,
+            available_replicas=2,
+            updated_replicas=2,
+            expected_service_port_exists=True,
+            pod_count=2,
+            running_pod_count=2,
+            ready_pod_count=2,
+            service_type="ClusterIP",
+            service_cluster_ip="10.96.0.10",
+            service_ports=(ServicePortSnapshot("http", 80, "http", "TCP"),),
+        )
+
+        listed = self.client.get("/api/v1/deployment-records")
+        fetched = self.client.get(f"/api/v1/deployment-records/{deployment['id']}")
+
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(fetched.status_code, 200)
+        for runtime in (listed.json()[0]["runtime_status"], fetched.json()["runtime_status"]):
+            self.assertEqual(runtime["display_status"], "running")
+            self.assertTrue(runtime["deployment_found"])
+            self.assertEqual(runtime["ready_replicas"], 2)
+            self.assertEqual(runtime["available_replicas"], 2)
+            self.assertEqual(runtime["pod_ready_count"], 2)
+            self.assertEqual(runtime["service_cluster_ip"], "10.96.0.10")
+
+    def test_product_lists_include_safe_not_found_runtime_status(self) -> None:
+        service = self.create_service("payments-api")
+        self.create_deployment(service["id"])
+
+        deployment_runtime = self.client.get("/api/v1/deployment-records").json()[0]["runtime_status"]
+        service_runtime = self.client.get("/api/v1/services").json()[0]["runtime_status"]
+
+        self.assertEqual(deployment_runtime["display_status"], "not_found")
+        self.assertFalse(deployment_runtime["deployment_found"])
+        self.assertEqual(service_runtime["display_status"], "not_found")
+        self.assertFalse(service_runtime["service_found"])
+
+    def test_product_lists_handle_runtime_reader_failure_without_500(self) -> None:
+        service = self.create_service("payments-api")
+        self.create_deployment(service["id"])
+        self.runtime_reader.error = RuntimeError("raw kubeconfig and credential detail")
+
+        deployments_response = self.client.get("/api/v1/deployment-records")
+        services_response = self.client.get("/api/v1/services")
+
+        self.assertEqual(deployments_response.status_code, 200)
+        self.assertEqual(services_response.status_code, 200)
+        deployment_runtime = deployments_response.json()[0]["runtime_status"]
+        service_runtime = services_response.json()[0]["runtime_status"]
+        self.assertEqual(deployment_runtime["display_status"], "unknown")
+        self.assertEqual(service_runtime["display_status"], "unknown")
+        self.assertNotIn("kubeconfig", str(deployment_runtime).lower())
+        self.assertNotIn("credential", str(service_runtime).lower())
+
+    def test_service_list_includes_ready_runtime_details(self) -> None:
+        self.create_service("payments-api")
+        self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = WorkloadSnapshot(
+            deployment_exists=True,
+            service_exists=True,
+            desired_replicas=1,
+            ready_replicas=1,
+            available_replicas=1,
+            pod_count=1,
+            ready_pod_count=1,
+            expected_service_port_exists=True,
+            service_type="ClusterIP",
+            service_cluster_ip="10.96.0.20",
+            service_ports=(ServicePortSnapshot("http", 80, "http", "TCP"),),
+        )
+
+        response = self.client.get("/api/v1/services")
+
+        self.assertEqual(response.status_code, 200)
+        runtime = response.json()[0]["runtime_status"]
+        self.assertEqual(runtime["display_status"], "ready")
+        self.assertEqual(runtime["namespace"], "devdeploy-apps")
+        self.assertEqual(runtime["service_type"], "ClusterIP")
+        self.assertEqual(runtime["cluster_ip"], "10.96.0.20")
+        self.assertEqual(runtime["ports"][0]["port"], 80)
+        self.assertTrue(runtime["related_deployment_found"])
+        self.assertEqual(runtime["related_deployment_status"], "running")
 
 
 if __name__ == "__main__":

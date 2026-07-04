@@ -154,6 +154,10 @@ class KubernetesGitOpsStatusReaderTestCase(unittest.TestCase):
         self.assertEqual(result.workload.observed_generation, 3)
         self.assertTrue(result.workload.service_exists)
         self.assertTrue(result.workload.expected_service_port_exists)
+        self.assertEqual(result.workload.service_type, "ClusterIP")
+        self.assertEqual(result.workload.service_cluster_ip, "10.96.0.10")
+        self.assertEqual(result.workload.service_ports[0].port, 80)
+        self.assertEqual(result.workload.service_ports[0].target_port, "http")
         self.assertEqual(result.workload.pod_count, 1)
         self.assertEqual(result.workload.running_pod_count, 1)
         self.assertEqual(result.workload.ready_pod_count, 1)
@@ -228,6 +232,16 @@ class KubernetesGitOpsStatusReaderTestCase(unittest.TestCase):
         self.assertEqual(self.apps_api.calls, [])
         self.assertEqual(self.core_api.service_calls, [])
         self.assertEqual(self.core_api.pod_calls, [])
+
+    def test_workload_only_read_does_not_require_root_application(self) -> None:
+        self.custom_api.error = ApiException(status=404, reason="not found")
+
+        result = self.reader.read_workload("payment-api", "devdeploy-apps")
+
+        self.assertTrue(result.deployment_exists)
+        self.assertTrue(result.service_exists)
+        self.assertEqual(self.custom_api.calls, [])
+        self.assertEqual(len(self.apps_api.calls), 1)
 
     def test_forbidden_api_error_maps_to_permission_denied(self) -> None:
         self.custom_api.error = ApiException(status=403, reason="raw forbidden detail")
@@ -357,6 +371,32 @@ class KubernetesGitOpsStatusReaderTestCase(unittest.TestCase):
 
         self.assertNotIn("context", load_kube_config.call_args.kwargs)
         api_client.assert_called_once()
+
+    @patch("app.services.gitops.kubernetes_status_reader.client.CoreV1Api")
+    @patch("app.services.gitops.kubernetes_status_reader.client.AppsV1Api")
+    @patch("app.services.gitops.kubernetes_status_reader.client.ApiClient")
+    @patch("app.services.gitops.kubernetes_status_reader.config.load_kube_config")
+    def test_workload_only_reader_uses_server_controlled_context(
+        self,
+        load_kube_config,
+        api_client,
+        apps_api,
+        core_api,
+    ) -> None:
+        api_client.return_value = "workload-client"
+
+        reader = KubernetesGitOpsStatusReader.from_workload_server_config(
+            workload_kubeconfig="shared-kubeconfig.yaml",
+            workload_kubeconfig_context="kind-devdeploy-workload",
+        )
+
+        self.assertEqual(
+            load_kube_config.call_args.kwargs["context"],
+            "kind-devdeploy-workload",
+        )
+        apps_api.assert_called_once_with("workload-client")
+        core_api.assert_called_once_with("workload-client")
+        self.assertIsNone(reader.management_custom_api)
 
 
 class GitOpsStatusServiceFactoryTestCase(unittest.TestCase):

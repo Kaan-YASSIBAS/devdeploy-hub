@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.schemas.runtime_status import DeploymentRuntimeStatusRead
+
 
 APP_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 KUBERNETES_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
@@ -151,5 +153,6 @@ class DeploymentRecordRead(BaseModel):
     status_summary: str | None = None
     created_at: datetime
     updated_at: datetime
+    runtime_status: DeploymentRuntimeStatusRead | None = None
 
     model_config = ConfigDict(from_attributes=True)

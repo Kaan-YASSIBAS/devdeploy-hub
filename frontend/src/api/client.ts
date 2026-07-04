@@ -32,7 +32,6 @@ import type {
   ProfileSettings,
   ProfileSettingsUpdateInput,
   ServiceDefinition,
-  ServiceDefinitionCreateInput,
   ServiceDefinitionUpdateInput,
   SetupPreflightResponse,
   User,
@@ -192,10 +191,6 @@ export const serviceDefinitionsApi = {
   },
   async get(id: number) {
     const { data } = await apiClient.get<ServiceDefinition>(`/services/${id}`);
-    return data;
-  },
-  async create(input: ServiceDefinitionCreateInput) {
-    const { data } = await apiClient.post<ServiceDefinition>("/services", input);
     return data;
   },
   async update(id: number, input: ServiceDefinitionUpdateInput) {

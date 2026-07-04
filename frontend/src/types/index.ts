@@ -46,6 +46,45 @@ export type ApplicationCreateInput = {
 
 export type ApplicationUpdateInput = Partial<ApplicationCreateInput>;
 
+export type RuntimeServicePort = {
+  name: string | null;
+  port: number;
+  target_port: number | string | null;
+  protocol: string | null;
+};
+
+export type ServiceRuntimeStatus = {
+  source: "kubernetes";
+  display_status: "ready" | "not_found" | "unknown";
+  service_found: boolean;
+  namespace: string;
+  service_type: string | null;
+  cluster_ip: string | null;
+  ports: RuntimeServicePort[] | null;
+  related_deployment_found: boolean | null;
+  related_deployment_status: string | null;
+  observed_at: string | null;
+  message: string | null;
+};
+
+export type DeploymentRuntimeStatus = {
+  source: "kubernetes";
+  display_status: "running" | "progressing" | "not_found" | "unknown";
+  deployment_found: boolean;
+  service_found: boolean;
+  desired_replicas: number | null;
+  ready_replicas: number | null;
+  available_replicas: number | null;
+  updated_replicas: number | null;
+  pod_ready_count: number | null;
+  pod_total_count: number | null;
+  service_type: string | null;
+  service_cluster_ip: string | null;
+  service_ports: RuntimeServicePort[] | null;
+  observed_at: string | null;
+  message: string | null;
+};
+
 export type ServiceDefinition = {
   id: number;
   owner_id: number;
@@ -56,17 +95,16 @@ export type ServiceDefinition = {
   default_port: number | null;
   created_at: string;
   updated_at: string;
+  runtime_status: ServiceRuntimeStatus | null;
 };
 
-export type ServiceDefinitionCreateInput = {
+export type ServiceDefinitionUpdateInput = Partial<{
   name: string;
   description: string | null;
   default_image: string | null;
   default_replicas: number;
   default_port: number | null;
-};
-
-export type ServiceDefinitionUpdateInput = Partial<ServiceDefinitionCreateInput>;
+}>;
 
 export type DeploymentRecordDesiredState = "draft" | "pending";
 
@@ -87,6 +125,7 @@ export type DeploymentRecord = {
   status_summary: string | null;
   created_at: string;
   updated_at: string;
+  runtime_status: DeploymentRuntimeStatus | null;
 };
 
 export type DeploymentRecordUpdateInput = Partial<{
