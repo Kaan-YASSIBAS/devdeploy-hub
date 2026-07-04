@@ -1,6 +1,7 @@
 import type { SetupStepKey, SetupStepStatus, SetupWizardState } from "@/features/setup/types";
 
 const STORAGE_PREFIX = "devdeploy-setup";
+export const SETUP_STATE_VERSION = 2 as const;
 
 export const SETUP_STEP_KEYS: SetupStepKey[] = [
   "welcome",
@@ -32,6 +33,7 @@ function defaultStatuses(): Record<SetupStepKey, SetupStepStatus> {
 
 export function createDefaultSetupState(): SetupWizardState {
   return {
+    version: SETUP_STATE_VERSION,
     completed: false,
     currentStep: 0,
     environmentType: null,
@@ -54,6 +56,7 @@ export function loadSetupState(userId: number): SetupWizardState {
     const parsed = JSON.parse(raw) as Partial<SetupWizardState>;
     const fallback = createDefaultSetupState();
     return {
+      version: SETUP_STATE_VERSION,
       completed: Boolean(parsed.completed),
       currentStep:
         typeof parsed.currentStep === "number" && Number.isFinite(parsed.currentStep)

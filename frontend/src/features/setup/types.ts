@@ -13,6 +13,7 @@ export type SetupStepStatus = "not_configured" | "pending" | "ready" | "simulate
 export type SetupEnvironmentType = "local_kind" | "local_minikube" | "docker_only" | null;
 
 export type SetupWizardState = {
+  version: 2;
   completed: boolean;
   currentStep: number;
   environmentType: SetupEnvironmentType;

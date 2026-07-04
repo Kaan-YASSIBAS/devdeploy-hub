@@ -12,8 +12,8 @@ from app.schemas.setup import PreflightCheckStatus, SetupPreflightCheck, SetupPr
 
 
 LOCALHOST = "127.0.0.1"
-DEFAULT_KIND_CLUSTER_NAME = "devdeploy"
-DEFAULT_KUBECTL_CONTEXT = "kind-devdeploy"
+REQUIRED_KIND_CLUSTERS = ("devdeploy-mgmt", "devdeploy-workload")
+REQUIRED_KUBECTL_CONTEXTS = ("kind-devdeploy-mgmt", "kind-devdeploy-workload")
 REQUIRED_PORTS = {
     "port_api_server": ("API server port 58080", 58080),
     "port_http_ingress": ("HTTP ingress port 8080", 8080),
@@ -34,8 +34,9 @@ HOST_LOCAL_CHECKS = [
     ("port_api_server", "API server port 58080"),
     ("port_http_ingress", "HTTP ingress port 8080"),
     ("port_https_ingress", "HTTPS ingress port 8443"),
+    ("required_kubectl_contexts", "Required kubectl contexts"),
     ("kubectl_context", "Current kubectl context"),
-    ("existing_devdeploy_cluster", "Existing devdeploy cluster"),
+    ("existing_devdeploy_clusters", "DevDeploy kind clusters"),
 ]
 
 
@@ -57,7 +58,17 @@ class PreflightService:
 
         if runtime_mode == "kubernetes":
             checks = cls._kubernetes_runtime_limited_checks()
+            detected_contexts: list[str] = []
+            detected_clusters: list[str] = []
+            contexts_ready = False
+            clusters_ready = False
         else:
+            contexts_result = cls._run_command(["kubectl", "config", "get-contexts", "-o", "name"])
+            clusters_result = cls._run_command(["kind", "get", "clusters"])
+            detected_contexts = cls._result_lines(contexts_result)
+            detected_clusters = cls._result_lines(clusters_result)
+            contexts_ready = cls._contains_all(detected_contexts, REQUIRED_KUBECTL_CONTEXTS)
+            clusters_ready = cls._contains_all(detected_clusters, REQUIRED_KIND_CLUSTERS)
             checks = [
                 cls._docker_cli_check(),
                 cls._docker_daemon_check(),
@@ -65,8 +76,9 @@ class PreflightService:
                 cls._kubectl_cli_check(),
                 cls._git_cli_check(),
                 *cls._port_checks(),
+                cls._required_kubectl_contexts_check(contexts_result, detected_contexts),
                 cls._kubectl_context_check(),
-                cls._existing_kind_cluster_check(),
+                cls._existing_kind_clusters_check(clusters_result, detected_clusters),
             ]
 
         if any(check.status == "failed" for check in checks):
@@ -80,6 +92,13 @@ class PreflightService:
             runtime_mode=runtime_mode,
             runtime_message=runtime_message,
             overall_status=overall_status,
+            required_contexts=list(REQUIRED_KUBECTL_CONTEXTS),
+            detected_contexts=detected_contexts,
+            required_clusters=list(REQUIRED_KIND_CLUSTERS),
+            detected_clusters=detected_clusters,
+            contexts_ready=contexts_ready,
+            clusters_ready=clusters_ready,
+            platform_ready=contexts_ready and clusters_ready,
             checks=checks,
         )
 
@@ -154,6 +173,17 @@ class PreflightService:
         lines = [line[:240] for line in output.splitlines()[:10]]
         return "\n".join(lines)
 
+    @staticmethod
+    def _result_lines(result: CommandResult) -> list[str]:
+        if result.returncode != 0 or not result.output:
+            return []
+        return [line.strip() for line in result.output.splitlines() if line.strip()]
+
+    @staticmethod
+    def _contains_all(detected: list[str], required: tuple[str, ...]) -> bool:
+        detected_set = set(detected)
+        return all(item in detected_set for item in required)
+
     @classmethod
     def _docker_cli_check(cls) -> SetupPreflightCheck:
         result = cls._run_command(["docker", "--version"])
@@ -216,10 +246,48 @@ class PreflightService:
             return cls._check(
                 check_id,
                 label,
-                "failed",
-                f"Port {port} is already in use on {LOCALHOST}.",
+                "warning",
+                f"Port {port} is in use on {LOCALHOST}; the local DevDeploy platform may already be running.",
             )
         return cls._check(check_id, label, "ok", f"Port {port} is available on {LOCALHOST}.")
+
+    @classmethod
+    def _required_kubectl_contexts_check(
+        cls,
+        result: CommandResult,
+        contexts: list[str],
+    ) -> SetupPreflightCheck:
+        if not result.available:
+            return cls._check(
+                "required_kubectl_contexts",
+                "Required kubectl contexts",
+                "warning",
+                "kubectl CLI was not found, so required DevDeploy contexts could not be verified.",
+            )
+        if result.returncode != 0:
+            return cls._check(
+                "required_kubectl_contexts",
+                "Required kubectl contexts",
+                "warning",
+                "Required DevDeploy kubectl contexts could not be listed.",
+            )
+
+        missing = [context for context in REQUIRED_KUBECTL_CONTEXTS if context not in set(contexts)]
+        if missing:
+            return cls._check(
+                "required_kubectl_contexts",
+                "Required kubectl contexts",
+                "warning",
+                "One or more required DevDeploy kubectl contexts are missing.",
+                f"Missing: {', '.join(missing)}",
+            )
+        return cls._check(
+            "required_kubectl_contexts",
+            "Required kubectl contexts",
+            "ok",
+            "Management and workload kubectl contexts are available.",
+            ", ".join(REQUIRED_KUBECTL_CONTEXTS),
+        )
 
     @classmethod
     def _kubectl_context_check(cls) -> SetupPreflightCheck:
@@ -232,46 +300,54 @@ class PreflightService:
                 "Current kubectl context",
                 "warning",
                 "No current kubectl context is available.",
-                result.error,
             )
 
         context = result.output or ""
-        status: PreflightCheckStatus = "ok" if context == DEFAULT_KUBECTL_CONTEXT else "warning"
+        status: PreflightCheckStatus = "ok" if context in REQUIRED_KUBECTL_CONTEXTS else "warning"
         message = (
-            "Current kubectl context targets the default DevDeploy kind cluster."
+            "Current kubectl context targets a DevDeploy cluster."
             if status == "ok"
-            else "Current kubectl context is not kind-devdeploy."
+            else "Current kubectl context is informational and does not target a DevDeploy cluster."
         )
         return cls._check("kubectl_context", "Current kubectl context", status, message, context)
 
     @classmethod
-    def _existing_kind_cluster_check(cls) -> SetupPreflightCheck:
-        result = cls._run_command(["kind", "get", "clusters"])
+    def _existing_kind_clusters_check(
+        cls,
+        result: CommandResult,
+        clusters: list[str],
+    ) -> SetupPreflightCheck:
         if not result.available:
-            return cls._check("existing_devdeploy_cluster", "Existing devdeploy cluster", "warning", "kind CLI was not found.")
+            return cls._check(
+                "existing_devdeploy_clusters",
+                "DevDeploy kind clusters",
+                "warning",
+                "kind CLI was not found, so DevDeploy clusters could not be verified.",
+            )
         if result.returncode != 0:
             return cls._check(
-                "existing_devdeploy_cluster",
-                "Existing devdeploy cluster",
+                "existing_devdeploy_clusters",
+                "DevDeploy kind clusters",
                 "warning",
                 "Existing kind clusters could not be listed.",
                 result.error,
             )
 
-        clusters = {line.strip() for line in (result.output or "").splitlines() if line.strip()}
-        if DEFAULT_KIND_CLUSTER_NAME in clusters:
+        missing = [cluster for cluster in REQUIRED_KIND_CLUSTERS if cluster not in set(clusters)]
+        if missing:
             return cls._check(
-                "existing_devdeploy_cluster",
-                "Existing devdeploy cluster",
+                "existing_devdeploy_clusters",
+                "DevDeploy kind clusters",
                 "warning",
-                "A kind cluster named devdeploy already exists.",
-                DEFAULT_KIND_CLUSTER_NAME,
+                "One or more required DevDeploy kind clusters are missing.",
+                f"Missing: {', '.join(missing)}",
             )
         return cls._check(
-            "existing_devdeploy_cluster",
-            "Existing devdeploy cluster",
+            "existing_devdeploy_clusters",
+            "DevDeploy kind clusters",
             "ok",
-            "No kind cluster named devdeploy was detected.",
+            "Management and workload kind clusters are available.",
+            ", ".join(REQUIRED_KIND_CLUSTERS),
         )
 
     @staticmethod

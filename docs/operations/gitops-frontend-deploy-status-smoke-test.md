@@ -66,7 +66,7 @@ No mutation command was used for verification.
 
 The smoke test used the local frontend and local backend. The in-cluster backend does not yet have the server-side GitOps repository workspace and live status-reader configuration mounted.
 
-The Setup Wizard gate was bypassed only through local browser onboarding state for this frontend smoke test. That bypass did not change backend state, GitOps resources, Argo CD, or either Kubernetes cluster.
+The Setup Wizard gate was bypassed only through local browser onboarding state for this frontend smoke test. That bypass did not change backend state, GitOps resources, Argo CD, or either Kubernetes cluster. Phase 2J.7 subsequently aligned the read-only gate with the `devdeploy-mgmt` and `devdeploy-workload` contexts, so this workaround is no longer needed when the host preflight can verify both clusters or the user-scoped setup state is complete.
 
 No token, password, kubeconfig content, local browser storage content, or screenshot is included in this record.
 

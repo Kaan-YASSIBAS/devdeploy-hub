@@ -1,4 +1,6 @@
+import { useQuery } from "@tanstack/react-query";
 import { Navigate, Outlet, useLocation } from "react-router-dom";
+import { setupApi } from "@/api/client";
 import { RouteLoader } from "@/app/RouteLoader";
 import { useAuth } from "@/features/auth/useAuth";
 import { isSetupCompleted } from "@/features/setup/setup-state";
@@ -6,6 +8,14 @@ import { isSetupCompleted } from "@/features/setup/setup-state";
 export function ProtectedRoute() {
   const location = useLocation();
   const { isAuthenticated, isLoading, user } = useAuth();
+  const setupCompleted = user ? isSetupCompleted(user.id) : false;
+  const platformReadiness = useQuery({
+    queryKey: ["setup", "preflight", "route-gate"],
+    queryFn: setupApi.preflight,
+    enabled: !isLoading && isAuthenticated && Boolean(user) && !setupCompleted,
+    retry: false,
+    staleTime: 30_000
+  });
 
   if (isLoading) {
     return <RouteLoader />;
@@ -19,10 +29,15 @@ export function ProtectedRoute() {
     return <RouteLoader />;
   }
 
-  const setupCompleted = isSetupCompleted(user.id);
   const onSetupRoute = location.pathname === "/setup";
 
-  if (!setupCompleted && !onSetupRoute) {
+  if (!setupCompleted && platformReadiness.isPending) {
+    return <RouteLoader />;
+  }
+
+  const setupGateSatisfied = setupCompleted || platformReadiness.data?.platform_ready === true;
+
+  if (!setupGateSatisfied && !onSetupRoute) {
     return <Navigate replace state={{ from: location }} to="/setup" />;
   }
 

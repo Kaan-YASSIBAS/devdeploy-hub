@@ -786,6 +786,14 @@
           "description": "The backend runtime could not be identified. Some local environment checks may be limited."
         }
       },
+      "platform": {
+        "title": "Multi-cluster platform readiness",
+        "ready": "Platform detected",
+        "actionRequired": "Review required",
+        "description": "DevDeploy uses separate management and workload clusters. The current kubectl context is informational and does not block access when both required contexts and clusters are available.",
+        "requiredContexts": "Required contexts: {{contexts}}",
+        "requiredClusters": "Required clusters: {{clusters}}"
+      },
       "checks": {
         "docker_cli": {
           "label": "Docker CLI",
@@ -815,27 +823,32 @@
         "port_api_server": {
           "label": "API server port",
           "ok": "Port 58080 is available.",
-          "failed": "Port 58080 is already in use."
+          "warning": "Port 58080 is in use. The local platform may already be running."
         },
         "port_http_ingress": {
           "label": "HTTP ingress port",
           "ok": "Port 8080 is available.",
-          "failed": "Port 8080 is already in use."
+          "warning": "Port 8080 is in use. The local platform may already be running."
         },
         "port_https_ingress": {
           "label": "HTTPS ingress port",
           "ok": "Port 8443 is available.",
-          "failed": "Port 8443 is already in use."
+          "warning": "Port 8443 is in use. The local platform may already be running."
+        },
+        "required_kubectl_contexts": {
+          "label": "Required kubectl contexts",
+          "ok": "Management and workload contexts are available.",
+          "warning": "One or more required DevDeploy contexts could not be verified."
         },
         "kubectl_context": {
           "label": "Current kubectl context",
-          "ok": "kubectl is already using kind-devdeploy.",
-          "warning": "Current kubectl context is not kind-devdeploy."
+          "ok": "kubectl is using a DevDeploy management or workload context.",
+          "warning": "The current context is informational; DevDeploy checks both required contexts separately."
         },
-        "existing_devdeploy_cluster": {
-          "label": "Existing devdeploy cluster",
-          "ok": "No existing devdeploy kind cluster was detected.",
-          "warning": "A kind cluster named devdeploy already exists."
+        "existing_devdeploy_clusters": {
+          "label": "DevDeploy kind clusters",
+          "ok": "Management and workload clusters are available.",
+          "warning": "One or more required DevDeploy clusters could not be verified."
         }
       }
     },

@@ -786,6 +786,14 @@
           "description": "Backend çalışma modu belirlenemedi. Bazı local ortam kontrolleri sınırlı olabilir."
         }
       },
+      "platform": {
+        "title": "Multi-cluster platform hazırlığı",
+        "ready": "Platform algılandı",
+        "actionRequired": "Kontrol gerekli",
+        "description": "DevDeploy, yönetim ve workload için ayrı cluster'lar kullanır. Gerekli iki context ve cluster mevcutsa geçerli kubectl context yalnızca bilgi amaçlıdır ve erişimi engellemez.",
+        "requiredContexts": "Gerekli context'ler: {{contexts}}",
+        "requiredClusters": "Gerekli cluster'lar: {{clusters}}"
+      },
       "checks": {
         "docker_cli": {
           "label": "Docker CLI",
@@ -815,27 +823,32 @@
         "port_api_server": {
           "label": "API server portu",
           "ok": "58080 portu kullanılabilir.",
-          "failed": "58080 portu şu anda kullanımda."
+          "warning": "58080 portu kullanımda. Local platform zaten çalışıyor olabilir."
         },
         "port_http_ingress": {
           "label": "HTTP ingress portu",
           "ok": "8080 portu kullanılabilir.",
-          "failed": "8080 portu şu anda kullanımda."
+          "warning": "8080 portu kullanımda. Local platform zaten çalışıyor olabilir."
         },
         "port_https_ingress": {
           "label": "HTTPS ingress portu",
           "ok": "8443 portu kullanılabilir.",
-          "failed": "8443 portu şu anda kullanımda."
+          "warning": "8443 portu kullanımda. Local platform zaten çalışıyor olabilir."
+        },
+        "required_kubectl_contexts": {
+          "label": "Gerekli kubectl context'leri",
+          "ok": "Yönetim ve workload context'leri hazır.",
+          "warning": "Gerekli DevDeploy context'lerinden biri veya birkaçı doğrulanamadı."
         },
         "kubectl_context": {
           "label": "Mevcut kubectl context",
-          "ok": "kubectl zaten kind-devdeploy context’ini kullanıyor.",
-          "warning": "Mevcut kubectl context kind-devdeploy değil."
+          "ok": "kubectl, DevDeploy yönetim veya workload context'ini kullanıyor.",
+          "warning": "Mevcut context yalnızca bilgi amaçlıdır; DevDeploy gerekli iki context'i ayrı ayrı kontrol eder."
         },
-        "existing_devdeploy_cluster": {
-          "label": "Mevcut devdeploy cluster",
-          "ok": "devdeploy adında mevcut bir kind cluster bulunmadı.",
-          "warning": "devdeploy adında bir kind cluster zaten var."
+        "existing_devdeploy_clusters": {
+          "label": "DevDeploy kind cluster'ları",
+          "ok": "Yönetim ve workload cluster'ları hazır.",
+          "warning": "Gerekli DevDeploy cluster'larından biri veya birkaçı doğrulanamadı."
         }
       }
     },

@@ -20,4 +20,11 @@ class SetupPreflightResponse(BaseModel):
     runtime_mode: PreflightRuntimeMode
     runtime_message: str
     overall_status: PreflightOverallStatus
+    required_contexts: list[str]
+    detected_contexts: list[str]
+    required_clusters: list[str]
+    detected_clusters: list[str]
+    contexts_ready: bool
+    clusters_ready: bool
+    platform_ready: bool
     checks: list[SetupPreflightCheck]

@@ -318,6 +318,32 @@ export function SetupWizardPage() {
                 ) : null}
 
                 {preflightResult ? (
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm leading-6 text-slate-300">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-medium text-white">{t("setup.preflight.platform.title")}</p>
+                      <Badge variant={preflightResult.platform_ready ? "success" : "warning"}>
+                        {t(
+                          preflightResult.platform_ready
+                            ? "setup.preflight.platform.ready"
+                            : "setup.preflight.platform.actionRequired"
+                        )}
+                      </Badge>
+                    </div>
+                    <p className="mt-2">{t("setup.preflight.platform.description")}</p>
+                    <p className="mt-2 text-xs text-slate-500">
+                      {t("setup.preflight.platform.requiredContexts", {
+                        contexts: preflightResult.required_contexts.join(", ")
+                      })}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {t("setup.preflight.platform.requiredClusters", {
+                        clusters: preflightResult.required_clusters.join(", ")
+                      })}
+                    </p>
+                  </div>
+                ) : null}
+
+                {preflightResult ? (
                   <div className="space-y-3">
                     {preflightResult.checks.map((check) => (
                       <div key={check.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">

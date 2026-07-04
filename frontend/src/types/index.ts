@@ -505,5 +505,12 @@ export type SetupPreflightResponse = {
   runtime_mode: SetupPreflightRuntimeMode;
   runtime_message: string;
   overall_status: SetupPreflightOverallStatus;
+  required_contexts: string[];
+  detected_contexts: string[];
+  required_clusters: string[];
+  detected_clusters: string[];
+  contexts_ready: boolean;
+  clusters_ready: boolean;
+  platform_ready: boolean;
   checks: SetupPreflightCheck[];
 };
