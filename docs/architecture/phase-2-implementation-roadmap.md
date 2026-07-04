@@ -352,13 +352,14 @@ Completed baseline:
 - **Phase 2J.5h:** implement the authenticated `GET /api/v1/gitops/apps/{app_name}/status` endpoint, typed status snapshots, an injectable reader boundary, and a pure exact-SHA status evaluator. Fake-reader tests cover pending, synced, progressing, deployed, degraded, missing, and unavailable states; no live cluster reader or mutation is added.
 - **Phase 2J.5i:** add opt-in live read-only status integration through the Kubernetes Python client. The reader uses a management custom-object GET plus label-scoped namespaced Deployment, Service, and Pod LIST calls, keeps `unavailable` as the safe default mode, requires separate server-controlled workload access, and adds no cluster mutation or Secret reads.
 - **Phase 2J.5i.1:** add explicit server-controlled management and workload kubeconfig context selection so a shared local multi-cluster kubeconfig cannot route either status reader through its current context accidentally.
+- **Phase 2J.5j:** document the repeatable [live API deploy and status smoke test](../operations/gitops-api-deploy-status-smoke-test.md), covering GitOps submission, passive Argo CD reconciliation, live read-only status polling, Git verification, and optional read-only cluster checks. This manual procedure adds no frontend or mutation code.
 - V1 accepts a user-provided container image and does not require CI, an image build, or a registry push.
 - All V1 app manifests target the pre-created `devdeploy-apps` namespace.
 - App deletion remains unimplemented because the Root Application currently uses `prune=false`.
 
 Planned milestones:
 
-- **Phase 2J.5j (next):** run a controlled live API deploy-and-status smoke test after least-privilege management and workload reader access is configured and verified.
+- **Phase 2J.5k (next):** execute the controlled live API deploy-and-status smoke test and record the verified result without adding frontend or mutation behavior.
 - Define safe prune/delete behavior before claiming GitOps deletion is complete.
 - Design and validate workload ingress exposure separately before presenting a local app URL as reachable.
 

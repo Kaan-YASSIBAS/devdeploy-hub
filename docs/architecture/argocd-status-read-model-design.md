@@ -394,6 +394,6 @@ Phase 2J.5i implements a live Kubernetes Python client reader behind the server-
 
 For local kind multi-cluster use, a shared kubeconfig may contain both clusters. Server configuration should therefore set `DEVDEPLOY_MGMT_KUBECONFIG_CONTEXT=kind-devdeploy-mgmt` and `DEVDEPLOY_WORKLOAD_KUBECONFIG_CONTEXT=kind-devdeploy-workload`. Explicit context selection prevents the active kubeconfig context from directing either reader to the wrong cluster. API callers cannot provide or override these values.
 
-Phase 2J.5j should run a controlled live API deploy-and-status smoke test after the required least-privilege runtime access is configured and independently verified. Controlled Git ancestry support remains future work; Phase 2J.5i continues to use exact SHA matching.
+Phase 2J.5j documents the controlled [live API deploy and status smoke test](../operations/gitops-api-deploy-status-smoke-test.md) used after the required least-privilege runtime access is configured and independently verified. Executing and recording that smoke result remains Phase 2J.5k. Controlled Git ancestry support remains future work; Phase 2J.5i continues to use exact SHA matching.
 
 Frontend polling should begin only after the live reader smoke test and least-privilege access model are verified.
