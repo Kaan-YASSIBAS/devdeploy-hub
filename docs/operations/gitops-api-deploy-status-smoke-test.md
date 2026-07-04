@@ -16,6 +16,8 @@ The deploy response confirms Git publication only. The separate status endpoint 
 
 This procedure creates the known smoke workload `api-status-smoke-nginx`. Run it only in an explicitly approved local environment.
 
+API-generated Deployments now include default numeric non-root, RuntimeDefault seccomp, disabled privilege escalation, read-only root filesystem, and dropped-capability security contexts. Trivy KSV-0118 prompted the initial hardening, and KSV-0014 is addressed by `readOnlyRootFilesystem: true` plus writable `emptyDir` mounts for nginx cache, runtime, and temporary paths.
+
 ## Preconditions
 
 Before starting, confirm:

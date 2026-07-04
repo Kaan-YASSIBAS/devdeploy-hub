@@ -143,9 +143,30 @@ class GitOpsWriterTestCase(unittest.TestCase):
             deployment["spec"]["selector"]["matchLabels"],
             {"app.kubernetes.io/name": "orders-api"},
         )
+        pod_security_context = deployment["spec"]["template"]["spec"]["securityContext"]
+        self.assertTrue(pod_security_context["runAsNonRoot"])
+        self.assertEqual(pod_security_context["runAsUser"], 101)
+        self.assertEqual(pod_security_context["runAsGroup"], 101)
+        self.assertEqual(pod_security_context["fsGroup"], 101)
+        self.assertEqual(pod_security_context["seccompProfile"]["type"], "RuntimeDefault")
         container = deployment["spec"]["template"]["spec"]["containers"][0]
         self.assertEqual(container["image"], "registry.example.com/orders:v2")
         self.assertEqual(container["ports"][0]["containerPort"], 8080)
+        self.assertFalse(container["securityContext"]["allowPrivilegeEscalation"])
+        self.assertTrue(container["securityContext"]["readOnlyRootFilesystem"])
+        self.assertIn("ALL", container["securityContext"]["capabilities"]["drop"])
+        self.assertEqual(
+            {mount["name"]: mount["mountPath"] for mount in container["volumeMounts"]},
+            {
+                "nginx-cache": "/var/cache/nginx",
+                "nginx-run": "/var/run",
+                "tmp": "/tmp",
+            },
+        )
+        volumes = deployment["spec"]["template"]["spec"]["volumes"]
+        self.assertEqual([volume["name"] for volume in volumes], ["nginx-cache", "nginx-run", "tmp"])
+        self.assertTrue(all(volume["emptyDir"] == {} for volume in volumes))
+        self.assertTrue(all("hostPath" not in volume for volume in volumes))
         self.assertEqual(service["spec"]["type"], "ClusterIP")
         self.assertEqual(service["spec"]["ports"][0]["port"], 80)
         self.assertEqual(service["spec"]["ports"][0]["targetPort"], "http")

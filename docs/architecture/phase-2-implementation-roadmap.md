@@ -353,6 +353,8 @@ Completed baseline:
 - **Phase 2J.5i:** add opt-in live read-only status integration through the Kubernetes Python client. The reader uses a management custom-object GET plus label-scoped namespaced Deployment, Service, and Pod LIST calls, keeps `unavailable` as the safe default mode, requires separate server-controlled workload access, and adds no cluster mutation or Secret reads.
 - **Phase 2J.5i.1:** add explicit server-controlled management and workload kubeconfig context selection so a shared local multi-cluster kubeconfig cannot route either status reader through its current context accidentally.
 - **Phase 2J.5j:** document the repeatable [live API deploy and status smoke test](../operations/gitops-api-deploy-status-smoke-test.md), covering GitOps submission, passive Argo CD reconciliation, live read-only status polling, Git verification, and optional read-only cluster checks. This manual procedure adds no frontend or mutation code.
+- **Phase 2J.5j.1:** harden every API-generated workload Deployment with a numeric non-root Pod identity, RuntimeDefault seccomp, disabled privilege escalation, and dropped Linux capabilities after Trivy KSV-0118 identified the initial smoke manifest.
+- **Phase 2J.5j.2:** enable read-only root filesystems for API-generated workload containers and provide nginx-compatible writable runtime paths through `emptyDir` volumes, addressing Trivy KSV-0014 without granting host filesystem access.
 - V1 accepts a user-provided container image and does not require CI, an image build, or a registry push.
 - All V1 app manifests target the pre-created `devdeploy-apps` namespace.
 - App deletion remains unimplemented because the Root Application currently uses `prune=false`.

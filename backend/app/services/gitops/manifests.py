@@ -61,6 +61,15 @@ def generate_workload_manifests(request: WorkloadWriteRequest) -> GeneratedManif
                     "labels": workload_labels(request.app_name),
                 },
                 "spec": {
+                    "securityContext": {
+                        "runAsNonRoot": True,
+                        "runAsUser": 101,
+                        "runAsGroup": 101,
+                        "fsGroup": 101,
+                        "seccompProfile": {
+                            "type": "RuntimeDefault",
+                        },
+                    },
                     "containers": [
                         {
                             "name": request.app_name,
@@ -72,6 +81,41 @@ def generate_workload_manifests(request: WorkloadWriteRequest) -> GeneratedManif
                                     "protocol": "TCP",
                                 },
                             ],
+                            "securityContext": {
+                                "allowPrivilegeEscalation": False,
+                                "readOnlyRootFilesystem": True,
+                                "capabilities": {
+                                    "drop": ["ALL"],
+                                },
+                            },
+                            "volumeMounts": [
+                                {
+                                    "name": "nginx-cache",
+                                    "mountPath": "/var/cache/nginx",
+                                },
+                                {
+                                    "name": "nginx-run",
+                                    "mountPath": "/var/run",
+                                },
+                                {
+                                    "name": "tmp",
+                                    "mountPath": "/tmp",
+                                },
+                            ],
+                        },
+                    ],
+                    "volumes": [
+                        {
+                            "name": "nginx-cache",
+                            "emptyDir": {},
+                        },
+                        {
+                            "name": "nginx-run",
+                            "emptyDir": {},
+                        },
+                        {
+                            "name": "tmp",
+                            "emptyDir": {},
                         },
                     ],
                 },

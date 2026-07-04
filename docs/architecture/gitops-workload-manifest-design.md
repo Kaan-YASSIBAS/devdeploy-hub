@@ -127,6 +127,10 @@ A generated Deployment must include:
 - One initial application container.
 - The user-provided image reference.
 - The configured container port.
+- A numeric non-root Pod identity using UID/GID `101`.
+- RuntimeDefault seccomp at Pod level.
+- Disabled privilege escalation, a read-only root filesystem, and all Linux capabilities dropped at container level.
+- Writable `emptyDir` mounts for `/var/cache/nginx`, `/var/run`, and `/tmp`.
 
 Required labels are:
 
@@ -136,7 +140,7 @@ app.kubernetes.io/managed-by: devdeploy
 app.kubernetes.io/part-of: devdeploy-workloads
 ```
 
-Basic resource requests and limits, environment variables, health probes, multiple containers, and advanced Pod settings are future extensions. They are not mandatory in the first V1 manifest contract.
+Basic resource requests and limits, environment variables, health probes, and multiple containers are future extensions. The V1 writer uses conservative nginx-compatible writable runtime mounts while keeping the image root filesystem read-only. A later workload profile may make writable paths configurable for other image requirements.
 
 Example:
 
@@ -162,6 +166,13 @@ spec:
         app.kubernetes.io/managed-by: devdeploy
         app.kubernetes.io/part-of: devdeploy-workloads
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: nginx-demo
           image: nginx:latest
@@ -169,6 +180,26 @@ spec:
             - name: http
               containerPort: 80
               protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
 ```
 
 The example uses `nginx:latest` to demonstrate user-provided image input. Versioned or digest-pinned images are recommended for repeatable deployments.

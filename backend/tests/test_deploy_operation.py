@@ -137,7 +137,27 @@ class DeployWorkloadOperationTestCase(unittest.TestCase):
             (self.source_root / "apps" / "payment-api" / "deployment.yaml").read_text(encoding="utf-8")
         )
         self.assertEqual(deployment["spec"]["replicas"], 2)
-        self.assertEqual(deployment["spec"]["template"]["spec"]["containers"][0]["image"], self.request().image)
+        pod_spec = deployment["spec"]["template"]["spec"]
+        self.assertTrue(pod_spec["securityContext"]["runAsNonRoot"])
+        self.assertEqual(pod_spec["securityContext"]["runAsUser"], 101)
+        self.assertEqual(pod_spec["securityContext"]["runAsGroup"], 101)
+        self.assertEqual(pod_spec["securityContext"]["fsGroup"], 101)
+        self.assertEqual(pod_spec["securityContext"]["seccompProfile"]["type"], "RuntimeDefault")
+        container = pod_spec["containers"][0]
+        self.assertEqual(container["image"], self.request().image)
+        self.assertFalse(container["securityContext"]["allowPrivilegeEscalation"])
+        self.assertTrue(container["securityContext"]["readOnlyRootFilesystem"])
+        self.assertEqual(container["securityContext"]["capabilities"]["drop"], ["ALL"])
+        self.assertEqual(
+            {mount["name"]: mount["mountPath"] for mount in container["volumeMounts"]},
+            {
+                "nginx-cache": "/var/cache/nginx",
+                "nginx-run": "/var/run",
+                "tmp": "/tmp",
+            },
+        )
+        self.assertTrue(all(volume["emptyDir"] == {} for volume in pod_spec["volumes"]))
+        self.assertTrue(all("hostPath" not in volume for volume in pod_spec["volumes"]))
 
     def test_invalid_app_name_fails_validation_without_commit_or_push(self) -> None:
         result = DeployWorkloadOperationService().execute(self.request(app_name="Invalid/App"))
