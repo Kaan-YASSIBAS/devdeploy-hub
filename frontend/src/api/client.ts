@@ -16,6 +16,9 @@ import type {
   GitOpsDeploymentCreateInput,
   GitOpsDeploymentDeleteResponse,
   GitOpsDeploymentResponse,
+  GitOpsAppDeployInput,
+  GitOpsAppDeployResponse,
+  GitOpsAppStatusResponse,
   KubernetesDeployment,
   KubernetesNamespace,
   KubernetesPod,
@@ -211,6 +214,19 @@ export const deploymentsApi = {
     return data;
   }
 };
+
+export async function deployGitOpsApp(input: GitOpsAppDeployInput) {
+  const { data } = await apiClient.post<GitOpsAppDeployResponse>("/gitops/apps", input);
+  return data;
+}
+
+export async function getGitOpsAppStatus(appName: string, commitSha: string) {
+  const { data } = await apiClient.get<GitOpsAppStatusResponse>(
+    `/gitops/apps/${encodeURIComponent(appName)}/status`,
+    { params: { commit_sha: commitSha } }
+  );
+  return data;
+}
 
 export const observabilityApi = {
   async health() {

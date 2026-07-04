@@ -481,6 +481,72 @@
         "manualSteps": "Actions -> GitOps Workload Request -> Run workflow, then use the inputs below."
       }
     },
+    "gitopsDeploy": {
+      "title": "Deploy app through GitOps",
+      "description": "Publish Deployment and Service manifests to Git. Argo CD will reconcile them to the workload cluster.",
+      "appName": "App name",
+      "appNamePlaceholder": "payment-api",
+      "image": "Container image",
+      "imagePlaceholder": "nginx:latest",
+      "replicas": "Replicas",
+      "containerPort": "Container port",
+      "servicePort": "Service port",
+      "serviceType": "Service type",
+      "submit": "Push GitOps deployment",
+      "submitting": "Publishing to Git",
+      "pushedToast": "GitOps commit pushed. Waiting for Argo CD.",
+      "progressTitle": "GitOps deployment progress",
+      "refreshStatus": "Refresh deployment status",
+      "pollingTimedOut": "Automatic status polling stopped after two minutes. Refresh to check again.",
+      "commit": "Commit",
+      "observedRevision": "Observed revision",
+      "rootSyncHealth": "Root App sync / health",
+      "commitObserved": "Commit observed",
+      "deploymentReadiness": "Deployment replicas",
+      "serviceReadiness": "Service",
+      "podReadiness": "Ready pods",
+      "available": "available",
+      "ready": "Ready",
+      "notReady": "Not ready",
+      "yes": "Yes",
+      "no": "No",
+      "validation": {
+        "required": "App name and container image are required.",
+        "appName": "Use a lowercase Kubernetes app name with letters, numbers, or hyphens (maximum 40 characters).",
+        "image": "Container image cannot contain whitespace.",
+        "replicas": "Replicas must be between 1 and 20.",
+        "containerPort": "Container port must be between 1 and 65535.",
+        "servicePort": "Service port must be between 1 and 65535."
+      },
+      "status": {
+        "pushed_waiting_for_argocd": "Waiting for Argo CD",
+        "argocd_observing": "Reconciling",
+        "argocd_synced": "Synced",
+        "workload_progressing": "Workload progressing",
+        "deployed": "Deployed",
+        "degraded": "Degraded",
+        "unknown": "Unknown"
+      },
+      "statusMessage": {
+        "pushed_waiting_for_argocd": "Waiting for Argo CD to observe the pushed commit.",
+        "argocd_observing": "Argo CD observed the app and is reconciling.",
+        "argocd_synced": "Argo CD is synced; workload readiness is being checked.",
+        "workload_progressing": "The workload is still becoming ready.",
+        "deployed": "The workload is deployed and ready.",
+        "degraded": "The workload or shared GitOps tree reports a degraded state.",
+        "unknown": "Deployment status could not be determined."
+      },
+      "errors": {
+        "validation": "The deployment request is invalid. Check the form values and try again.",
+        "authorization": "Your session is not authorized to create this deployment.",
+        "conflict": "This app already exists or the Git repository has a conflicting change.",
+        "deployFailed": "The GitOps deployment could not be published.",
+        "missingCommit": "The backend did not return a commit SHA, so live status polling could not start.",
+        "statusPermission": "Deployment status cannot be read with the configured permissions.",
+        "statusUnavailable": "The live status reader is unavailable. Check the backend configuration and retry.",
+        "statusFailed": "Deployment status could not be loaded."
+      }
+    },
     "detail": {
       "subtitle": "Deployment execution timeline, metadata, and logs preview.",
       "liveSubtitle": "Live Kubernetes deployment status enriched with GitOps request metadata.",

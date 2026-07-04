@@ -481,6 +481,72 @@
         "manualSteps": "Actions -> GitOps Workload Request -> Run workflow adımlarını izle ve aşağıdaki inputları kullan."
       }
     },
+    "gitopsDeploy": {
+      "title": "GitOps ile deployment oluştur",
+      "description": "Deployment ve Service manifestlerini Git repository'sine gönder. Argo CD bu manifestleri workload cluster'ına uygulayacak.",
+      "appName": "Uygulama adı",
+      "appNamePlaceholder": "payment-api",
+      "image": "Container image",
+      "imagePlaceholder": "nginx:latest",
+      "replicas": "Replica",
+      "containerPort": "Container port",
+      "servicePort": "Service port",
+      "serviceType": "Service türü",
+      "submit": "GitOps deployment'ı gönder",
+      "submitting": "Git'e gönderiliyor",
+      "pushedToast": "GitOps commit'i push edildi. Argo CD bekleniyor.",
+      "progressTitle": "GitOps deployment ilerlemesi",
+      "refreshStatus": "Deployment durumunu yenile",
+      "pollingTimedOut": "Otomatik durum kontrolü iki dakika sonra durdu. Yeniden kontrol etmek için yenile.",
+      "commit": "Commit",
+      "observedRevision": "Gözlemlenen revision",
+      "rootSyncHealth": "Root App sync / health",
+      "commitObserved": "Commit gözlemlendi",
+      "deploymentReadiness": "Deployment replicaları",
+      "serviceReadiness": "Service",
+      "podReadiness": "Hazır podlar",
+      "available": "available",
+      "ready": "Hazır",
+      "notReady": "Hazır değil",
+      "yes": "Evet",
+      "no": "Hayır",
+      "validation": {
+        "required": "Uygulama adı ve container image zorunludur.",
+        "appName": "En fazla 40 karakter olacak şekilde küçük harf, rakam ve tire içeren bir Kubernetes uygulama adı kullan.",
+        "image": "Container image boşluk içeremez.",
+        "replicas": "Replica sayısı 1 ile 20 arasında olmalı.",
+        "containerPort": "Container port 1 ile 65535 arasında olmalı.",
+        "servicePort": "Service port 1 ile 65535 arasında olmalı."
+      },
+      "status": {
+        "pushed_waiting_for_argocd": "Argo CD bekleniyor",
+        "argocd_observing": "Reconcile ediliyor",
+        "argocd_synced": "Senkronize",
+        "workload_progressing": "Workload hazırlanıyor",
+        "deployed": "Deploy edildi",
+        "degraded": "Degraded",
+        "unknown": "Bilinmiyor"
+      },
+      "statusMessage": {
+        "pushed_waiting_for_argocd": "Push edilen commit'in Argo CD tarafından görülmesi bekleniyor.",
+        "argocd_observing": "Argo CD uygulamayı gördü ve reconcile ediyor.",
+        "argocd_synced": "Argo CD senkronize; workload readiness kontrol ediliyor.",
+        "workload_progressing": "Workload henüz hazır hale geliyor.",
+        "deployed": "Workload deploy edildi ve hazır.",
+        "degraded": "Workload veya ortak GitOps ağacı degraded durumda.",
+        "unknown": "Deployment durumu belirlenemedi."
+      },
+      "errors": {
+        "validation": "Deployment isteği geçersiz. Form alanlarını kontrol edip yeniden dene.",
+        "authorization": "Bu deployment'ı oluşturmak için oturum yetkin yok.",
+        "conflict": "Bu uygulama zaten mevcut veya Git repository'sinde çakışan bir değişiklik var.",
+        "deployFailed": "GitOps deployment Git'e gönderilemedi.",
+        "missingCommit": "Backend commit SHA döndürmediği için canlı durum kontrolü başlatılamadı.",
+        "statusPermission": "Deployment durumu yapılandırılmış izinlerle okunamıyor.",
+        "statusUnavailable": "Canlı durum okuyucu kullanılamıyor. Backend yapılandırmasını kontrol edip yeniden dene.",
+        "statusFailed": "Deployment durumu yüklenemedi."
+      }
+    },
     "detail": {
       "subtitle": "Deployment yürütme timeline'ı, metadata ve log önizlemesi.",
       "liveSubtitle": "GitOps istek metadatası ile zenginleştirilmiş canlı Kubernetes deployment durumu.",

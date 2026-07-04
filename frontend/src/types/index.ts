@@ -118,6 +118,64 @@ export type GitOpsDeploymentResponse = {
 
 export type GitOpsDeploymentDeleteResponse = GitOpsDeploymentResponse;
 
+export type GitOpsAppDeployStatus =
+  | "pushed_waiting_for_argocd"
+  | "argocd_observing"
+  | "argocd_synced"
+  | "workload_progressing"
+  | "deployed"
+  | "degraded"
+  | "unknown";
+
+export type GitOpsAppDeployInput = {
+  app_name: string;
+  image: string;
+  replicas: number;
+  container_port: number;
+  service_port: number;
+  service_type: "ClusterIP";
+};
+
+export type GitOpsAppDeployResponse = {
+  status: "pushed_waiting_for_argocd";
+  app_name: string;
+  namespace: string;
+  source_path?: string;
+  commit_sha: string | null;
+  message: string;
+  error_code?: string | null;
+};
+
+export type GitOpsRootApplicationStatus = {
+  name: string;
+  sync_status: string | null;
+  health_status: string | null;
+  observed_commit_match: boolean;
+};
+
+export type GitOpsWorkloadReadiness = {
+  deployment_ready: boolean;
+  service_ready: boolean;
+  pods_ready: boolean;
+  desired_replicas: number | null;
+  ready_replicas: number | null;
+  available_replicas: number | null;
+  pod_count: number;
+  ready_pod_count: number;
+};
+
+export type GitOpsAppStatusResponse = {
+  status: GitOpsAppDeployStatus;
+  app_name: string;
+  namespace: string;
+  commit_sha: string;
+  observed_revision: string | null;
+  root_application: GitOpsRootApplicationStatus;
+  workload: GitOpsWorkloadReadiness;
+  message: string;
+  error_code: string | null;
+};
+
 export type DeploymentListSource = "gitops" | "cluster" | "legacy";
 
 export type DeploymentListItem = {

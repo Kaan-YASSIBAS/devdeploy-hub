@@ -356,13 +356,14 @@ Completed baseline:
 - **Phase 2J.5j.1:** complete non-root workload hardening with a numeric Pod identity, RuntimeDefault seccomp, disabled privilege escalation, and dropped Linux capabilities after Trivy KSV-0118 identified the initial smoke manifest.
 - **Phase 2J.5j.2:** complete read-only-root hardening with nginx-compatible writable runtime paths through `emptyDir` volumes, addressing Trivy KSV-0014 without granting host filesystem access.
 - The backend GitOps deploy, Argo CD reconciliation, workload readiness, and live read-only status chain is verified end to end and CI-clean.
+- **Phase 2J.6:** add the Frontend GitOps Deploy Form to the Deployments page. The authenticated UI submits user-provided images to `POST /api/v1/gitops/apps`, polls the read-only status endpoint every three seconds with a two-minute bound, exposes manual refresh, and stops automatically at `deployed` or `degraded`. The frontend calls backend HTTP APIs only and performs no GitHub, Argo CD, or Kubernetes operations.
 - V1 accepts a user-provided container image and does not require CI, an image build, or a registry push.
 - All V1 app manifests target the pre-created `devdeploy-apps` namespace.
 - App deletion remains unimplemented because the Root Application currently uses `prune=false`.
 
 Planned milestones:
 
-- **Phase 2J.6 (next):** implement the Frontend GitOps Deploy Form against the verified backend deploy and live status APIs.
+- **Phase 2J.7 (next):** polish live GitOps status presentation after the frontend deploy flow is exercised against the local multi-cluster environment.
 - Define safe prune/delete behavior before claiming GitOps deletion is complete.
 - Design and validate workload ingress exposure separately before presenting a local app URL as reachable.
 

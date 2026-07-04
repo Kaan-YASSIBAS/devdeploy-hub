@@ -1,22 +1,42 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Plus, RefreshCw, Rocket, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { applicationsApi, deploymentsApi, getApiErrorMessage, getApiErrorStatus } from "@/api/client";
+import { applicationsApi, deployGitOpsApp, deploymentsApi, getApiErrorMessage, getApiErrorStatus, getGitOpsAppStatus } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { CreateDeploymentModal } from "@/components/deployments/CreateDeploymentModal";
+import { CreateGitOpsAppModal } from "@/components/deployments/CreateGitOpsAppModal";
+import { GitOpsDeployStatusCard } from "@/components/deployments/GitOpsDeployStatusCard";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { StatusBadge } from "@/components/shared/StatusBadge";
-import type { DeploymentListItem, GitOpsDeploymentCreateInput, GitOpsDeploymentResponse, DeploymentStatus } from "@/types";
+import type { DeploymentListItem, DeploymentStatus, GitOpsAppDeployInput, GitOpsAppDeployStatus, GitOpsAppDeployResponse } from "@/types";
 
 const statuses: DeploymentStatus[] = ["pending", "running", "progressing", "success", "failed", "stale", "deletion_requested", "deleted", "unknown"];
+const STATUS_POLL_INTERVAL_MS = 3_000;
+const STATUS_POLL_TIMEOUT_MS = 120_000;
+
+function isTerminalGitOpsStatus(status: GitOpsAppDeployStatus | undefined) {
+  return status === "deployed" || status === "degraded";
+}
+
+function deployErrorKey(status: number | undefined) {
+  if (status === 400) return "deployments.gitopsDeploy.errors.validation";
+  if (status === 401 || status === 403) return "deployments.gitopsDeploy.errors.authorization";
+  if (status === 409) return "deployments.gitopsDeploy.errors.conflict";
+  return "deployments.gitopsDeploy.errors.deployFailed";
+}
+
+function statusErrorKey(status: number | undefined) {
+  if (status === 401 || status === 403) return "deployments.gitopsDeploy.errors.statusPermission";
+  if (status === 503) return "deployments.gitopsDeploy.errors.statusUnavailable";
+  return "deployments.gitopsDeploy.errors.statusFailed";
+}
 
 function formatDate(value: string | null) {
   if (!value) {
@@ -89,7 +109,8 @@ export function DeploymentsPage() {
   const [status, setStatus] = useState<DeploymentStatus | "all">("all");
   const [application, setApplication] = useState("all");
   const [modalOpen, setModalOpen] = useState(false);
-  const [gitopsResult, setGitopsResult] = useState<GitOpsDeploymentResponse | null>(null);
+  const [deployResponse, setDeployResponse] = useState<GitOpsAppDeployResponse | null>(null);
+  const [pollTimedOut, setPollTimedOut] = useState(false);
   const deploymentsQuery = useQuery({ queryKey: ["deployments"], queryFn: deploymentsApi.listGitOps });
   const applicationsQuery = useQuery({ queryKey: ["applications"], queryFn: applicationsApi.list });
   const deployments = useMemo(() => deploymentsQuery.data ?? [], [deploymentsQuery.data]);
@@ -114,29 +135,54 @@ export function DeploymentsPage() {
   }, [deployments, t]);
 
   const createMutation = useMutation({
-    mutationFn: (input: GitOpsDeploymentCreateInput) => deploymentsApi.createGitOps(input),
+    mutationFn: (input: GitOpsAppDeployInput) => deployGitOpsApp(input),
     onSuccess: async (response) => {
-      if (response.workflow_triggered) {
-        toast.success(t("deployments.gitops.result.startedToast"));
-      } else if (response.request.status === "failed") {
-        toast.error(response.request.error_message ?? t("api.errors.gitopsRequestFailed"));
-      } else {
-        toast.error(t("api.errors.deploymentAutomationUnavailable"));
-      }
-
+      setDeployResponse(response);
+      setPollTimedOut(false);
+      toast.success(t("deployments.gitopsDeploy.pushedToast"));
       await queryClient.invalidateQueries({ queryKey: ["deployments"] });
       await queryClient.invalidateQueries({ queryKey: ["user-summary"] });
     },
     onError: (error) => {
-      if (getApiErrorStatus(error) === 503) {
-        toast.error(t("api.errors.deploymentAutomationUnavailable"));
-        return;
-      }
-
-      const message = getApiErrorMessage(error);
-      toast.error(message || t("api.errors.gitopsRequestFailed"));
+      toast.error(t(deployErrorKey(getApiErrorStatus(error))));
     }
   });
+
+  const liveStatusQuery = useQuery({
+    queryKey: ["gitops-app-status", deployResponse?.app_name, deployResponse?.commit_sha],
+    queryFn: () => getGitOpsAppStatus(deployResponse!.app_name, deployResponse!.commit_sha!),
+    enabled: Boolean(deployResponse?.commit_sha) && !pollTimedOut,
+    retry: false,
+    refetchInterval: (query) => {
+      if (query.state.status === "error" || isTerminalGitOpsStatus(query.state.data?.status)) {
+        return false;
+      }
+      return STATUS_POLL_INTERVAL_MS;
+    },
+    refetchIntervalInBackground: false
+  });
+
+  const liveStatus = liveStatusQuery.data?.status;
+  const liveStatusIsTerminal = isTerminalGitOpsStatus(liveStatus);
+
+  useEffect(() => {
+    if (!deployResponse?.commit_sha || liveStatusIsTerminal) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setPollTimedOut(true), STATUS_POLL_TIMEOUT_MS);
+    return () => window.clearTimeout(timeout);
+  }, [deployResponse?.commit_sha, liveStatusIsTerminal]);
+
+  useEffect(() => {
+    if (liveStatus !== "deployed") {
+      return;
+    }
+
+    void queryClient.invalidateQueries({ queryKey: ["deployments"] });
+    void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+    void queryClient.invalidateQueries({ queryKey: ["user-summary"] });
+  }, [liveStatus, queryClient]);
 
   const deleteMutation = useMutation({
     mutationFn: (deployment: DeploymentListItem) => deploymentsApi.deleteGitOps(deployment.namespace, deployment.name),
@@ -263,51 +309,24 @@ export function DeploymentsPage() {
         title={t("deployments.title")}
       />
 
-      {gitopsResult ? (
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle>
-              {gitopsResult.workflow_triggered
-                ? t("deployments.gitops.result.workflowTriggered")
-                : gitopsResult.request.status === "failed"
-                  ? t("deployments.gitops.result.failed")
-                  : t("api.errors.deploymentAutomationUnavailable")}
-            </CardTitle>
-            <CardDescription>
-              {gitopsResult.workflow_triggered
-                ? t("deployments.gitops.result.workflowTriggeredDescription")
-                : gitopsResult.request.status === "failed"
-                  ? t("deployments.gitops.result.failedDescription")
-                  : t("api.errors.deploymentAutomationUnavailable")}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-                <p className="text-xs uppercase text-slate-500">{t("deployments.gitops.appName")}</p>
-                <p className="mt-2 font-medium text-white">{gitopsResult.request.app_name}</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-                <p className="text-xs uppercase text-slate-500">{t("deployments.gitops.image")}</p>
-                <p className="mt-2 break-all font-mono text-xs text-cyan-200">{`${gitopsResult.request.image}:${gitopsResult.request.tag}`}</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-                <p className="text-xs uppercase text-slate-500">{t("deployments.gitops.namespace")}</p>
-                <p className="mt-2 font-medium text-white">{gitopsResult.request.namespace}</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-                <p className="text-xs uppercase text-slate-500">{t("common.status")}</p>
-                <p className="mt-2 font-medium text-white">{t(`deployments.gitops.status.${gitopsResult.request.status}`)}</p>
-              </div>
-            </div>
-
-            {gitopsResult.workflow_triggered ? null : (
-              <div className="rounded-2xl border border-amber-300/15 bg-amber-300/[0.06] p-4 text-sm leading-6 text-amber-100">
-                {gitopsResult.request.status === "failed" ? gitopsResult.request.error_message ?? t("api.errors.gitopsRequestFailed") : t("api.errors.deploymentAutomationUnavailable")}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+      {deployResponse ? (
+        <GitOpsDeployStatusCard
+          deployResponse={deployResponse}
+          errorKey={
+            !deployResponse.commit_sha
+              ? "deployments.gitopsDeploy.errors.missingCommit"
+              : liveStatusQuery.isError
+                ? statusErrorKey(getApiErrorStatus(liveStatusQuery.error))
+                : undefined
+          }
+          isFetching={liveStatusQuery.isFetching}
+          statusResponse={liveStatusQuery.data}
+          timedOut={pollTimedOut}
+          onRefresh={() => {
+            setPollTimedOut(false);
+            void liveStatusQuery.refetch();
+          }}
+        />
       ) : null}
 
       <Card>
@@ -351,14 +370,10 @@ export function DeploymentsPage() {
         </CardContent>
       </Card>
 
-      <CreateDeploymentModal
-        applications={applications}
+      <CreateGitOpsAppModal
         isSubmitting={createMutation.isPending}
         open={modalOpen}
-        onCreate={async (deployment) => {
-          const response = await createMutation.mutateAsync(deployment);
-          setGitopsResult(response);
-        }}
+        onDeploy={(input) => createMutation.mutateAsync(input)}
         onOpenChange={setModalOpen}
       />
     </div>
