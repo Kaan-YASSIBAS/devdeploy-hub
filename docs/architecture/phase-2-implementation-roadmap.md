@@ -360,6 +360,9 @@ Completed baseline:
 - **Phase 2J.6a:** manually verify the frontend form against the real backend GitOps deploy and live status APIs with `ui-status-smoke-nginx` at commit `e5d8cb791b8bfc4be35e176369f6376d59912647`. The UI reached `deployed`, displayed matching commit observation, `Synced / Healthy` Root Application state, ready Deployment and Service state, and `1/1` ready Pods.
 - **Phase 2J.6b:** record the successful [frontend deploy and status smoke result](../operations/gitops-frontend-deploy-status-smoke-test.md), its read-only verification evidence, local frontend/backend execution context, and known integration limitations.
 - **Phase 2J.7:** align the Setup gate and read-only preflight with the `devdeploy-mgmt` and `devdeploy-workload` model. The gate can now accept either user-scoped setup completion or backend-reported multi-cluster readiness, the active kubectl context is informational, and occupied management ports are warnings rather than fatal errors in an already-running platform.
+- **Phase 2J.8 - Backend read-only GitOps app rediscovery foundation:** add authenticated discovery of complete generated manifest folders without invoking Git, Kubernetes, Argo CD, or GitHub operations. This internal foundation can support future recovery, import, drift detection, or reconciliation workflows; it does not add GitOps source applications to the main Deployments UI.
+- The product model remains domain-driven: Services represent DevDeploy service definitions and future service CRUD, while Deployments represent DevDeploy deployment and release records and future deployment CRUD.
+- The GitOps repository remains the implementation source for desired manifests. Kubernetes and Argo CD remain read-only runtime and status sources for the product domain records.
 - The Frontend GitOps Deploy Form is verified end to end against the backend GitOps publication and live read-only status chain.
 - The in-cluster platform backend still requires controlled server-side GitOps repository and status-reader configuration before this flow can run entirely through the deployed platform.
 - V1 accepts a user-provided container image and does not require CI, an image build, or a registry push.
@@ -368,7 +371,7 @@ Completed baseline:
 
 Planned milestones:
 
-- **Phase 2J.8 (next):** rediscover GitOps-created applications after refresh and integrate them into the persistent Deployments list without relying on the temporary submission status card.
+- **Phase 2J.9 (next) - Product Domain Alignment: Services and Deployments as first-class records:** define how product records correlate with GitOps desired state and read-only runtime status.
 - Add controlled in-cluster GitOps repository and status-reader configuration before claiming the deployed platform can execute the full GitOps flow without local backend wiring.
 - Define safe prune/delete behavior before claiming GitOps deletion is complete.
 - Design and validate workload ingress exposure separately before presenting a local app URL as reachable.

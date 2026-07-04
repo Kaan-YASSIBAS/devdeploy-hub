@@ -74,7 +74,7 @@ No token, password, kubeconfig content, local browser storage content, or screen
 
 The following gaps were observed and do not invalidate the Phase 2J.6 deploy-form result:
 
-- The new app appears in the temporary status card during the current UI session, but the Deployments list does not rediscover it after a page refresh yet.
+- The new app appears only in the temporary status card during the current UI session; the main Deployments list does not rediscover it after refresh. Phase 2J.8 later added a backend-only, read-only GitOps rediscovery foundation for future recovery, import, drift detection, or reconciliation work, without changing this user-facing limitation.
 - Dashboard counters, Services, Deployments, Cluster, Logs, and Monitoring are not yet fully connected to the new GitOps-created workload model.
 - The Cluster page may have a namespace selected other than `devdeploy-apps`.
 - Prometheus and Loki are not fully configured for this path, so Monitoring and Logs may show unavailable or empty states.

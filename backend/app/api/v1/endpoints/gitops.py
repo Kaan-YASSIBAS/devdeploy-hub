@@ -11,6 +11,8 @@ from app.models.user import User
 from app.schemas.gitops_app import (
     GitOpsAppCreateRequest,
     GitOpsAppCreateResponse,
+    GitOpsAppListResponse,
+    GitOpsDiscoveredAppResponse,
     GitOpsAppStatusResponse,
     GitOpsRootApplicationStatusResponse,
     GitOpsWorkloadStatusResponse,
@@ -20,6 +22,8 @@ from app.services.gitops.deploy_operation import (
     DeployWorkloadOperationResult,
     DeployWorkloadOperationService,
 )
+from app.services.gitops.discovery import GitOpsAppDiscoveryService
+from app.services.gitops.errors import GitOpsWriterError
 from app.services.gitops.git_adapter import sanitize_git_output
 from app.services.gitops.manifests import WORKLOAD_NAMESPACE
 from app.services.gitops.kubernetes_status_reader import KubernetesGitOpsStatusReader
@@ -77,6 +81,10 @@ def get_gitops_deploy_repository_config() -> GitOpsDeployRepositoryConfig:
 
 def get_deploy_workload_operation_service() -> DeployWorkloadOperationService:
     return DeployWorkloadOperationService()
+
+
+def get_gitops_app_discovery_service() -> GitOpsAppDiscoveryService:
+    return GitOpsAppDiscoveryService()
 
 
 def get_gitops_status_reader_config() -> GitOpsStatusReaderConfig:
@@ -163,6 +171,28 @@ def _status_response_from_result(result: GitOpsStatusResult) -> GitOpsAppStatusR
         ),
         message=sanitize_git_output(result.message),
         error_code=result.error_code,
+    )
+
+
+@router.get("/apps", response_model=GitOpsAppListResponse)
+def list_gitops_apps(
+    current_user: User = Depends(get_current_user),
+    config: GitOpsDeployRepositoryConfig = Depends(get_gitops_deploy_repository_config),
+    discovery_service: GitOpsAppDiscoveryService = Depends(get_gitops_app_discovery_service),
+) -> GitOpsAppListResponse:
+    _ = current_user
+    try:
+        apps = discovery_service.discover(
+            repo_root=config.repo_root,
+            source_root_relative=config.source_root_relative,
+        )
+    except GitOpsWriterError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=error.message,
+        ) from None
+    return GitOpsAppListResponse(
+        items=[GitOpsDiscoveredAppResponse.model_validate(app, from_attributes=True) for app in apps]
     )
 
 

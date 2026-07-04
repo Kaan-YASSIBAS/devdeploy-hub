@@ -6,11 +6,13 @@ from fastapi.testclient import TestClient
 from app.api.v1.endpoints.gitops import (
     GitOpsDeployRepositoryConfig,
     get_deploy_workload_operation_service,
+    get_gitops_app_discovery_service,
     get_gitops_deploy_repository_config,
     router,
 )
 from app.core.deps import get_current_user
 from app.services.gitops.deploy_operation import DeployWorkloadOperationResult
+from app.services.gitops.discovery import DiscoveredGitOpsApp
 
 
 class FakeDeployOperationService:
@@ -28,6 +30,26 @@ class FakeDeployOperationService:
         return self.result
 
 
+class FakeDiscoveryService:
+    def __init__(self):
+        self.calls = []
+
+    def discover(self, **kwargs):
+        self.calls.append(kwargs)
+        return [
+            DiscoveredGitOpsApp(
+                app_name="payment-api",
+                image="ghcr.io/example/payment-api:v1.0.0",
+                replicas=2,
+                container_port=8080,
+                service_port=80,
+                service_type="ClusterIP",
+                namespace="devdeploy-apps",
+                manifest_path="apps/payment-api",
+            )
+        ]
+
+
 class GitOpsApiTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.app = FastAPI()
@@ -40,8 +62,10 @@ class GitOpsApiTestCase(unittest.TestCase):
             remote_branch="main",
         )
         self.service = FakeDeployOperationService(self.success_result())
+        self.discovery_service = FakeDiscoveryService()
         self.app.dependency_overrides[get_gitops_deploy_repository_config] = lambda: self.config
         self.app.dependency_overrides[get_deploy_workload_operation_service] = lambda: self.service
+        self.app.dependency_overrides[get_gitops_app_discovery_service] = lambda: self.discovery_service
         self.client = TestClient(self.app, raise_server_exceptions=False)
 
     def tearDown(self) -> None:
@@ -79,6 +103,32 @@ class GitOpsApiTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 401)
         self.assertEqual(self.service.requests, [])
+
+    def test_unauthenticated_list_request_is_rejected(self) -> None:
+        response = self.client.get("/api/v1/gitops/apps")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(self.discovery_service.calls, [])
+
+    def test_list_returns_discovered_apps_without_live_status_dependency(self) -> None:
+        self.authenticate()
+
+        response = self.client.get("/api/v1/gitops/apps")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(len(body["items"]), 1)
+        self.assertEqual(body["items"][0]["app_name"], "payment-api")
+        self.assertEqual(body["items"][0]["status"], "unknown")
+        self.assertEqual(
+            self.discovery_service.calls,
+            [
+                {
+                    "repo_root": self.config.repo_root,
+                    "source_root_relative": self.config.source_root_relative,
+                }
+            ],
+        )
 
     def test_valid_request_calls_operation_and_returns_pending_reconciliation(self) -> None:
         self.authenticate()

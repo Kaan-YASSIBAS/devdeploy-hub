@@ -35,6 +35,22 @@ class GitOpsAppCreateResponse(BaseModel):
     error_code: str | None = None
 
 
+class GitOpsDiscoveredAppResponse(BaseModel):
+    app_name: str
+    image: str
+    replicas: int
+    container_port: int
+    service_port: int
+    service_type: Literal["ClusterIP"]
+    namespace: str
+    manifest_path: str
+    status: Literal["unknown"]
+
+
+class GitOpsAppListResponse(BaseModel):
+    items: list[GitOpsDiscoveredAppResponse]
+
+
 GitOpsAppStatusValue = Literal[
     "pushed_waiting_for_argocd",
     "argocd_observing",
