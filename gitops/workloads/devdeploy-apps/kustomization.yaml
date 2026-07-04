@@ -3,3 +3,4 @@ kind: Kustomization
 resources:
   - apps/api-status-smoke-nginx
   - apps/nginx-demo
+  - apps/ui-status-smoke-nginx

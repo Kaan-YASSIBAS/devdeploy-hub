@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui-status-smoke-nginx
+  namespace: devdeploy-apps
+  labels:
+    app.kubernetes.io/name: ui-status-smoke-nginx
+    app.kubernetes.io/managed-by: devdeploy
+    app.kubernetes.io/part-of: devdeploy-workloads
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ui-status-smoke-nginx
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
