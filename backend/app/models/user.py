@@ -29,3 +29,13 @@ class User(Base):
     applications = relationship("Application", back_populates="owner", cascade="all, delete-orphan")
     deployments = relationship("Deployment", back_populates="requested_by")
     api_tokens = relationship("ApiToken", back_populates="user", cascade="all, delete-orphan")
+    service_definitions = relationship(
+        "ServiceDefinition",
+        back_populates="owner",
+        cascade="all, delete-orphan",
+    )
+    deployment_records = relationship(
+        "DeploymentRecord",
+        back_populates="owner",
+        cascade="all, delete-orphan",
+    )

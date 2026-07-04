@@ -363,6 +363,8 @@ Completed baseline:
 - **Phase 2J.8 - Backend read-only GitOps app rediscovery foundation:** add authenticated discovery of complete generated manifest folders without invoking Git, Kubernetes, Argo CD, or GitHub operations. This internal foundation can support future recovery, import, drift detection, or reconciliation workflows; it does not add GitOps source applications to the main Deployments UI.
 - The product model remains domain-driven: Services represent DevDeploy service definitions and future service CRUD, while Deployments represent DevDeploy deployment and release records and future deployment CRUD.
 - The GitOps repository remains the implementation source for desired manifests. Kubernetes and Argo CD remain read-only runtime and status sources for the product domain records.
+- **Phase 2J.9 - Product Domain Alignment:** add user-owned `ServiceDefinition` and `DeploymentRecord` models, additive database tables, repository/service boundaries, and authenticated create/list/get/update APIs at `/api/v1/services` and `/api/v1/deployment-records`. Creating a deployment record stores domain state only and does not invoke GitOps publication or Kubernetes operations.
+- Existing `/api/v1/applications`, `/api/v1/deployments`, and GitOps APIs remain unchanged for compatibility. Future product UI migration should read the first-class domain APIs rather than presenting GitOps rediscovery results as Deployment records.
 - The Frontend GitOps Deploy Form is verified end to end against the backend GitOps publication and live read-only status chain.
 - The in-cluster platform backend still requires controlled server-side GitOps repository and status-reader configuration before this flow can run entirely through the deployed platform.
 - V1 accepts a user-provided container image and does not require CI, an image build, or a registry push.
@@ -371,7 +373,7 @@ Completed baseline:
 
 Planned milestones:
 
-- **Phase 2J.9 (next) - Product Domain Alignment: Services and Deployments as first-class records:** define how product records correlate with GitOps desired state and read-only runtime status.
+- **Phase 2J.10 (next) - Domain-backed product integration:** connect the Services and Deployments product pages to first-class records and design the explicit transition from a Deployment record to the existing GitOps publication flow.
 - Add controlled in-cluster GitOps repository and status-reader configuration before claiming the deployed platform can execute the full GitOps flow without local backend wiring.
 - Define safe prune/delete behavior before claiming GitOps deletion is complete.
 - Design and validate workload ingress exposure separately before presenting a local app URL as reachable.
