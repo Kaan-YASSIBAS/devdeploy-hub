@@ -18,6 +18,38 @@ This procedure creates the known smoke workload `api-status-smoke-nginx`. Run it
 
 API-generated Deployments now include default numeric non-root, RuntimeDefault seccomp, disabled privilege escalation, read-only root filesystem, and dropped-capability security contexts. Trivy KSV-0118 prompted the initial hardening, and KSV-0014 is addressed by `readOnlyRootFilesystem: true` plus writable `emptyDir` mounts for nginx cache, runtime, and temporary paths.
 
+## Latest Verified Result
+
+Phase 2J.5j completed successfully with the following observed result:
+
+- App: `api-status-smoke-nginx`.
+- Git commit: `33e7df4f2fcf6d71d00bc94e51daaee11083e8b6`.
+- Commit message: `deploy: add api-status-smoke-nginx workload`.
+- The deploy API returned HTTP `202 Accepted`, `status: pushed_waiting_for_argocd`, and the commit SHA.
+- The status API returned HTTP `200 OK` and `status: deployed`.
+- `devdeploy-workloads-root` was `Synced` and `Healthy`.
+- `observed_revision` matched `commit_sha` and `root_application.observed_commit_match` was `true`.
+- Workload status reported `deployment_ready`, `service_ready`, and `pods_ready` as `true`.
+- Replica status reported `desired_replicas: 1`, `ready_replicas: 1`, and `available_replicas: 1`.
+- Pod status reported `pod_count: 1` and `ready_pod_count: 1`; read-only verification observed zero restarts.
+- The Git working tree was clean after the smoke deployment and before the hardening follow-up.
+- Local HEAD and `origin/main` subsequently advanced through the smoke and security-hardening commits.
+
+The smoke commit changed only:
+
+```text
+gitops/workloads/devdeploy-apps/apps/api-status-smoke-nginx/deployment.yaml
+gitops/workloads/devdeploy-apps/apps/api-status-smoke-nginx/kustomization.yaml
+gitops/workloads/devdeploy-apps/apps/api-status-smoke-nginx/service.yaml
+gitops/workloads/devdeploy-apps/kustomization.yaml
+```
+
+Manual verification used read-only cluster queries only. It observed Deployment `api-status-smoke-nginx` ready at `1/1`, its ClusterIP Service on `80/TCP`, and one running Pod ready at `1/1` with zero restarts.
+
+The initial generated Deployment was subsequently hardened after Trivy reported KSV-0118 and KSV-0014. API-generated workloads now use the security defaults described above, and CI is green after the hardening follow-up.
+
+The smoke app remains in Git and in the workload cluster because the Root Application still uses `prune=false`. Verified deletion remains future work under the separate delete and prune design.
+
 ## Preconditions
 
 Before starting, confirm:

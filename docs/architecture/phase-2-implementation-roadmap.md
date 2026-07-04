@@ -352,16 +352,17 @@ Completed baseline:
 - **Phase 2J.5h:** implement the authenticated `GET /api/v1/gitops/apps/{app_name}/status` endpoint, typed status snapshots, an injectable reader boundary, and a pure exact-SHA status evaluator. Fake-reader tests cover pending, synced, progressing, deployed, degraded, missing, and unavailable states; no live cluster reader or mutation is added.
 - **Phase 2J.5i:** add opt-in live read-only status integration through the Kubernetes Python client. The reader uses a management custom-object GET plus label-scoped namespaced Deployment, Service, and Pod LIST calls, keeps `unavailable` as the safe default mode, requires separate server-controlled workload access, and adds no cluster mutation or Secret reads.
 - **Phase 2J.5i.1:** add explicit server-controlled management and workload kubeconfig context selection so a shared local multi-cluster kubeconfig cannot route either status reader through its current context accidentally.
-- **Phase 2J.5j:** document the repeatable [live API deploy and status smoke test](../operations/gitops-api-deploy-status-smoke-test.md), covering GitOps submission, passive Argo CD reconciliation, live read-only status polling, Git verification, and optional read-only cluster checks. This manual procedure adds no frontend or mutation code.
-- **Phase 2J.5j.1:** harden every API-generated workload Deployment with a numeric non-root Pod identity, RuntimeDefault seccomp, disabled privilege escalation, and dropped Linux capabilities after Trivy KSV-0118 identified the initial smoke manifest.
-- **Phase 2J.5j.2:** enable read-only root filesystems for API-generated workload containers and provide nginx-compatible writable runtime paths through `emptyDir` volumes, addressing Trivy KSV-0014 without granting host filesystem access.
+- **Phase 2J.5j:** execute and record the successful [live API deploy and status smoke test](../operations/gitops-api-deploy-status-smoke-test.md). Commit `33e7df4f2fcf6d71d00bc94e51daaee11083e8b6` progressed from HTTP `202` `pushed_waiting_for_argocd` to HTTP `200` `deployed`; the Root Application was `Synced` and `Healthy`, the observed revision matched, and all workload readiness checks passed.
+- **Phase 2J.5j.1:** complete non-root workload hardening with a numeric Pod identity, RuntimeDefault seccomp, disabled privilege escalation, and dropped Linux capabilities after Trivy KSV-0118 identified the initial smoke manifest.
+- **Phase 2J.5j.2:** complete read-only-root hardening with nginx-compatible writable runtime paths through `emptyDir` volumes, addressing Trivy KSV-0014 without granting host filesystem access.
+- The backend GitOps deploy, Argo CD reconciliation, workload readiness, and live read-only status chain is verified end to end and CI-clean.
 - V1 accepts a user-provided container image and does not require CI, an image build, or a registry push.
 - All V1 app manifests target the pre-created `devdeploy-apps` namespace.
 - App deletion remains unimplemented because the Root Application currently uses `prune=false`.
 
 Planned milestones:
 
-- **Phase 2J.5k (next):** execute the controlled live API deploy-and-status smoke test and record the verified result without adding frontend or mutation behavior.
+- **Phase 2J.6 (next):** implement the Frontend GitOps Deploy Form against the verified backend deploy and live status APIs.
 - Define safe prune/delete behavior before claiming GitOps deletion is complete.
 - Design and validate workload ingress exposure separately before presenting a local app URL as reachable.
 
