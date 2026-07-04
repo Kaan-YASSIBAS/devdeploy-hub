@@ -103,6 +103,16 @@
     "not_found": "Not found",
     "unknown": "Unknown"
   },
+  "archiveFilter": {
+    "active": "Active",
+    "archived": "Archived",
+    "all": "All",
+    "archivedBadge": "Archived",
+    "description": "Archived records are hidden from the normal list but remain stored in the database.",
+    "restoreLater": "Restore will be added in a later phase.",
+    "emptyTitle": "No archived records",
+    "emptyDescription": "Records you archive will appear here."
+  },
   "untracked": {
     "badge": "Untracked",
     "deploymentsTitle": "Untracked runtime deployments",

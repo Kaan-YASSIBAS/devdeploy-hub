@@ -5,6 +5,7 @@ from app.core.deps import get_current_user, get_db
 from app.api.v1.runtime_status import get_product_runtime_status_service
 from app.models.deployment_record import DeploymentRecord
 from app.models.user import User
+from app.schemas.archive import ArchiveFilter
 from app.schemas.deployment_record import (
     DeploymentRecordCreate,
     DeploymentRecordRead,
@@ -39,11 +40,12 @@ def create_deployment_record(
 
 @router.get("", response_model=list[DeploymentRecordRead])
 def list_deployment_records(
+    archive_filter: ArchiveFilter = "active",
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     runtime_service: ProductRuntimeStatusService = Depends(get_product_runtime_status_service),
 ) -> list[DeploymentRecordRead]:
-    deployments = DeploymentRecordService(db).list_for_user(current_user)
+    deployments = DeploymentRecordService(db).list_for_user(current_user, archive_filter)
     return [_read_response(deployment, runtime_service) for deployment in deployments]
 
 

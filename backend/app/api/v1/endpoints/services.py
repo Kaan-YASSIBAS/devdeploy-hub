@@ -5,6 +5,7 @@ from app.core.deps import get_current_user, get_db
 from app.api.v1.runtime_status import get_product_runtime_status_service
 from app.models.service_definition import ServiceDefinition
 from app.models.user import User
+from app.schemas.archive import ArchiveFilter
 from app.schemas.service_definition import (
     ServiceDefinitionCreate,
     ServiceDefinitionRead,
@@ -37,11 +38,12 @@ def create_service_definition(
 
 @router.get("", response_model=list[ServiceDefinitionRead])
 def list_service_definitions(
+    archive_filter: ArchiveFilter = "active",
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     runtime_service: ProductRuntimeStatusService = Depends(get_product_runtime_status_service),
 ) -> list[ServiceDefinitionRead]:
-    services = ServiceDefinitionService(db).list_for_user(current_user)
+    services = ServiceDefinitionService(db).list_for_user(current_user, archive_filter)
     return [_read_response(service, runtime_service) for service in services]
 
 

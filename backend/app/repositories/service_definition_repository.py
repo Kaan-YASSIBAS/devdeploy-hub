@@ -1,6 +1,7 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Query, Session
 
 from app.models.service_definition import ServiceDefinition
+from app.schemas.archive import ArchiveFilter
 
 
 class ServiceDefinitionRepository:
@@ -17,21 +18,31 @@ class ServiceDefinitionRepository:
             .first()
         )
 
-    def list_all(self) -> list[ServiceDefinition]:
+    @staticmethod
+    def _apply_archive_filter(query: Query, archive_filter: ArchiveFilter) -> Query:
+        if archive_filter == "active":
+            return query.filter(ServiceDefinition.archived_at.is_(None))
+        if archive_filter == "archived":
+            return query.filter(ServiceDefinition.archived_at.is_not(None))
+        if archive_filter == "all":
+            return query
+        raise ValueError("Unsupported archive filter")
+
+    def list_all(self, archive_filter: ArchiveFilter = "active") -> list[ServiceDefinition]:
         return (
-            self.db.query(ServiceDefinition)
-            .filter(ServiceDefinition.archived_at.is_(None))
+            self._apply_archive_filter(self.db.query(ServiceDefinition), archive_filter)
             .order_by(ServiceDefinition.created_at.desc())
             .all()
         )
 
-    def list_for_owner(self, owner_id: int) -> list[ServiceDefinition]:
+    def list_for_owner(
+        self,
+        owner_id: int,
+        archive_filter: ArchiveFilter = "active",
+    ) -> list[ServiceDefinition]:
+        query = self.db.query(ServiceDefinition).filter(ServiceDefinition.owner_id == owner_id)
         return (
-            self.db.query(ServiceDefinition)
-            .filter(
-                ServiceDefinition.owner_id == owner_id,
-                ServiceDefinition.archived_at.is_(None),
-            )
+            self._apply_archive_filter(query, archive_filter)
             .order_by(ServiceDefinition.created_at.desc())
             .all()
         )

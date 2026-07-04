@@ -1,6 +1,7 @@
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Query, Session, selectinload
 
 from app.models.deployment_record import DeploymentRecord
+from app.schemas.archive import ArchiveFilter
 
 
 class DeploymentRecordRepository:
@@ -15,23 +16,39 @@ class DeploymentRecordRepository:
             .first()
         )
 
-    def list_all(self) -> list[DeploymentRecord]:
-        return (
+    @staticmethod
+    def _apply_archive_filter(query: Query, archive_filter: ArchiveFilter) -> Query:
+        if archive_filter == "active":
+            return query.filter(DeploymentRecord.archived_at.is_(None))
+        if archive_filter == "archived":
+            return query.filter(DeploymentRecord.archived_at.is_not(None))
+        if archive_filter == "all":
+            return query
+        raise ValueError("Unsupported archive filter")
+
+    def list_all(self, archive_filter: ArchiveFilter = "active") -> list[DeploymentRecord]:
+        query = (
             self.db.query(DeploymentRecord)
             .options(selectinload(DeploymentRecord.service_definition))
-            .filter(DeploymentRecord.archived_at.is_(None))
+        )
+        return (
+            self._apply_archive_filter(query, archive_filter)
             .order_by(DeploymentRecord.created_at.desc())
             .all()
         )
 
-    def list_for_owner(self, owner_id: int) -> list[DeploymentRecord]:
-        return (
+    def list_for_owner(
+        self,
+        owner_id: int,
+        archive_filter: ArchiveFilter = "active",
+    ) -> list[DeploymentRecord]:
+        query = (
             self.db.query(DeploymentRecord)
             .options(selectinload(DeploymentRecord.service_definition))
-            .filter(
-                DeploymentRecord.owner_id == owner_id,
-                DeploymentRecord.archived_at.is_(None),
-            )
+            .filter(DeploymentRecord.owner_id == owner_id)
+        )
+        return (
+            self._apply_archive_filter(query, archive_filter)
             .order_by(DeploymentRecord.created_at.desc())
             .all()
         )

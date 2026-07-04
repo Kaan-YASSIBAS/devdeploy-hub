@@ -247,6 +247,92 @@ class ProductDomainApiTestCase(unittest.TestCase):
         )
         self.assertEqual(denied.status_code, 403)
 
+    def test_service_list_filters_active_archived_and_all_with_owner_isolation(self) -> None:
+        archived_service = self.create_service("Archived Service")
+        active_service = self.create_service("Active Service")
+        self.assertEqual(
+            self.client.post(f"/api/v1/services/{archived_service['id']}/archive").status_code,
+            200,
+        )
+
+        active = self.client.get("/api/v1/services")
+        archived = self.client.get("/api/v1/services", params={"archive_filter": "archived"})
+        all_records = self.client.get("/api/v1/services", params={"archive_filter": "all"})
+
+        self.assertEqual([item["id"] for item in active.json()], [active_service["id"]])
+        self.assertEqual([item["id"] for item in archived.json()], [archived_service["id"]])
+        self.assertEqual(
+            {item["id"] for item in all_records.json()},
+            {active_service["id"], archived_service["id"]},
+        )
+        self.assertIsNone(active.json()[0]["archived_at"])
+        self.assertIsNotNone(archived.json()[0]["archived_at"])
+
+        self.user_b.role = "admin"
+        self.db.commit()
+        self.current_user = self.user_b
+        for archive_filter in ("active", "archived", "all"):
+            response = self.client.get(
+                "/api/v1/services",
+                params={"archive_filter": archive_filter},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), [])
+
+    def test_deployment_list_filters_active_archived_and_all_with_owner_isolation(self) -> None:
+        archived_deployment = self.create_deployment()
+        active_deployment = self.create_deployment()
+        self.assertEqual(
+            self.client.post(
+                f"/api/v1/deployment-records/{archived_deployment['id']}/archive"
+            ).status_code,
+            200,
+        )
+
+        active = self.client.get("/api/v1/deployment-records")
+        archived = self.client.get(
+            "/api/v1/deployment-records",
+            params={"archive_filter": "archived"},
+        )
+        all_records = self.client.get(
+            "/api/v1/deployment-records",
+            params={"archive_filter": "all"},
+        )
+
+        self.assertEqual([item["id"] for item in active.json()], [active_deployment["id"]])
+        self.assertEqual(
+            [item["id"] for item in archived.json()],
+            [archived_deployment["id"]],
+        )
+        self.assertEqual(
+            {item["id"] for item in all_records.json()},
+            {active_deployment["id"], archived_deployment["id"]},
+        )
+        self.assertIsNone(active.json()[0]["archived_at"])
+        self.assertIsNotNone(archived.json()[0]["archived_at"])
+
+        self.current_user = self.user_b
+        for archive_filter in ("active", "archived", "all"):
+            response = self.client.get(
+                "/api/v1/deployment-records",
+                params={"archive_filter": archive_filter},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), [])
+
+    def test_invalid_archive_filter_is_rejected(self) -> None:
+        services_response = self.client.get(
+            "/api/v1/services",
+            params={"archive_filter": "deleted"},
+        )
+        deployments_response = self.client.get(
+            "/api/v1/deployment-records",
+            params={"archive_filter": "deleted"},
+        )
+
+        self.assertEqual(services_response.status_code, 422)
+        self.assertEqual(deployments_response.status_code, 422)
+
     def test_cross_owner_service_link_is_denied(self) -> None:
         service = self.create_service()
         self.current_user = self.user_b

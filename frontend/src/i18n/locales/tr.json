@@ -103,6 +103,16 @@
     "not_found": "Bulunamadı",
     "unknown": "Bilinmiyor"
   },
+  "archiveFilter": {
+    "active": "Aktif",
+    "archived": "Arşivlenenler",
+    "all": "Tümü",
+    "archivedBadge": "Arşivlendi",
+    "description": "Arşivlenen kayıtlar normal listeden gizlenir ancak veritabanında saklanır.",
+    "restoreLater": "Geri yükleme daha sonraki bir fazda eklenecek.",
+    "emptyTitle": "Arşivlenmiş kayıt yok",
+    "emptyDescription": "Arşivlediğin kayıtlar burada görünecek."
+  },
   "untracked": {
     "badge": "Takipsiz",
     "deploymentsTitle": "Takipsiz runtime deploymentları",

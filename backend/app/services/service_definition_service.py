@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.models.service_definition import ServiceDefinition, utc_now
 from app.models.user import User
 from app.repositories.service_definition_repository import ServiceDefinitionRepository
+from app.schemas.archive import ArchiveFilter
 from app.schemas.service_definition import ServiceDefinitionCreate, ServiceDefinitionUpdate
 
 
@@ -41,10 +42,12 @@ class ServiceDefinitionService:
         self.db.refresh(service)
         return service
 
-    def list_for_user(self, user: User) -> list[ServiceDefinition]:
-        if user.role == "admin":
-            return self.services.list_all()
-        return self.services.list_for_owner(user.id)
+    def list_for_user(
+        self,
+        user: User,
+        archive_filter: ArchiveFilter = "active",
+    ) -> list[ServiceDefinition]:
+        return self.services.list_for_owner(user.id, archive_filter)
 
     def list_owned(self, user: User) -> list[ServiceDefinition]:
         return self.services.list_for_owner(user.id)

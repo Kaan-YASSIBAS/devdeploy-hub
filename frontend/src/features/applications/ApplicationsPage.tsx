@@ -11,8 +11,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Tabs } from "@/components/ui/tabs";
 import { useAuth } from "@/features/auth/useAuth";
 import type {
+  ArchiveFilter,
   RuntimeServicePort,
   ServiceDefinition,
   ServiceRuntimeStatus,
@@ -43,16 +45,22 @@ export function ApplicationsPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>("active");
   const servicesQuery = useQuery({
-    queryKey: ["service-definitions"],
-    queryFn: serviceDefinitionsApi.list
+    queryKey: ["service-definitions", archiveFilter],
+    queryFn: () => serviceDefinitionsApi.list({ archiveFilter })
   });
+  const showUntracked = archiveFilter !== "archived";
   const untrackedQuery = useQuery({
     queryKey: ["untracked-services"],
-    queryFn: serviceDefinitionsApi.listUntracked
+    queryFn: serviceDefinitionsApi.listUntracked,
+    enabled: showUntracked
   });
   const services = useMemo(() => servicesQuery.data ?? [], [servicesQuery.data]);
-  const untrackedServices = useMemo(() => untrackedQuery.data?.items ?? [], [untrackedQuery.data]);
+  const untrackedServices = useMemo(
+    () => (showUntracked ? untrackedQuery.data?.items ?? [] : []),
+    [showUntracked, untrackedQuery.data]
+  );
 
   const archiveMutation = useMutation({
     mutationFn: (id: number) => serviceDefinitionsApi.archive(id),
@@ -108,7 +116,12 @@ export function ApplicationsPage() {
       header: t("applications.domain.fields.name"),
       render: (service) => (
         <div className="max-w-[280px]">
-          <p className="font-medium text-white">{service.name}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-medium text-white">{service.name}</p>
+            {service.archived_at ? (
+              <Badge variant="muted">{t("archiveFilter.archivedBadge")}</Badge>
+            ) : null}
+          </div>
           <p className="mt-1 line-clamp-2 text-xs text-slate-500">
             {service.description || t("applications.domain.noDescription")}
           </p>
@@ -168,7 +181,7 @@ export function ApplicationsPage() {
       key: "actions",
       header: t("common.actions"),
       render: (service) =>
-        service.runtime_status?.display_status === "not_found" ? (
+        !service.archived_at && service.runtime_status?.display_status === "not_found" ? (
           <Button
             aria-label={t("applications.domain.archive.action")}
             disabled={archiveMutation.isPending && archiveMutation.variables === service.id}
@@ -235,35 +248,67 @@ export function ApplicationsPage() {
     ? t("common.loading")
     : services.length
       ? t("applications.domain.emptyNoResultsTitle")
-      : t("applications.domain.emptyTitle");
+      : archiveFilter === "archived"
+        ? t("archiveFilter.emptyTitle")
+        : t("applications.domain.emptyTitle");
   const emptyDescription = servicesQuery.isError
     ? t("applications.domain.loadError")
     : services.length
       ? t("applications.domain.emptyNoResultsDescription")
-      : t("applications.domain.emptyDescription");
+      : archiveFilter === "archived"
+        ? t("archiveFilter.emptyDescription")
+        : t("applications.domain.emptyDescription");
   const showManaged =
     filteredServices.length > 0 ||
     filteredUntracked.length === 0 ||
     servicesQuery.isLoading ||
     servicesQuery.isError;
-  const untrackedUnavailable = untrackedQuery.isError || untrackedQuery.data?.runtime_available === false;
+  const untrackedUnavailable =
+    showUntracked && (untrackedQuery.isError || untrackedQuery.data?.runtime_available === false);
+  const isRefreshing = servicesQuery.isFetching || (showUntracked && untrackedQuery.isFetching);
+
+  const refreshLists = () => {
+    if (showUntracked) {
+      void Promise.all([servicesQuery.refetch(), untrackedQuery.refetch()]);
+      return;
+    }
+    void servicesQuery.refetch();
+  };
 
   return (
     <div>
       <PageHeader
         actions={
           <Button
-            disabled={servicesQuery.isFetching || untrackedQuery.isFetching}
+            disabled={isRefreshing}
             variant="outline"
-            onClick={() => void Promise.all([servicesQuery.refetch(), untrackedQuery.refetch()])}
+            onClick={refreshLists}
           >
-            <RefreshCw className={servicesQuery.isFetching || untrackedQuery.isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+            <RefreshCw className={isRefreshing ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
             {t("common.refresh")}
           </Button>
         }
         description={t("applications.domain.description")}
         title={t("applications.title")}
       />
+
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <Tabs
+          tabs={[
+            { value: "active", label: t("archiveFilter.active") },
+            { value: "archived", label: t("archiveFilter.archived") },
+            { value: "all", label: t("archiveFilter.all") }
+          ]}
+          value={archiveFilter}
+          onValueChange={(value) => setArchiveFilter(value as ArchiveFilter)}
+        />
+        {archiveFilter !== "active" ? (
+          <div className="max-w-xl text-xs text-slate-500">
+            <p>{t("archiveFilter.description")}</p>
+            <p>{t("archiveFilter.restoreLater")}</p>
+          </div>
+        ) : null}
+      </div>
 
       <div className="relative mb-5">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
@@ -301,7 +346,7 @@ export function ApplicationsPage() {
           </Card>
         ) : null}
 
-        {filteredUntracked.length ? (
+        {showUntracked && filteredUntracked.length ? (
           <Card className="border-amber-300/20">
             <CardContent className="space-y-4 pt-5">
               <div>

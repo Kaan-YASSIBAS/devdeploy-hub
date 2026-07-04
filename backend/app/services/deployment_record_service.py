@@ -6,6 +6,7 @@ from app.models.service_definition import ServiceDefinition
 from app.models.user import User
 from app.repositories.deployment_record_repository import DeploymentRecordRepository
 from app.repositories.service_definition_repository import ServiceDefinitionRepository
+from app.schemas.archive import ArchiveFilter
 from app.schemas.deployment_record import DeploymentRecordCreate, DeploymentRecordUpdate
 
 
@@ -51,10 +52,12 @@ class DeploymentRecordService:
         self.db.refresh(deployment)
         return self.deployments.get_by_id(deployment.id) or deployment
 
-    def list_for_user(self, user: User) -> list[DeploymentRecord]:
-        if user.role == "admin":
-            return self.deployments.list_all()
-        return self.deployments.list_for_owner(user.id)
+    def list_for_user(
+        self,
+        user: User,
+        archive_filter: ArchiveFilter = "active",
+    ) -> list[DeploymentRecord]:
+        return self.deployments.list_for_owner(user.id, archive_filter)
 
     def list_owned(self, user: User) -> list[DeploymentRecord]:
         return self.deployments.list_for_owner(user.id)

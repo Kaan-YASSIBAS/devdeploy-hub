@@ -53,6 +53,8 @@ export type RuntimeServicePort = {
   protocol: string | null;
 };
 
+export type ArchiveFilter = "active" | "archived" | "all";
+
 export type ServiceRuntimeStatus = {
   source: "kubernetes";
   display_status: "ready" | "not_found" | "unknown";

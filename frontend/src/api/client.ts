@@ -6,6 +6,7 @@ import type {
   ApiToken,
   ApiTokenCreateInput,
   ApiTokenCreateResponse,
+  ArchiveFilter,
   ClusterMetrics,
   ClusterSummary,
   DashboardSummary,
@@ -187,8 +188,12 @@ export const applicationsApi = {
 };
 
 export const serviceDefinitionsApi = {
-  async list() {
-    const { data } = await apiClient.get<ServiceDefinition[]>("/services");
+  async list(options?: { archiveFilter?: ArchiveFilter }) {
+    const { data } = await apiClient.get<ServiceDefinition[]>("/services", {
+      params: options?.archiveFilter
+        ? { archive_filter: options.archiveFilter }
+        : undefined
+    });
     return data;
   },
   async get(id: number) {
@@ -210,8 +215,12 @@ export const serviceDefinitionsApi = {
 };
 
 export const deploymentRecordsApi = {
-  async list() {
-    const { data } = await apiClient.get<DeploymentRecord[]>("/deployment-records");
+  async list(options?: { archiveFilter?: ArchiveFilter }) {
+    const { data } = await apiClient.get<DeploymentRecord[]>("/deployment-records", {
+      params: options?.archiveFilter
+        ? { archive_filter: options.archiveFilter }
+        : undefined
+    });
     return data;
   },
   async get(id: number) {

@@ -19,7 +19,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Tabs } from "@/components/ui/tabs";
 import type {
+  ArchiveFilter,
   DeploymentRecord,
   DeploymentRuntimeStatus,
   GitOpsAppDeployInput,
@@ -72,23 +74,29 @@ export function DeploymentsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>("active");
   const [gitOpsModalOpen, setGitOpsModalOpen] = useState(false);
   const [deployResponse, setDeployResponse] = useState<GitOpsAppDeployResponse | null>(null);
   const [pollTimedOut, setPollTimedOut] = useState(false);
   const recordsQuery = useQuery({
-    queryKey: ["deployment-records"],
-    queryFn: deploymentRecordsApi.list
+    queryKey: ["deployment-records", archiveFilter],
+    queryFn: () => deploymentRecordsApi.list({ archiveFilter })
   });
+  const showUntracked = archiveFilter !== "archived";
   const untrackedQuery = useQuery({
     queryKey: ["untracked-deployments"],
-    queryFn: deploymentRecordsApi.listUntracked
+    queryFn: deploymentRecordsApi.listUntracked,
+    enabled: showUntracked
   });
   const servicesQuery = useQuery({
-    queryKey: ["service-definitions"],
-    queryFn: serviceDefinitionsApi.list
+    queryKey: ["service-definitions", "all"],
+    queryFn: () => serviceDefinitionsApi.list({ archiveFilter: "all" })
   });
   const records = useMemo(() => recordsQuery.data ?? [], [recordsQuery.data]);
-  const untrackedDeployments = useMemo(() => untrackedQuery.data?.items ?? [], [untrackedQuery.data]);
+  const untrackedDeployments = useMemo(
+    () => (showUntracked ? untrackedQuery.data?.items ?? [] : []),
+    [showUntracked, untrackedQuery.data]
+  );
   const services = useMemo(() => servicesQuery.data ?? [], [servicesQuery.data]);
   const servicesById = useMemo(
     () => new Map(services.map((service) => [service.id, service])),
@@ -213,7 +221,12 @@ export function DeploymentsPage() {
       header: t("deployments.records.fields.appName"),
       render: (record) => (
         <div>
-          <p className="font-medium text-white">{record.app_name}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-medium text-white">{record.app_name}</p>
+            {record.archived_at ? (
+              <Badge variant="muted">{t("archiveFilter.archivedBadge")}</Badge>
+            ) : null}
+          </div>
           <p className="text-xs text-slate-500">{record.namespace}</p>
         </div>
       )
@@ -316,7 +329,7 @@ export function DeploymentsPage() {
       key: "actions",
       header: t("common.actions"),
       render: (record) =>
-        record.runtime_status?.display_status === "not_found" ? (
+        !record.archived_at && record.runtime_status?.display_status === "not_found" ? (
           <Button
             aria-label={t("deployments.records.archive.action")}
             disabled={archiveMutation.isPending && archiveMutation.variables === record.id}
@@ -397,18 +410,32 @@ export function DeploymentsPage() {
     ? t("common.loading")
     : records.length
       ? t("deployments.records.emptyNoResultsTitle")
-      : t("deployments.records.emptyTitle");
+      : archiveFilter === "archived"
+        ? t("archiveFilter.emptyTitle")
+        : t("deployments.records.emptyTitle");
   const emptyDescription = recordsQuery.isError
     ? t("deployments.records.loadError")
     : records.length
       ? t("deployments.records.emptyNoResultsDescription")
-      : t("deployments.records.emptyDescription");
+      : archiveFilter === "archived"
+        ? t("archiveFilter.emptyDescription")
+        : t("deployments.records.emptyDescription");
   const showManaged =
     filteredRecords.length > 0 ||
     filteredUntracked.length === 0 ||
     recordsQuery.isLoading ||
     recordsQuery.isError;
-  const untrackedUnavailable = untrackedQuery.isError || untrackedQuery.data?.runtime_available === false;
+  const untrackedUnavailable =
+    showUntracked && (untrackedQuery.isError || untrackedQuery.data?.runtime_available === false);
+  const isRefreshing = recordsQuery.isFetching || (showUntracked && untrackedQuery.isFetching);
+
+  const refreshLists = () => {
+    if (showUntracked) {
+      void Promise.all([recordsQuery.refetch(), untrackedQuery.refetch()]);
+      return;
+    }
+    void recordsQuery.refetch();
+  };
 
   return (
     <div>
@@ -416,11 +443,11 @@ export function DeploymentsPage() {
         actions={
           <div className="flex flex-wrap gap-3">
             <Button
-              disabled={recordsQuery.isFetching || untrackedQuery.isFetching}
+              disabled={isRefreshing}
               variant="outline"
-              onClick={() => void Promise.all([recordsQuery.refetch(), untrackedQuery.refetch()])}
+              onClick={refreshLists}
             >
-              <RefreshCw className={recordsQuery.isFetching || untrackedQuery.isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+              <RefreshCw className={isRefreshing ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
               {t("common.refresh")}
             </Button>
             <Button onClick={() => setGitOpsModalOpen(true)}>
@@ -458,6 +485,24 @@ export function DeploymentsPage() {
         />
       ) : null}
 
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <Tabs
+          tabs={[
+            { value: "active", label: t("archiveFilter.active") },
+            { value: "archived", label: t("archiveFilter.archived") },
+            { value: "all", label: t("archiveFilter.all") }
+          ]}
+          value={archiveFilter}
+          onValueChange={(value) => setArchiveFilter(value as ArchiveFilter)}
+        />
+        {archiveFilter !== "active" ? (
+          <div className="max-w-xl text-xs text-slate-500">
+            <p>{t("archiveFilter.description")}</p>
+            <p>{t("archiveFilter.restoreLater")}</p>
+          </div>
+        ) : null}
+      </div>
+
       <div className="relative mb-5">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
         <Input
@@ -494,7 +539,7 @@ export function DeploymentsPage() {
           </Card>
         ) : null}
 
-        {filteredUntracked.length ? (
+        {showUntracked && filteredUntracked.length ? (
           <Card className="border-amber-300/20">
             <CardContent className="space-y-4 pt-5">
               <div>
