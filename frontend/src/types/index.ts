@@ -138,6 +138,7 @@ export type ServiceDefinition = {
   default_image: string | null;
   default_replicas: number;
   default_port: number | null;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
   runtime_status: ServiceRuntimeStatus | null;
@@ -168,6 +169,7 @@ export type DeploymentRecord = {
   commit_sha: string | null;
   desired_state: DeploymentRecordDesiredState;
   status_summary: string | null;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
   runtime_status: DeploymentRuntimeStatus | null;

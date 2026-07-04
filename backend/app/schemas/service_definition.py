@@ -79,6 +79,7 @@ class ServiceDefinitionRead(BaseModel):
     default_image: str | None = None
     default_replicas: int
     default_port: int | None = None
+    archived_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     runtime_status: ServiceRuntimeStatusRead | None = None

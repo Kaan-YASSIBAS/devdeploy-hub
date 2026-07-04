@@ -1,7 +1,7 @@
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.models.deployment_record import DeploymentRecord
+from app.models.deployment_record import DeploymentRecord, utc_now
 from app.models.service_definition import ServiceDefinition
 from app.models.user import User
 from app.repositories.deployment_record_repository import DeploymentRecordRepository
@@ -80,3 +80,15 @@ class DeploymentRecordService:
         self.db.commit()
         self.db.refresh(updated)
         return self.deployments.get_by_id(updated.id) or updated
+
+    def archive(self, deployment_id: int, user: User) -> DeploymentRecord:
+        deployment = self.deployments.get_by_id(deployment_id)
+        if deployment is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment record not found")
+        if deployment.owner_id != user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Deployment record access denied")
+        if deployment.archived_at is None:
+            deployment.archived_at = utc_now()
+            self.db.commit()
+            self.db.refresh(deployment)
+        return self.deployments.get_by_id(deployment.id) or deployment

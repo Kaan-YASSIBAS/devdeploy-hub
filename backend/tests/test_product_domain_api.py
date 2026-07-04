@@ -199,6 +199,54 @@ class ProductDomainApiTestCase(unittest.TestCase):
             403,
         )
 
+    def test_service_archive_is_owner_scoped_idempotent_and_hidden_from_list(self) -> None:
+        service = self.create_service()
+
+        archived = self.client.post(f"/api/v1/services/{service['id']}/archive")
+        listed = self.client.get("/api/v1/services")
+        fetched = self.client.get(f"/api/v1/services/{service['id']}")
+        archived_again = self.client.post(f"/api/v1/services/{service['id']}/archive")
+
+        self.assertEqual(archived.status_code, 200, archived.text)
+        self.assertIsNotNone(archived.json()["archived_at"])
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.json(), [])
+        self.assertEqual(fetched.status_code, 200)
+        self.assertEqual(fetched.json()["archived_at"], archived.json()["archived_at"])
+        self.assertEqual(archived_again.status_code, 200)
+        self.assertEqual(archived_again.json()["archived_at"], archived.json()["archived_at"])
+
+        self.current_user = self.user_b
+        denied = self.client.post(f"/api/v1/services/{service['id']}/archive")
+        self.assertEqual(denied.status_code, 403)
+
+    def test_deployment_archive_is_owner_scoped_idempotent_and_hidden_from_list(self) -> None:
+        deployment = self.create_deployment()
+
+        archived = self.client.post(
+            f"/api/v1/deployment-records/{deployment['id']}/archive"
+        )
+        listed = self.client.get("/api/v1/deployment-records")
+        fetched = self.client.get(f"/api/v1/deployment-records/{deployment['id']}")
+        archived_again = self.client.post(
+            f"/api/v1/deployment-records/{deployment['id']}/archive"
+        )
+
+        self.assertEqual(archived.status_code, 200, archived.text)
+        self.assertIsNotNone(archived.json()["archived_at"])
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.json(), [])
+        self.assertEqual(fetched.status_code, 200)
+        self.assertEqual(fetched.json()["archived_at"], archived.json()["archived_at"])
+        self.assertEqual(archived_again.status_code, 200)
+        self.assertEqual(archived_again.json()["archived_at"], archived.json()["archived_at"])
+
+        self.current_user = self.user_b
+        denied = self.client.post(
+            f"/api/v1/deployment-records/{deployment['id']}/archive"
+        )
+        self.assertEqual(denied.status_code, 403)
+
     def test_cross_owner_service_link_is_denied(self) -> None:
         service = self.create_service()
         self.current_user = self.user_b
@@ -233,6 +281,8 @@ class ProductDomainApiTestCase(unittest.TestCase):
 
         self.assertEqual(self.client.get("/api/v1/services").status_code, 401)
         self.assertEqual(self.client.get("/api/v1/deployment-records").status_code, 401)
+        self.assertEqual(self.client.post("/api/v1/services/1/archive").status_code, 401)
+        self.assertEqual(self.client.post("/api/v1/deployment-records/1/archive").status_code, 401)
 
     def test_deployment_record_list_and_get_include_running_runtime_status(self) -> None:
         service = self.create_service("payments-api")

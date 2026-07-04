@@ -19,6 +19,7 @@ class DeploymentRecordRepository:
         return (
             self.db.query(DeploymentRecord)
             .options(selectinload(DeploymentRecord.service_definition))
+            .filter(DeploymentRecord.archived_at.is_(None))
             .order_by(DeploymentRecord.created_at.desc())
             .all()
         )
@@ -27,7 +28,10 @@ class DeploymentRecordRepository:
         return (
             self.db.query(DeploymentRecord)
             .options(selectinload(DeploymentRecord.service_definition))
-            .filter(DeploymentRecord.owner_id == owner_id)
+            .filter(
+                DeploymentRecord.owner_id == owner_id,
+                DeploymentRecord.archived_at.is_(None),
+            )
             .order_by(DeploymentRecord.created_at.desc())
             .all()
         )

@@ -202,6 +202,10 @@ export const serviceDefinitionsApi = {
   async update(id: number, input: ServiceDefinitionUpdateInput) {
     const { data } = await apiClient.patch<ServiceDefinition>(`/services/${id}`, input);
     return data;
+  },
+  async archive(id: number) {
+    const { data } = await apiClient.post<ServiceDefinition>(`/services/${id}/archive`);
+    return data;
   }
 };
 
@@ -222,6 +226,10 @@ export const deploymentRecordsApi = {
   },
   async update(id: number, input: DeploymentRecordUpdateInput) {
     const { data } = await apiClient.patch<DeploymentRecord>(`/deployment-records/${id}`, input);
+    return data;
+  },
+  async archive(id: number) {
+    const { data } = await apiClient.post<DeploymentRecord>(`/deployment-records/${id}/archive`);
     return data;
   }
 };

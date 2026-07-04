@@ -74,3 +74,12 @@ def update_service_definition(
     current_user: User = Depends(get_current_user),
 ) -> ServiceDefinition:
     return ServiceDefinitionService(db).update(service_id, payload, current_user)
+
+
+@router.post("/{service_id}/archive", response_model=ServiceDefinitionRead)
+def archive_service_definition(
+    service_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ServiceDefinition:
+    return ServiceDefinitionService(db).archive(service_id, current_user)

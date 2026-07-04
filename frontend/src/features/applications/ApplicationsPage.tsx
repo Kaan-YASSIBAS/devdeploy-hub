@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
-import { Boxes, RefreshCw, Search } from "lucide-react";
+import { Archive, Boxes, RefreshCw, Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { serviceDefinitionsApi } from "@/api/client";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
@@ -40,6 +41,7 @@ function runtimePorts(ports: RuntimeServicePort[] | null) {
 export function ApplicationsPage() {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const servicesQuery = useQuery({
     queryKey: ["service-definitions"],
@@ -51,6 +53,24 @@ export function ApplicationsPage() {
   });
   const services = useMemo(() => servicesQuery.data ?? [], [servicesQuery.data]);
   const untrackedServices = useMemo(() => untrackedQuery.data?.items ?? [], [untrackedQuery.data]);
+
+  const archiveMutation = useMutation({
+    mutationFn: (id: number) => serviceDefinitionsApi.archive(id),
+    onSuccess: async () => {
+      toast.success(t("applications.domain.archive.success"));
+      await queryClient.invalidateQueries({ queryKey: ["service-definitions"] });
+      await queryClient.invalidateQueries({ queryKey: ["untracked-services"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      await queryClient.invalidateQueries({ queryKey: ["user-summary"] });
+    },
+    onError: () => toast.error(t("applications.domain.archive.error"))
+  });
+
+  const archiveService = (service: ServiceDefinition) => {
+    if (window.confirm(t("applications.domain.archive.confirm"))) {
+      archiveMutation.mutate(service.id);
+    }
+  };
 
   const filteredServices = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -143,6 +163,23 @@ export function ApplicationsPage() {
       key: "updated",
       header: t("applications.domain.fields.updated"),
       render: (service) => formatDate(service.updated_at)
+    },
+    {
+      key: "actions",
+      header: t("common.actions"),
+      render: (service) =>
+        service.runtime_status?.display_status === "not_found" ? (
+          <Button
+            aria-label={t("applications.domain.archive.action")}
+            disabled={archiveMutation.isPending && archiveMutation.variables === service.id}
+            size="sm"
+            variant="outline"
+            onClick={() => archiveService(service)}
+          >
+            <Archive className="h-4 w-4" />
+            {t("applications.domain.archive.action")}
+          </Button>
+        ) : null
     }
   ];
 

@@ -76,3 +76,12 @@ def update_deployment_record(
     current_user: User = Depends(get_current_user),
 ) -> DeploymentRecord:
     return DeploymentRecordService(db).update(deployment_id, payload, current_user)
+
+
+@router.post("/{deployment_id}/archive", response_model=DeploymentRecordRead)
+def archive_deployment_record(
+    deployment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> DeploymentRecord:
+    return DeploymentRecordService(db).archive(deployment_id, current_user)

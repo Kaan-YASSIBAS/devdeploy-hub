@@ -48,6 +48,7 @@ class DeploymentRecord(Base):
     commit_sha = Column(String(64), nullable=True)
     desired_state = Column(String(32), nullable=False, default="draft")
     status_summary = Column(Text, nullable=True)
+    archived_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 

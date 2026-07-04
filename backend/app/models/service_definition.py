@@ -31,6 +31,7 @@ class ServiceDefinition(Base):
     default_image = Column(String(512), nullable=True)
     default_replicas = Column(Integer, nullable=False, default=1)
     default_port = Column(Integer, nullable=True)
+    archived_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 

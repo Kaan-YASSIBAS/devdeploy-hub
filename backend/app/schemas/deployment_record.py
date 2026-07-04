@@ -151,6 +151,7 @@ class DeploymentRecordRead(BaseModel):
     commit_sha: str | None = None
     desired_state: DesiredState
     status_summary: str | None = None
+    archived_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     runtime_status: DeploymentRuntimeStatusRead | None = None

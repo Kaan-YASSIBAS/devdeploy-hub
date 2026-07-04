@@ -347,6 +347,12 @@
         "defaults": "Replica / port",
         "owner": "Sahip",
         "updated": "Güncellendi"
+      },
+      "archive": {
+        "action": "Arşivle",
+        "confirm": "Bu işlem yalnızca DevDeploy kaydını arşivler. Kubernetes veya GitOps kaynaklarını silmez.",
+        "success": "Servis kaydı arşivlendi.",
+        "error": "Servis kaydı arşivlenemedi."
       }
     },
     "table": {
@@ -442,8 +448,16 @@
       "noService": "Bağlı servis yok",
       "notPublished": "GitOps ile yayınlanmadı",
       "desiredStateLabel": "Hedef durum: {{state}}",
+      "gitopsStateLabel": "GitOps durumu: {{state}}",
+      "gitopsPublished": "GitOps: Yayınlandı",
       "runtimeReplicas": "Replica {{ready}}/{{desired}} hazır",
       "runtimePods": "Pod {{ready}}/{{total}} hazır",
+      "archive": {
+        "action": "Arşivle",
+        "confirm": "Bu işlem yalnızca DevDeploy kaydını arşivler. Kubernetes veya GitOps kaynaklarını silmez.",
+        "success": "Deployment kaydı arşivlendi.",
+        "error": "Deployment kaydı arşivlenemedi."
+      },
       "fields": {
         "service": "Servis tanımı",
         "appName": "Deployment",

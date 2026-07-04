@@ -18,12 +18,20 @@ class ServiceDefinitionRepository:
         )
 
     def list_all(self) -> list[ServiceDefinition]:
-        return self.db.query(ServiceDefinition).order_by(ServiceDefinition.created_at.desc()).all()
+        return (
+            self.db.query(ServiceDefinition)
+            .filter(ServiceDefinition.archived_at.is_(None))
+            .order_by(ServiceDefinition.created_at.desc())
+            .all()
+        )
 
     def list_for_owner(self, owner_id: int) -> list[ServiceDefinition]:
         return (
             self.db.query(ServiceDefinition)
-            .filter(ServiceDefinition.owner_id == owner_id)
+            .filter(
+                ServiceDefinition.owner_id == owner_id,
+                ServiceDefinition.archived_at.is_(None),
+            )
             .order_by(ServiceDefinition.created_at.desc())
             .all()
         )

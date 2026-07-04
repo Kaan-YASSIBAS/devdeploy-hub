@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Database, Plus, RefreshCw, Rocket, Search } from "lucide-react";
+import { Archive, Database, Plus, RefreshCw, Rocket, Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -64,6 +64,10 @@ function runtimeVariant(status: DeploymentRuntimeStatus["display_status"]) {
   return "muted";
 }
 
+function hasPublishedGitOpsSummary(summary: string | null) {
+  return summary?.toLowerCase().includes("gitops manifests published") ?? false;
+}
+
 export function DeploymentsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -90,6 +94,24 @@ export function DeploymentsPage() {
     () => new Map(services.map((service) => [service.id, service])),
     [services]
   );
+
+  const archiveMutation = useMutation({
+    mutationFn: (id: number) => deploymentRecordsApi.archive(id),
+    onSuccess: async () => {
+      toast.success(t("deployments.records.archive.success"));
+      await queryClient.invalidateQueries({ queryKey: ["deployment-records"] });
+      await queryClient.invalidateQueries({ queryKey: ["untracked-deployments"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      await queryClient.invalidateQueries({ queryKey: ["user-summary"] });
+    },
+    onError: () => toast.error(t("deployments.records.archive.error"))
+  });
+
+  const archiveRecord = (record: DeploymentRecord) => {
+    if (window.confirm(t("deployments.records.archive.confirm"))) {
+      archiveMutation.mutate(record.id);
+    }
+  };
 
   const gitOpsMutation = useMutation({
     mutationFn: (input: GitOpsAppDeployInput) => deployGitOpsApp(input),
@@ -214,6 +236,17 @@ export function DeploymentsPage() {
       header: t("deployments.records.fields.status"),
       render: (record) => {
         const runtime = record.runtime_status;
+        const published = hasPublishedGitOpsSummary(record.status_summary);
+        const publishedLifecycle =
+          published || (runtime?.display_status === "running" && record.desired_state === "pending");
+        const lifecycleLabel =
+          publishedLifecycle
+            ? t("deployments.records.gitopsPublished")
+            : record.desired_state === "draft"
+              ? t("deployments.records.status.draft")
+              : t("deployments.records.gitopsStateLabel", {
+                  state: t(`deployments.records.status.${record.desired_state}`)
+                });
         return (
           <div className="space-y-1.5">
             <Badge variant={runtime ? runtimeVariant(runtime.display_status) : "muted"}>
@@ -221,12 +254,8 @@ export function DeploymentsPage() {
                 ? t(`runtimeStatus.${runtime.display_status}`)
                 : t(`deployments.records.status.${record.desired_state}`)}
             </Badge>
-            <p className="text-xs text-slate-500">
-              {t("deployments.records.desiredStateLabel", {
-                state: t(`deployments.records.status.${record.desired_state}`)
-              })}
-            </p>
-            {record.status_summary ? (
+            <p className="text-xs text-slate-500">{lifecycleLabel}</p>
+            {record.status_summary && !publishedLifecycle ? (
               <p className="max-w-[220px] text-xs text-slate-500">{record.status_summary}</p>
             ) : null}
           </div>
@@ -282,6 +311,23 @@ export function DeploymentsPage() {
       render: (record) => (
         <p>{formatDate(record.updated_at)}</p>
       )
+    },
+    {
+      key: "actions",
+      header: t("common.actions"),
+      render: (record) =>
+        record.runtime_status?.display_status === "not_found" ? (
+          <Button
+            aria-label={t("deployments.records.archive.action")}
+            disabled={archiveMutation.isPending && archiveMutation.variables === record.id}
+            size="sm"
+            variant="outline"
+            onClick={() => archiveRecord(record)}
+          >
+            <Archive className="h-4 w-4" />
+            {t("deployments.records.archive.action")}
+          </Button>
+        ) : null
     }
   ];
 

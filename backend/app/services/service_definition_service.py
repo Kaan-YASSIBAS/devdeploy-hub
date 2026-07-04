@@ -1,7 +1,7 @@
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.models.service_definition import ServiceDefinition
+from app.models.service_definition import ServiceDefinition, utc_now
 from app.models.user import User
 from app.repositories.service_definition_repository import ServiceDefinitionRepository
 from app.schemas.service_definition import ServiceDefinitionCreate, ServiceDefinitionUpdate
@@ -70,3 +70,15 @@ class ServiceDefinitionService:
         self.db.commit()
         self.db.refresh(updated)
         return updated
+
+    def archive(self, service_id: int, user: User) -> ServiceDefinition:
+        service = self.services.get_by_id(service_id)
+        if service is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service definition not found")
+        if service.owner_id != user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Service definition access denied")
+        if service.archived_at is None:
+            service.archived_at = utc_now()
+            self.db.commit()
+            self.db.refresh(service)
+        return service

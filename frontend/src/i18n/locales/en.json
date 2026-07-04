@@ -347,6 +347,12 @@
         "defaults": "Replicas / port",
         "owner": "Owner",
         "updated": "Updated"
+      },
+      "archive": {
+        "action": "Archive",
+        "confirm": "This only archives the DevDeploy record. It does not delete Kubernetes or GitOps resources.",
+        "success": "Service record archived.",
+        "error": "Service record could not be archived."
       }
     },
     "table": {
@@ -442,8 +448,16 @@
       "noService": "No linked service",
       "notPublished": "Not published through GitOps",
       "desiredStateLabel": "Desired state: {{state}}",
+      "gitopsStateLabel": "GitOps state: {{state}}",
+      "gitopsPublished": "GitOps: Published",
       "runtimeReplicas": "Replicas {{ready}}/{{desired}} ready",
       "runtimePods": "Pods {{ready}}/{{total}} ready",
+      "archive": {
+        "action": "Archive",
+        "confirm": "This only archives the DevDeploy record. It does not delete Kubernetes or GitOps resources.",
+        "success": "Deployment record archived.",
+        "error": "Deployment record could not be archived."
+      },
       "fields": {
         "service": "Service definition",
         "appName": "Deployment",
