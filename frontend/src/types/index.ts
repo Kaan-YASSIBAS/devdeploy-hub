@@ -89,7 +89,7 @@ export type DeploymentRecord = {
   updated_at: string;
 };
 
-export type DeploymentRecordCreateInput = {
+export type DeploymentRecordUpdateInput = Partial<{
   service_definition_id: number | null;
   app_name: string;
   image: string;
@@ -99,15 +99,10 @@ export type DeploymentRecordCreateInput = {
   service_type: "ClusterIP";
   namespace: string;
   desired_state: DeploymentRecordDesiredState;
-};
-
-export type DeploymentRecordUpdateInput = Partial<
-  DeploymentRecordCreateInput & {
-    gitops_manifest_path: string | null;
-    commit_sha: string | null;
-    status_summary: string | null;
-  }
->;
+  gitops_manifest_path: string | null;
+  commit_sha: string | null;
+  status_summary: string | null;
+}>;
 
 export type MockApplication = {
   id: string;

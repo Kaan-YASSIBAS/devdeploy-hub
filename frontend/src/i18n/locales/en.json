@@ -424,27 +424,19 @@
     "description": "Coordinate image releases, rollout strategies, and deployment health from one queue.",
     "createDeployment": "Create deployment",
     "records": {
-      "description": "Manage first-class deployment records and publish workloads through the separate GitOps action.",
-      "pageNotice": "Deployment records store desired deployment metadata in DevDeploy Hub. Creating a record does not publish manifests or deploy to Kubernetes; use Deploy through GitOps for that explicit operation.",
-      "newRecord": "New deployment record",
-      "deployWithGitOps": "Deploy through GitOps",
-      "createTitle": "Create deployment record",
-      "createDescription": "Record deployment intent and defaults without publishing manifests.",
-      "createAction": "Create record",
-      "createdToast": "Deployment record created.",
-      "createFailed": "Deployment record could not be created.",
-      "loadError": "Deployment records could not be loaded.",
-      "noDeployNotice": "This stores a database record only. It does not update Git, Argo CD, or Kubernetes.",
-      "searchPlaceholder": "Search records by app, service, image, namespace, state, or commit...",
-      "emptyTitle": "No deployment records yet",
-      "emptyDescription": "Create a deployment record to capture desired deployment metadata.",
-      "emptyNoResultsTitle": "No deployment records match your search",
-      "emptyNoResultsDescription": "Clear the search or create a new deployment record.",
+      "description": "Create deployments; DevDeploy Hub uses GitOps behind the scenes.",
+      "pageNotice": "Deployment records show the deployment lifecycle created or managed by DevDeploy Hub. When you create a deployment, manifests are published through GitOps.",
+      "loadError": "Deployments could not be loaded.",
+      "searchPlaceholder": "Search deployments by app, service, image, namespace, state, or commit...",
+      "emptyTitle": "No deployments yet",
+      "emptyDescription": "Created deployments will appear here.",
+      "emptyNoResultsTitle": "No deployments match your search",
+      "emptyNoResultsDescription": "Clear the search to see all deployments.",
       "noService": "No linked service",
       "notPublished": "Not published through GitOps",
       "fields": {
         "service": "Service definition",
-        "appName": "Deployment record",
+        "appName": "Deployment",
         "image": "Container image",
         "namespace": "Namespace",
         "replicas": "Replicas",
@@ -459,14 +451,6 @@
       "status": {
         "draft": "Draft",
         "pending": "Pending"
-      },
-      "validation": {
-        "appName": "Use a lowercase Kubernetes name with letters, numbers, or hyphens (maximum 40 characters).",
-        "image": "Container image is required and cannot contain whitespace.",
-        "namespace": "Use a valid lowercase Kubernetes namespace name.",
-        "replicas": "Replicas must be between 1 and 20.",
-        "containerPort": "Container port must be between 1 and 65535.",
-        "servicePort": "Service port must be between 1 and 65535."
       }
     },
     "filters": {

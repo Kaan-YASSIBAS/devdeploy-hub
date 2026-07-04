@@ -424,27 +424,19 @@
     "description": "Image release'lerini, rollout stratejilerini ve deployment sağlığını tek kuyruktan yönet.",
     "createDeployment": "Deployment oluştur",
     "records": {
-      "description": "Birinci sınıf deployment kayıtlarını yönet; workload yayınlamak için ayrı GitOps işlemini kullan.",
-      "pageNotice": "Deployment kayıtları, hedef deployment bilgisini DevDeploy Hub'da saklar. Kayıt oluşturmak manifest yayınlamaz veya Kubernetes'e deployment yapmaz; bunun için GitOps ile deploy et işlemini kullan.",
-      "newRecord": "Yeni deployment kaydı",
-      "deployWithGitOps": "GitOps ile deploy et",
-      "createTitle": "Deployment kaydı oluştur",
-      "createDescription": "Manifest yayınlamadan deployment hedefini ve varsayılanlarını kaydet.",
-      "createAction": "Kaydı oluştur",
-      "createdToast": "Deployment kaydı oluşturuldu.",
-      "createFailed": "Deployment kaydı oluşturulamadı.",
-      "loadError": "Deployment kayıtları yüklenemedi.",
-      "noDeployNotice": "Bu işlem yalnızca veritabanına kayıt ekler. Git, Argo CD veya Kubernetes üzerinde değişiklik yapmaz.",
-      "searchPlaceholder": "Kayıtlarda uygulama, servis, image, namespace, durum veya commit ara...",
-      "emptyTitle": "Henüz deployment kaydı yok",
-      "emptyDescription": "Hedef deployment bilgisini saklamak için bir deployment kaydı oluştur.",
-      "emptyNoResultsTitle": "Aramayla eşleşen deployment kaydı yok",
-      "emptyNoResultsDescription": "Aramayı temizle veya yeni bir deployment kaydı oluştur.",
+      "description": "Deployment oluştur; DevDeploy Hub arka planda GitOps akışını kullanır.",
+      "pageNotice": "Deployment kayıtları, DevDeploy Hub'ın oluşturduğu veya yönettiği deployment yaşam döngüsünü gösterir. Yeni deployment oluşturduğunda manifestler GitOps üzerinden yayınlanır.",
+      "loadError": "Deploymentlar yüklenemedi.",
+      "searchPlaceholder": "Deploymentlarda uygulama, servis, image, namespace, durum veya commit ara...",
+      "emptyTitle": "Henüz deployment yok",
+      "emptyDescription": "Deployment oluşturduğunda kayıt burada görünecek.",
+      "emptyNoResultsTitle": "Aramayla eşleşen deployment yok",
+      "emptyNoResultsDescription": "Tüm deploymentları görmek için aramayı temizle.",
       "noService": "Bağlı servis yok",
       "notPublished": "GitOps ile yayınlanmadı",
       "fields": {
         "service": "Servis tanımı",
-        "appName": "Deployment kaydı",
+        "appName": "Deployment",
         "image": "Container image",
         "namespace": "Namespace",
         "replicas": "Replica",
@@ -459,14 +451,6 @@
       "status": {
         "draft": "Taslak",
         "pending": "Bekliyor"
-      },
-      "validation": {
-        "appName": "En fazla 40 karakter olacak şekilde küçük harf, rakam ve tire içeren bir Kubernetes adı kullan.",
-        "image": "Container image zorunludur ve boşluk içeremez.",
-        "namespace": "Geçerli, küçük harfli bir Kubernetes namespace adı kullan.",
-        "replicas": "Replica sayısı 1 ile 20 arasında olmalıdır.",
-        "containerPort": "Container port 1 ile 65535 arasında olmalıdır.",
-        "servicePort": "Service port 1 ile 65535 arasında olmalıdır."
       }
     },
     "filters": {

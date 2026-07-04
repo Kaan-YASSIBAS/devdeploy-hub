@@ -1,17 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { Database, GitBranch, Plus, RefreshCw, Rocket, Search } from "lucide-react";
+import { Database, Plus, RefreshCw, Rocket, Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   deployGitOpsApp,
   deploymentRecordsApi,
-  getApiErrorMessage,
   getApiErrorStatus,
   getGitOpsAppStatus,
   serviceDefinitionsApi
 } from "@/api/client";
-import { CreateDeploymentRecordModal } from "@/components/deployments/CreateDeploymentRecordModal";
 import { CreateGitOpsAppModal } from "@/components/deployments/CreateGitOpsAppModal";
 import { GitOpsDeployStatusCard } from "@/components/deployments/GitOpsDeployStatusCard";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -23,7 +21,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type {
   DeploymentRecord,
-  DeploymentRecordCreateInput,
   GitOpsAppDeployInput,
   GitOpsAppDeployResponse,
   GitOpsAppDeployStatus
@@ -62,7 +59,6 @@ export function DeploymentsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
-  const [recordModalOpen, setRecordModalOpen] = useState(false);
   const [gitOpsModalOpen, setGitOpsModalOpen] = useState(false);
   const [deployResponse, setDeployResponse] = useState<GitOpsAppDeployResponse | null>(null);
   const [pollTimedOut, setPollTimedOut] = useState(false);
@@ -80,17 +76,6 @@ export function DeploymentsPage() {
     () => new Map(services.map((service) => [service.id, service])),
     [services]
   );
-
-  const createRecordMutation = useMutation({
-    mutationFn: (input: DeploymentRecordCreateInput) => deploymentRecordsApi.create(input),
-    onSuccess: async () => {
-      toast.success(t("deployments.records.createdToast"));
-      await queryClient.invalidateQueries({ queryKey: ["deployment-records"] });
-    },
-    onError: (error) => {
-      toast.error(getApiErrorMessage(error) || t("deployments.records.createFailed"));
-    }
-  });
 
   const gitOpsMutation = useMutation({
     mutationFn: (input: GitOpsAppDeployInput) => deployGitOpsApp(input),
@@ -253,13 +238,9 @@ export function DeploymentsPage() {
               <RefreshCw className={recordsQuery.isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
               {t("common.refresh")}
             </Button>
-            <Button variant="secondary" onClick={() => setRecordModalOpen(true)}>
-              <Plus className="h-4 w-4" />
-              {t("deployments.records.newRecord")}
-            </Button>
             <Button onClick={() => setGitOpsModalOpen(true)}>
-              <GitBranch className="h-4 w-4" />
-              {t("deployments.records.deployWithGitOps")}
+              <Plus className="h-4 w-4" />
+              {t("deployments.createDeployment")}
             </Button>
           </div>
         }
@@ -309,7 +290,6 @@ export function DeploymentsPage() {
             data={filteredRecords}
             emptyState={
               <EmptyState
-                action={{ label: t("deployments.records.newRecord"), onClick: () => setRecordModalOpen(true) }}
                 description={emptyDescription}
                 icon={<Rocket className="h-5 w-5" />}
                 title={emptyTitle}
@@ -319,14 +299,6 @@ export function DeploymentsPage() {
           />
         </CardContent>
       </Card>
-
-      <CreateDeploymentRecordModal
-        isSubmitting={createRecordMutation.isPending}
-        open={recordModalOpen}
-        services={services}
-        onCreate={(input) => createRecordMutation.mutateAsync(input)}
-        onOpenChange={setRecordModalOpen}
-      />
 
       <CreateGitOpsAppModal
         isSubmitting={gitOpsMutation.isPending}

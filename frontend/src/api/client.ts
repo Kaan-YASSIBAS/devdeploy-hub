@@ -13,7 +13,6 @@ import type {
   DeploymentCreateInput,
   DeploymentListItem,
   DeploymentRecord,
-  DeploymentRecordCreateInput,
   DeploymentRecordUpdateInput,
   DeploymentStatusUpdateInput,
   GitOpsDeploymentCreateInput,
@@ -212,10 +211,6 @@ export const deploymentRecordsApi = {
   },
   async get(id: number) {
     const { data } = await apiClient.get<DeploymentRecord>(`/deployment-records/${id}`);
-    return data;
-  },
-  async create(input: DeploymentRecordCreateInput) {
-    const { data } = await apiClient.post<DeploymentRecord>("/deployment-records", input);
     return data;
   },
   async update(id: number, input: DeploymentRecordUpdateInput) {
