@@ -41,3 +41,48 @@ class ServiceRuntimeStatusRead(BaseModel):
     related_deployment_status: str | None = None
     observed_at: datetime | None = None
     message: str | None = None
+
+
+class UntrackedDeploymentRuntimeRead(BaseModel):
+    name: str
+    namespace: str
+    source: Literal["kubernetes"] = "kubernetes"
+    tracking_status: Literal["untracked"] = "untracked"
+    display_status: Literal["running", "progressing", "unknown"]
+    desired_replicas: int | None = None
+    ready_replicas: int | None = None
+    available_replicas: int | None = None
+    updated_replicas: int | None = None
+    pod_ready_count: int | None = None
+    pod_total_count: int | None = None
+    service_found: bool
+    service_ports: list[RuntimeServicePortRead] | None = None
+    observed_at: datetime
+    message: str
+
+
+class UntrackedServiceRuntimeRead(BaseModel):
+    name: str
+    namespace: str
+    source: Literal["kubernetes"] = "kubernetes"
+    tracking_status: Literal["untracked"] = "untracked"
+    display_status: Literal["ready", "unknown"]
+    service_type: str | None = None
+    cluster_ip: str | None = None
+    ports: list[RuntimeServicePortRead] | None = None
+    related_deployment_found: bool
+    related_deployment_status: str | None = None
+    observed_at: datetime
+    message: str
+
+
+class UntrackedDeploymentListResponse(BaseModel):
+    items: list[UntrackedDeploymentRuntimeRead]
+    runtime_available: bool
+    message: str | None = None
+
+
+class UntrackedServiceListResponse(BaseModel):
+    items: list[UntrackedServiceRuntimeRead]
+    runtime_available: bool
+    message: str | None = None

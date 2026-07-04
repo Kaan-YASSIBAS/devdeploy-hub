@@ -103,6 +103,21 @@
     "not_found": "Not found",
     "unknown": "Unknown"
   },
+  "untracked": {
+    "badge": "Untracked",
+    "deploymentsTitle": "Untracked runtime deployments",
+    "servicesTitle": "Untracked runtime services",
+    "description": "These resources exist in the Kubernetes runtime but are not matched to DevDeploy managed records.",
+    "importLater": "Import and adoption will be added in a later phase. These resources are read-only here.",
+    "managedDeployments": "Managed deployments",
+    "managedServices": "Managed services",
+    "managedDescription": "DB-backed DevDeploy records enriched with live runtime status.",
+    "network": "Runtime network",
+    "relatedDeployment": "Related deployment",
+    "relatedService": "Related service",
+    "observed": "Observed",
+    "unavailable": "Untracked runtime resources cannot be read right now. Managed records remain available."
+  },
   "health": {
     "healthy": "Healthy",
     "degraded": "Degraded",

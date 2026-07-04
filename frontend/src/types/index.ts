@@ -85,6 +85,51 @@ export type DeploymentRuntimeStatus = {
   message: string | null;
 };
 
+export type UntrackedDeploymentRuntime = {
+  name: string;
+  namespace: string;
+  source: "kubernetes";
+  tracking_status: "untracked";
+  display_status: "running" | "progressing" | "unknown";
+  desired_replicas: number | null;
+  ready_replicas: number | null;
+  available_replicas: number | null;
+  updated_replicas: number | null;
+  pod_ready_count: number | null;
+  pod_total_count: number | null;
+  service_found: boolean;
+  service_ports: RuntimeServicePort[] | null;
+  observed_at: string;
+  message: string;
+};
+
+export type UntrackedServiceRuntime = {
+  name: string;
+  namespace: string;
+  source: "kubernetes";
+  tracking_status: "untracked";
+  display_status: "ready" | "unknown";
+  service_type: string | null;
+  cluster_ip: string | null;
+  ports: RuntimeServicePort[] | null;
+  related_deployment_found: boolean;
+  related_deployment_status: string | null;
+  observed_at: string;
+  message: string;
+};
+
+export type UntrackedDeploymentListResponse = {
+  items: UntrackedDeploymentRuntime[];
+  runtime_available: boolean;
+  message: string | null;
+};
+
+export type UntrackedServiceListResponse = {
+  items: UntrackedServiceRuntime[];
+  runtime_available: boolean;
+  message: string | null;
+};
+
 export type ServiceDefinition = {
   id: number;
   owner_id: number;

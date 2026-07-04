@@ -10,6 +10,7 @@ from app.schemas.deployment_record import (
     DeploymentRecordRead,
     DeploymentRecordUpdate,
 )
+from app.schemas.runtime_status import UntrackedDeploymentListResponse
 from app.services.deployment_record_service import DeploymentRecordService
 from app.services.product_runtime_status import ProductRuntimeStatusService
 
@@ -44,6 +45,16 @@ def list_deployment_records(
 ) -> list[DeploymentRecordRead]:
     deployments = DeploymentRecordService(db).list_for_user(current_user)
     return [_read_response(deployment, runtime_service) for deployment in deployments]
+
+
+@router.get("/untracked", response_model=UntrackedDeploymentListResponse)
+def list_untracked_deployments(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    runtime_service: ProductRuntimeStatusService = Depends(get_product_runtime_status_service),
+) -> UntrackedDeploymentListResponse:
+    owned = DeploymentRecordService(db).list_owned(current_user)
+    return runtime_service.untracked_deployments({deployment.app_name for deployment in owned})
 
 
 @router.get("/{deployment_id}", response_model=DeploymentRecordRead)

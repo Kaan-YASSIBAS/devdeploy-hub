@@ -34,6 +34,8 @@ import type {
   ServiceDefinition,
   ServiceDefinitionUpdateInput,
   SetupPreflightResponse,
+  UntrackedDeploymentListResponse,
+  UntrackedServiceListResponse,
   User,
   UserSummary,
   WorkspaceSettings,
@@ -193,6 +195,10 @@ export const serviceDefinitionsApi = {
     const { data } = await apiClient.get<ServiceDefinition>(`/services/${id}`);
     return data;
   },
+  async listUntracked() {
+    const { data } = await apiClient.get<UntrackedServiceListResponse>("/services/untracked");
+    return data;
+  },
   async update(id: number, input: ServiceDefinitionUpdateInput) {
     const { data } = await apiClient.patch<ServiceDefinition>(`/services/${id}`, input);
     return data;
@@ -206,6 +212,12 @@ export const deploymentRecordsApi = {
   },
   async get(id: number) {
     const { data } = await apiClient.get<DeploymentRecord>(`/deployment-records/${id}`);
+    return data;
+  },
+  async listUntracked() {
+    const { data } = await apiClient.get<UntrackedDeploymentListResponse>(
+      "/deployment-records/untracked"
+    );
     return data;
   },
   async update(id: number, input: DeploymentRecordUpdateInput) {

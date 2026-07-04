@@ -112,7 +112,10 @@ def pod(
 ) -> SimpleNamespace:
     waiting = SimpleNamespace(reason=waiting_reason) if waiting_reason else None
     return SimpleNamespace(
-        metadata=SimpleNamespace(name=name),
+        metadata=SimpleNamespace(
+            name=name,
+            labels={"app.kubernetes.io/name": name.split("-abc", 1)[0]},
+        ),
         status=SimpleNamespace(
             phase=phase,
             conditions=[SimpleNamespace(type="Ready", status="True" if ready else "False")],
@@ -242,6 +245,17 @@ class KubernetesGitOpsStatusReaderTestCase(unittest.TestCase):
         self.assertTrue(result.service_exists)
         self.assertEqual(self.custom_api.calls, [])
         self.assertEqual(len(self.apps_api.calls), 1)
+
+    def test_namespace_discovery_returns_named_read_only_snapshots(self) -> None:
+        result = self.reader.discover_workloads("devdeploy-apps")
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].name, "payment-api")
+        self.assertTrue(result[0].workload.deployment_exists)
+        self.assertTrue(result[0].workload.service_exists)
+        self.assertEqual(result[0].workload.ready_pod_count, 1)
+        self.assertNotIn("label_selector", self.apps_api.calls[0])
+        self.assertNotIn("label_selector", self.core_api.service_calls[0])
 
     def test_forbidden_api_error_maps_to_permission_denied(self) -> None:
         self.custom_api.error = ApiException(status=403, reason="raw forbidden detail")

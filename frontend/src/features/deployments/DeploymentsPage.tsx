@@ -24,7 +24,8 @@ import type {
   DeploymentRuntimeStatus,
   GitOpsAppDeployInput,
   GitOpsAppDeployResponse,
-  GitOpsAppDeployStatus
+  GitOpsAppDeployStatus,
+  UntrackedDeploymentRuntime
 } from "@/types";
 
 const STATUS_POLL_INTERVAL_MS = 3_000;
@@ -74,11 +75,16 @@ export function DeploymentsPage() {
     queryKey: ["deployment-records"],
     queryFn: deploymentRecordsApi.list
   });
+  const untrackedQuery = useQuery({
+    queryKey: ["untracked-deployments"],
+    queryFn: deploymentRecordsApi.listUntracked
+  });
   const servicesQuery = useQuery({
     queryKey: ["service-definitions"],
     queryFn: serviceDefinitionsApi.list
   });
   const records = useMemo(() => recordsQuery.data ?? [], [recordsQuery.data]);
+  const untrackedDeployments = useMemo(() => untrackedQuery.data?.items ?? [], [untrackedQuery.data]);
   const services = useMemo(() => servicesQuery.data ?? [], [servicesQuery.data]);
   const servicesById = useMemo(
     () => new Map(services.map((service) => [service.id, service])),
@@ -93,6 +99,8 @@ export function DeploymentsPage() {
       toast.success(t("deployments.gitopsDeploy.pushedToast"));
       await queryClient.invalidateQueries({ queryKey: ["deployment-records"] });
       await queryClient.invalidateQueries({ queryKey: ["service-definitions"] });
+      await queryClient.invalidateQueries({ queryKey: ["untracked-deployments"] });
+      await queryClient.invalidateQueries({ queryKey: ["untracked-services"] });
       await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
       await queryClient.invalidateQueries({ queryKey: ["user-summary"] });
     },
@@ -136,6 +144,8 @@ export function DeploymentsPage() {
     void queryClient.invalidateQueries({ queryKey: ["user-summary"] });
     void queryClient.invalidateQueries({ queryKey: ["deployment-records"] });
     void queryClient.invalidateQueries({ queryKey: ["service-definitions"] });
+    void queryClient.invalidateQueries({ queryKey: ["untracked-deployments"] });
+    void queryClient.invalidateQueries({ queryKey: ["untracked-services"] });
   }, [liveStatus, queryClient]);
 
   const filteredRecords = useMemo(() => {
@@ -163,6 +173,17 @@ export function DeploymentsPage() {
         .includes(query);
     });
   }, [records, search, servicesById]);
+
+  const filteredUntracked = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return untrackedDeployments;
+    return untrackedDeployments.filter((deployment) =>
+      [deployment.name, deployment.namespace, deployment.display_status]
+        .join(" ")
+        .toLowerCase()
+        .includes(query)
+    );
+  }, [search, untrackedDeployments]);
 
   const columns: Column<DeploymentRecord>[] = [
     {
@@ -264,6 +285,68 @@ export function DeploymentsPage() {
     }
   ];
 
+  const untrackedColumns: Column<UntrackedDeploymentRuntime>[] = [
+    {
+      key: "deployment",
+      header: t("deployments.records.fields.appName"),
+      render: (deployment) => (
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-medium text-white">{deployment.name}</p>
+            <Badge variant="warning">{t("untracked.badge")}</Badge>
+          </div>
+          <p className="text-xs text-slate-500">{deployment.namespace}</p>
+        </div>
+      )
+    },
+    {
+      key: "status",
+      header: t("deployments.records.fields.status"),
+      render: (deployment) => (
+        <Badge variant={runtimeVariant(deployment.display_status)}>
+          {t(`runtimeStatus.${deployment.display_status}`)}
+        </Badge>
+      )
+    },
+    {
+      key: "replicas",
+      header: t("deployments.records.fields.runtimeDefaults"),
+      render: (deployment) => (
+        <div className="space-y-1 font-mono text-xs">
+          <p>
+            {t("deployments.records.runtimeReplicas", {
+              ready: deployment.ready_replicas ?? 0,
+              desired: deployment.desired_replicas ?? 0
+            })}
+          </p>
+          <p className="text-slate-500">
+            {t("deployments.records.runtimePods", {
+              ready: deployment.pod_ready_count ?? 0,
+              total: deployment.pod_total_count ?? 0
+            })}
+          </p>
+        </div>
+      )
+    },
+    {
+      key: "service",
+      header: t("untracked.relatedService"),
+      render: (deployment) => (
+        <div className="space-y-1 text-xs">
+          <p>{deployment.service_found ? t("runtimeStatus.ready") : t("runtimeStatus.not_found")}</p>
+          <p className="font-mono text-slate-500">
+            {deployment.service_ports?.map((port) => `${port.port}/${port.protocol ?? "TCP"}`).join(", ") ?? "-"}
+          </p>
+        </div>
+      )
+    },
+    {
+      key: "observed",
+      header: t("untracked.observed"),
+      render: (deployment) => formatDate(deployment.observed_at)
+    }
+  ];
+
   const emptyTitle = recordsQuery.isLoading
     ? t("common.loading")
     : records.length
@@ -274,14 +357,24 @@ export function DeploymentsPage() {
     : records.length
       ? t("deployments.records.emptyNoResultsDescription")
       : t("deployments.records.emptyDescription");
+  const showManaged =
+    filteredRecords.length > 0 ||
+    filteredUntracked.length === 0 ||
+    recordsQuery.isLoading ||
+    recordsQuery.isError;
+  const untrackedUnavailable = untrackedQuery.isError || untrackedQuery.data?.runtime_available === false;
 
   return (
     <div>
       <PageHeader
         actions={
           <div className="flex flex-wrap gap-3">
-            <Button disabled={recordsQuery.isFetching} variant="outline" onClick={() => void recordsQuery.refetch()}>
-              <RefreshCw className={recordsQuery.isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+            <Button
+              disabled={recordsQuery.isFetching || untrackedQuery.isFetching}
+              variant="outline"
+              onClick={() => void Promise.all([recordsQuery.refetch(), untrackedQuery.refetch()])}
+            >
+              <RefreshCw className={recordsQuery.isFetching || untrackedQuery.isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
               {t("common.refresh")}
             </Button>
             <Button onClick={() => setGitOpsModalOpen(true)}>
@@ -319,32 +412,65 @@ export function DeploymentsPage() {
         />
       ) : null}
 
-      <Card>
-        <CardContent className="space-y-5 pt-5">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-            <Input
-              className="pl-10"
-              placeholder={t("deployments.records.searchPlaceholder")}
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </div>
+      <div className="relative mb-5">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+        <Input
+          className="pl-10"
+          placeholder={t("deployments.records.searchPlaceholder")}
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+      </div>
 
-          <DataTable
-            columns={columns}
-            data={filteredRecords}
-            emptyState={
-              <EmptyState
-                description={emptyDescription}
-                icon={<Rocket className="h-5 w-5" />}
-                title={emptyTitle}
+      <div className="space-y-5">
+        {showManaged ? (
+          <Card>
+            <CardContent className="space-y-4 pt-5">
+              {filteredRecords.length ? (
+                <div>
+                  <h2 className="text-sm font-semibold text-white">{t("untracked.managedDeployments")}</h2>
+                  <p className="mt-1 text-xs text-slate-500">{t("untracked.managedDescription")}</p>
+                </div>
+              ) : null}
+              <DataTable
+                columns={columns}
+                data={filteredRecords}
+                emptyState={
+                  <EmptyState
+                    description={emptyDescription}
+                    icon={<Rocket className="h-5 w-5" />}
+                    title={emptyTitle}
+                  />
+                }
+                getRowKey={(record) => String(record.id)}
               />
-            }
-            getRowKey={(record) => String(record.id)}
-          />
-        </CardContent>
-      </Card>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {filteredUntracked.length ? (
+          <Card className="border-amber-300/20">
+            <CardContent className="space-y-4 pt-5">
+              <div>
+                <h2 className="text-sm font-semibold text-amber-100">{t("untracked.deploymentsTitle")}</h2>
+                <p className="mt-1 text-xs text-slate-400">{t("untracked.description")}</p>
+                <p className="mt-1 text-xs text-slate-500">{t("untracked.importLater")}</p>
+              </div>
+              <DataTable
+                columns={untrackedColumns}
+                data={filteredUntracked}
+                getRowKey={(deployment) => `${deployment.namespace}/${deployment.name}`}
+              />
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {untrackedUnavailable ? (
+          <p className="rounded-lg border border-amber-300/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+            {t("untracked.unavailable")}
+          </p>
+        ) : null}
+      </div>
 
       <CreateGitOpsAppModal
         isSubmitting={gitOpsMutation.isPending}

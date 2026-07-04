@@ -10,6 +10,7 @@ from app.schemas.service_definition import (
     ServiceDefinitionRead,
     ServiceDefinitionUpdate,
 )
+from app.schemas.runtime_status import UntrackedServiceListResponse
 from app.services.service_definition_service import ServiceDefinitionService
 from app.services.product_runtime_status import ProductRuntimeStatusService
 
@@ -42,6 +43,16 @@ def list_service_definitions(
 ) -> list[ServiceDefinitionRead]:
     services = ServiceDefinitionService(db).list_for_user(current_user)
     return [_read_response(service, runtime_service) for service in services]
+
+
+@router.get("/untracked", response_model=UntrackedServiceListResponse)
+def list_untracked_services(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    runtime_service: ProductRuntimeStatusService = Depends(get_product_runtime_status_service),
+) -> UntrackedServiceListResponse:
+    owned = ServiceDefinitionService(db).list_owned(current_user)
+    return runtime_service.untracked_services({service.name for service in owned})
 
 
 @router.get("/{service_id}", response_model=ServiceDefinitionRead)

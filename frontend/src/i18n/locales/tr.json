@@ -103,6 +103,21 @@
     "not_found": "Bulunamadı",
     "unknown": "Bilinmiyor"
   },
+  "untracked": {
+    "badge": "Takipsiz",
+    "deploymentsTitle": "Takipsiz runtime deploymentları",
+    "servicesTitle": "Takipsiz runtime servisleri",
+    "description": "Bu kaynaklar Kubernetes runtime'da var, ancak DevDeploy tarafından yönetilen bir ürün kaydıyla eşleşmiyor.",
+    "importLater": "İçe aktarma ve sahiplenme daha sonraki bir fazda eklenecek. Bu kaynaklar burada salt okunurdur.",
+    "managedDeployments": "Yönetilen deploymentlar",
+    "managedServices": "Yönetilen servisler",
+    "managedDescription": "Canlı runtime durumuyla zenginleştirilmiş, veritabanı destekli DevDeploy kayıtları.",
+    "network": "Runtime ağı",
+    "relatedDeployment": "İlişkili deployment",
+    "relatedService": "İlişkili servis",
+    "observed": "Gözlemlendi",
+    "unavailable": "Takipsiz runtime kaynakları şu anda okunamıyor. Yönetilen kayıtlar kullanılabilir durumda."
+  },
   "health": {
     "healthy": "Sağlıklı",
     "degraded": "Zayıflamış",

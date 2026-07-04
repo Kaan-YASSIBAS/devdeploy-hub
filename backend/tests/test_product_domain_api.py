@@ -12,7 +12,11 @@ from app.api.v1.runtime_status import get_product_runtime_status_service
 from app.core.deps import get_current_user, get_db
 from app.db.database import Base
 from app.models.user import User
-from app.services.gitops.status_reader import ServicePortSnapshot, WorkloadSnapshot
+from app.services.gitops.status_reader import (
+    NamedWorkloadSnapshot,
+    ServicePortSnapshot,
+    WorkloadSnapshot,
+)
 from app.services.product_runtime_status import ProductRuntimeStatusService
 
 
@@ -21,12 +25,19 @@ class FakeWorkloadRuntimeReader:
         self.snapshots = {}
         self.error: Exception | None = None
         self.calls = []
+        self.discovered: tuple[NamedWorkloadSnapshot, ...] = ()
 
     def read_workload(self, app_name: str, namespace: str) -> WorkloadSnapshot:
         self.calls.append((app_name, namespace))
         if self.error is not None:
             raise self.error
         return self.snapshots.get((namespace, app_name), WorkloadSnapshot())
+
+    def discover_workloads(self, namespace: str) -> tuple[NamedWorkloadSnapshot, ...]:
+        self.calls.append(("discover", namespace))
+        if self.error is not None:
+            raise self.error
+        return self.discovered
 
 
 class ProductDomainApiTestCase(unittest.TestCase):
@@ -311,6 +322,85 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(runtime["ports"][0]["port"], 80)
         self.assertTrue(runtime["related_deployment_found"])
         self.assertEqual(runtime["related_deployment_status"], "running")
+
+    @staticmethod
+    def discovered_workload(name: str) -> NamedWorkloadSnapshot:
+        return NamedWorkloadSnapshot(
+            name=name,
+            workload=WorkloadSnapshot(
+                deployment_exists=True,
+                service_exists=True,
+                desired_replicas=1,
+                ready_replicas=1,
+                available_replicas=1,
+                updated_replicas=1,
+                expected_service_port_exists=True,
+                pod_count=1,
+                running_pod_count=1,
+                ready_pod_count=1,
+                service_type="ClusterIP",
+                service_cluster_ip="10.96.0.30",
+                service_ports=(ServicePortSnapshot("http", 80, "http", "TCP"),),
+            ),
+        )
+
+    def test_untracked_endpoints_exclude_current_users_managed_resources(self) -> None:
+        service = self.create_service("payments-api")
+        self.create_deployment(service["id"])
+        self.runtime_reader.discovered = (
+            self.discovered_workload("payments-api"),
+            self.discovered_workload("legacy-api"),
+        )
+
+        deployments_response = self.client.get("/api/v1/deployment-records/untracked")
+        services_response = self.client.get("/api/v1/services/untracked")
+
+        self.assertEqual(deployments_response.status_code, 200)
+        self.assertEqual(services_response.status_code, 200)
+        self.assertEqual(
+            [item["name"] for item in deployments_response.json()["items"]],
+            ["legacy-api"],
+        )
+        self.assertEqual(
+            [item["name"] for item in services_response.json()["items"]],
+            ["legacy-api"],
+        )
+        deployment = deployments_response.json()["items"][0]
+        self.assertEqual(deployment["tracking_status"], "untracked")
+        self.assertEqual(deployment["display_status"], "running")
+        self.assertEqual(deployment["pod_ready_count"], 1)
+        service_runtime = services_response.json()["items"][0]
+        self.assertEqual(service_runtime["tracking_status"], "untracked")
+        self.assertEqual(service_runtime["display_status"], "ready")
+        self.assertEqual(service_runtime["cluster_ip"], "10.96.0.30")
+
+    def test_runtime_resource_is_untracked_for_user_without_owned_record(self) -> None:
+        service = self.create_service("payments-api")
+        self.create_deployment(service["id"])
+        self.runtime_reader.discovered = (self.discovered_workload("payments-api"),)
+        self.current_user = self.user_b
+
+        deployments_response = self.client.get("/api/v1/deployment-records/untracked")
+        services_response = self.client.get("/api/v1/services/untracked")
+
+        self.assertEqual([item["name"] for item in deployments_response.json()["items"]], ["payments-api"])
+        self.assertEqual([item["name"] for item in services_response.json()["items"]], ["payments-api"])
+        self.assertNotIn("owner_id", str(deployments_response.json()))
+        self.assertNotIn("owner_id", str(services_response.json()))
+
+    def test_untracked_reader_failure_returns_safe_empty_responses(self) -> None:
+        self.runtime_reader.error = RuntimeError("raw kubeconfig credential detail")
+
+        deployments_response = self.client.get("/api/v1/deployment-records/untracked")
+        services_response = self.client.get("/api/v1/services/untracked")
+
+        self.assertEqual(deployments_response.status_code, 200)
+        self.assertEqual(services_response.status_code, 200)
+        for body in (deployments_response.json(), services_response.json()):
+            self.assertFalse(body["runtime_available"])
+            self.assertEqual(body["items"], [])
+            self.assertNotIn("kubeconfig", str(body).lower())
+            self.assertNotIn("credential", str(body).lower())
 
 
 if __name__ == "__main__":

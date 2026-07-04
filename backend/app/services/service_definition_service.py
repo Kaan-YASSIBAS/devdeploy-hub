@@ -46,6 +46,9 @@ class ServiceDefinitionService:
             return self.services.list_all()
         return self.services.list_for_owner(user.id)
 
+    def list_owned(self, user: User) -> list[ServiceDefinition]:
+        return self.services.list_for_owner(user.id)
+
     def get(self, service_id: int, user: User) -> ServiceDefinition:
         return self._ensure_access(self.services.get_by_id(service_id), user)
 

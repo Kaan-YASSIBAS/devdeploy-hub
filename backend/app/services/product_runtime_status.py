@@ -7,20 +7,37 @@ from app.schemas.runtime_status import (
     DeploymentRuntimeStatusRead,
     RuntimeServicePortRead,
     ServiceRuntimeStatusRead,
+    UntrackedDeploymentListResponse,
+    UntrackedDeploymentRuntimeRead,
+    UntrackedServiceListResponse,
+    UntrackedServiceRuntimeRead,
 )
-from app.services.gitops.status_reader import GitOpsStatusError, WorkloadSnapshot
+from app.services.gitops.status_reader import (
+    GitOpsStatusError,
+    NamedWorkloadSnapshot,
+    WorkloadSnapshot,
+)
 
 
 RUNTIME_UNAVAILABLE_MESSAGE = "Runtime status is temporarily unavailable."
+UNTRACKED_MESSAGE = (
+    "This Kubernetes runtime resource is not matched to a DevDeploy managed record."
+)
 
 
 class WorkloadRuntimeReader(Protocol):
     def read_workload(self, app_name: str, namespace: str) -> WorkloadSnapshot: ...
 
+    def discover_workloads(self, namespace: str) -> tuple[NamedWorkloadSnapshot, ...]: ...
+
 
 class UnavailableWorkloadRuntimeReader:
     def read_workload(self, app_name: str, namespace: str) -> WorkloadSnapshot:
         _ = (app_name, namespace)
+        raise GitOpsStatusError("status_reader_unavailable", RUNTIME_UNAVAILABLE_MESSAGE)
+
+    def discover_workloads(self, namespace: str) -> tuple[NamedWorkloadSnapshot, ...]:
+        _ = namespace
         raise GitOpsStatusError("status_reader_unavailable", RUNTIME_UNAVAILABLE_MESSAGE)
 
 
@@ -101,6 +118,84 @@ class ProductRuntimeStatusService:
             message=message,
         )
 
+    def untracked_deployments(
+        self,
+        managed_names: set[str],
+    ) -> UntrackedDeploymentListResponse:
+        snapshots = self._safe_discovery()
+        if snapshots is None:
+            return UntrackedDeploymentListResponse(
+                items=[],
+                runtime_available=False,
+                message=RUNTIME_UNAVAILABLE_MESSAGE,
+            )
+
+        observed_at = datetime.now(timezone.utc)
+        items = []
+        for item in snapshots:
+            snapshot = item.workload
+            if item.name in managed_names or not snapshot.deployment_exists:
+                continue
+            display_status, _ = self._deployment_display(snapshot)
+            items.append(
+                UntrackedDeploymentRuntimeRead(
+                    name=item.name,
+                    namespace=self.workload_namespace,
+                    display_status=display_status,
+                    desired_replicas=snapshot.desired_replicas,
+                    ready_replicas=snapshot.ready_replicas,
+                    available_replicas=snapshot.available_replicas,
+                    updated_replicas=snapshot.updated_replicas,
+                    pod_ready_count=snapshot.ready_pod_count,
+                    pod_total_count=snapshot.pod_count,
+                    service_found=snapshot.service_exists,
+                    service_ports=self._ports(snapshot),
+                    observed_at=observed_at,
+                    message=UNTRACKED_MESSAGE,
+                )
+            )
+        return UntrackedDeploymentListResponse(items=items, runtime_available=True)
+
+    def untracked_services(
+        self,
+        managed_names: set[str],
+    ) -> UntrackedServiceListResponse:
+        snapshots = self._safe_discovery()
+        if snapshots is None:
+            return UntrackedServiceListResponse(
+                items=[],
+                runtime_available=False,
+                message=RUNTIME_UNAVAILABLE_MESSAGE,
+            )
+
+        observed_at = datetime.now(timezone.utc)
+        items = []
+        for item in snapshots:
+            snapshot = item.workload
+            if item.name in managed_names or not snapshot.service_exists:
+                continue
+            deployment_status, _ = self._deployment_display(snapshot)
+            service_ready = bool(
+                snapshot.service_cluster_ip
+                and snapshot.service_cluster_ip != "None"
+                and snapshot.service_ports
+            )
+            items.append(
+                UntrackedServiceRuntimeRead(
+                    name=item.name,
+                    namespace=self.workload_namespace,
+                    display_status="ready" if service_ready else "unknown",
+                    service_type=snapshot.service_type,
+                    cluster_ip=snapshot.service_cluster_ip,
+                    ports=self._ports(snapshot),
+                    related_deployment_found=snapshot.deployment_exists,
+                    related_deployment_status=deployment_status,
+                    observed_at=observed_at,
+                    message=UNTRACKED_MESSAGE,
+                )
+            )
+        return UntrackedServiceListResponse(items=items, runtime_available=True)
+
     def _safe_snapshot(self, app_name: str, namespace: str) -> WorkloadSnapshot | None:
         key = (namespace, app_name)
         if key in self._snapshots:
@@ -111,6 +206,12 @@ class ProductRuntimeStatusService:
             snapshot = None
         self._snapshots[key] = snapshot
         return snapshot
+
+    def _safe_discovery(self) -> tuple[NamedWorkloadSnapshot, ...] | None:
+        try:
+            return self.reader.discover_workloads(self.workload_namespace)
+        except Exception:
+            return None
 
     @staticmethod
     def _deployment_display(snapshot: WorkloadSnapshot) -> tuple[str, str]:

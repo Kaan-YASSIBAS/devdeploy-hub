@@ -56,6 +56,9 @@ class DeploymentRecordService:
             return self.deployments.list_all()
         return self.deployments.list_for_owner(user.id)
 
+    def list_owned(self, user: User) -> list[DeploymentRecord]:
+        return self.deployments.list_for_owner(user.id)
+
     def get(self, deployment_id: int, user: User) -> DeploymentRecord:
         return self._ensure_access(self.deployments.get_by_id(deployment_id), user)
 

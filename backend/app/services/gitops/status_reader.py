@@ -100,6 +100,12 @@ class WorkloadSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class NamedWorkloadSnapshot:
+    name: str
+    workload: WorkloadSnapshot
+
+
+@dataclass(frozen=True, slots=True)
 class GitOpsStatusSnapshot:
     root_application: RootApplicationSnapshot
     workload: WorkloadSnapshot
