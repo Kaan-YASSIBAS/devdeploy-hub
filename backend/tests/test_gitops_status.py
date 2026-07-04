@@ -50,10 +50,12 @@ def ready_workload() -> WorkloadSnapshot:
         desired_replicas=1,
         ready_replicas=1,
         available_replicas=1,
+        updated_replicas=1,
         generation=2,
         observed_generation=2,
         expected_service_port_exists=True,
         pod_count=1,
+        running_pod_count=1,
         ready_pod_count=1,
     )
 
@@ -117,10 +119,12 @@ class GitOpsStatusEvaluatorTestCase(unittest.TestCase):
             desired_replicas=1,
             ready_replicas=0,
             available_replicas=0,
+            updated_replicas=1,
             generation=2,
             observed_generation=2,
             expected_service_port_exists=True,
             pod_count=1,
+            running_pod_count=1,
             ready_pod_count=0,
         )
 
@@ -142,10 +146,12 @@ class GitOpsStatusEvaluatorTestCase(unittest.TestCase):
             desired_replicas=1,
             ready_replicas=0,
             available_replicas=0,
+            updated_replicas=1,
             generation=1,
             observed_generation=1,
             expected_service_port_exists=True,
             pod_count=1,
+            running_pod_count=1,
             ready_pod_count=0,
             pod_crashloop_detected=True,
         )
@@ -247,10 +253,12 @@ class GitOpsStatusApiTestCase(unittest.TestCase):
                 desired_replicas=1,
                 ready_replicas=0,
                 available_replicas=0,
+                updated_replicas=1,
                 generation=1,
                 observed_generation=1,
                 expected_service_port_exists=True,
                 pod_count=1,
+                running_pod_count=1,
                 ready_pod_count=0,
             )
         )

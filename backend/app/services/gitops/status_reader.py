@@ -74,11 +74,16 @@ class WorkloadSnapshot:
     desired_replicas: int | None = None
     ready_replicas: int | None = None
     available_replicas: int | None = None
+    updated_replicas: int | None = None
     generation: int | None = None
     observed_generation: int | None = None
     expected_service_port_exists: bool = False
     pod_count: int = 0
+    running_pod_count: int = 0
     ready_pod_count: int = 0
+    restart_count: int = 0
+    waiting_reasons: tuple[str, ...] = ()
+    pod_phases: tuple[str, ...] = ()
     failure_detected: bool = False
     pod_crashloop_detected: bool = False
 
@@ -281,6 +286,7 @@ class GitOpsStatusEvaluator:
         desired = GitOpsStatusEvaluator._nonnegative_int(snapshot.desired_replicas)
         ready = GitOpsStatusEvaluator._nonnegative_int(snapshot.ready_replicas)
         available = GitOpsStatusEvaluator._nonnegative_int(snapshot.available_replicas)
+        updated = GitOpsStatusEvaluator._nonnegative_int(snapshot.updated_replicas)
         generation = GitOpsStatusEvaluator._nonnegative_int(snapshot.generation)
         observed_generation = GitOpsStatusEvaluator._nonnegative_int(snapshot.observed_generation)
         pod_count = GitOpsStatusEvaluator._nonnegative_int(snapshot.pod_count) or 0
@@ -294,12 +300,20 @@ class GitOpsStatusEvaluator:
             and ready >= desired
             and available is not None
             and available >= desired
+            and updated is not None
+            and updated >= desired
             and generation is not None
             and observed_generation is not None
             and observed_generation >= generation
         )
         service_ready = bool(snapshot.service_exists and snapshot.expected_service_port_exists)
-        pods_ready = bool(desired is not None and desired > 0 and ready_pod_count >= desired)
+        running_pod_count = GitOpsStatusEvaluator._nonnegative_int(snapshot.running_pod_count) or 0
+        pods_ready = bool(
+            desired is not None
+            and desired > 0
+            and running_pod_count >= desired
+            and ready_pod_count >= desired
+        )
         return WorkloadStatusSummary(
             deployment_ready=deployment_ready,
             service_ready=service_ready,

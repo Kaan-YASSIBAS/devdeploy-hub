@@ -11,6 +11,7 @@ from app.services.gitops.git_adapter import (
     GitPushRequest,
     GitPushResult,
 )
+from app.services.gitops.kubernetes_status_reader import KubernetesGitOpsStatusReader
 from app.services.gitops.models import WorkloadWriteRequest
 from app.services.gitops.render import StructuralRenderValidator
 from app.services.gitops.status_reader import (
@@ -31,6 +32,7 @@ __all__ = [
     "GitCommitResult",
     "GitPushRequest",
     "GitPushResult",
+    "KubernetesGitOpsStatusReader",
     "GitOpsStatusRequest",
     "GitOpsStatusResult",
     "GitOpsStatusService",

@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -43,6 +44,12 @@ class Settings(BaseSettings):
     )
     argocd_namespace: str = Field(default="argocd", alias="DEVDEPLOY_ARGOCD_NAMESPACE")
     workload_namespace: str = Field(default="devdeploy-apps", alias="DEVDEPLOY_WORKLOAD_NAMESPACE")
+    status_reader_mode: Literal["unavailable", "kubernetes"] = Field(
+        default="unavailable",
+        alias="DEVDEPLOY_STATUS_READER_MODE",
+    )
+    management_kubeconfig: str | None = Field(default=None, alias="DEVDEPLOY_MGMT_KUBECONFIG")
+    workload_kubeconfig: str | None = Field(default=None, alias="DEVDEPLOY_WORKLOAD_KUBECONFIG")
 
     model_config = SettingsConfigDict(
         env_file=".env",

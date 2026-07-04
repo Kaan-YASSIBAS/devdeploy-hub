@@ -390,6 +390,8 @@ Phase 2J.5g defines the read model only. It adds no endpoint, client, RBAC resou
 
 Phase 2J.5h implements the typed snapshots, injectable reader boundary, pure exact-SHA evaluator, safe error mapping, and authenticated `GET /api/v1/gitops/apps/{app_name}/status` endpoint. Tests use fake snapshots only. The default reader returns `status_reader_unavailable`, so this phase adds no live Kubernetes client, Argo CD API client, credential, RBAC resource, or cluster access.
 
-Phase 2J.5i should implement the separate read-only management and workload readers, least-privilege runtime configuration, and live-cluster verification. Controlled Git ancestry support may also be added there; Phase 2J.5h intentionally supports exact SHA matching only.
+Phase 2J.5i implements a live Kubernetes Python client reader behind the server-controlled `DEVDEPLOY_STATUS_READER_MODE=kubernetes` setting. It reads the Root Application through `CustomObjectsApi` and label-scoped Deployment, Service, and Pod state through namespaced read APIs. Management access may use an explicit kubeconfig or the backend's in-cluster identity; workload access requires a separate explicit server-side kubeconfig. The default mode remains `unavailable`, no RBAC manifests are added, and no Secret values, logs, mutation methods, Argo CD credentials, or CLI processes are used.
 
-Frontend polling should begin only after the live readers and least-privilege access model are implemented and verified.
+Phase 2J.5j should run a controlled live API deploy-and-status smoke test after the required least-privilege runtime access is configured and independently verified. Controlled Git ancestry support remains future work; Phase 2J.5i continues to use exact SHA matching.
+
+Frontend polling should begin only after the live reader smoke test and least-privilege access model are verified.

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path, PureWindowsPath
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -21,6 +22,7 @@ from app.services.gitops.deploy_operation import (
 )
 from app.services.gitops.git_adapter import sanitize_git_output
 from app.services.gitops.manifests import WORKLOAD_NAMESPACE
+from app.services.gitops.kubernetes_status_reader import KubernetesGitOpsStatusReader
 from app.services.gitops.status_reader import (
     GitOpsStatusError,
     GitOpsStatusEvaluator,
@@ -85,8 +87,19 @@ def get_gitops_status_reader_config() -> GitOpsStatusReaderConfig:
     )
 
 
+@lru_cache(maxsize=1)
 def get_gitops_status_service() -> GitOpsStatusService:
-    return GitOpsStatusService()
+    if settings.status_reader_mode == "unavailable":
+        return GitOpsStatusService()
+    try:
+        reader = KubernetesGitOpsStatusReader.from_server_config(
+            management_kubeconfig=settings.management_kubeconfig,
+            workload_kubeconfig=settings.workload_kubeconfig,
+            use_in_cluster_management=settings.kubernetes_in_cluster,
+        )
+    except GitOpsStatusError:
+        return GitOpsStatusService()
+    return GitOpsStatusService(reader=reader)
 
 
 def _safe_response_source_path(value: object) -> str:
