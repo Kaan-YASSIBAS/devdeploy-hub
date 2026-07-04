@@ -46,6 +46,69 @@ export type ApplicationCreateInput = {
 
 export type ApplicationUpdateInput = Partial<ApplicationCreateInput>;
 
+export type ServiceDefinition = {
+  id: number;
+  owner_id: number;
+  name: string;
+  description: string | null;
+  default_image: string | null;
+  default_replicas: number;
+  default_port: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ServiceDefinitionCreateInput = {
+  name: string;
+  description: string | null;
+  default_image: string | null;
+  default_replicas: number;
+  default_port: number | null;
+};
+
+export type ServiceDefinitionUpdateInput = Partial<ServiceDefinitionCreateInput>;
+
+export type DeploymentRecordDesiredState = "draft" | "pending";
+
+export type DeploymentRecord = {
+  id: number;
+  owner_id: number;
+  service_definition_id: number | null;
+  app_name: string;
+  image: string;
+  replicas: number;
+  container_port: number;
+  service_port: number;
+  service_type: "ClusterIP";
+  namespace: string;
+  gitops_manifest_path: string | null;
+  commit_sha: string | null;
+  desired_state: DeploymentRecordDesiredState;
+  status_summary: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DeploymentRecordCreateInput = {
+  service_definition_id: number | null;
+  app_name: string;
+  image: string;
+  replicas: number;
+  container_port: number;
+  service_port: number;
+  service_type: "ClusterIP";
+  namespace: string;
+  desired_state: DeploymentRecordDesiredState;
+};
+
+export type DeploymentRecordUpdateInput = Partial<
+  DeploymentRecordCreateInput & {
+    gitops_manifest_path: string | null;
+    commit_sha: string | null;
+    status_summary: string | null;
+  }
+>;
+
 export type MockApplication = {
   id: string;
   name: string;

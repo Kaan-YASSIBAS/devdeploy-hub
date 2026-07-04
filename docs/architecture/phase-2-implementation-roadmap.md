@@ -373,7 +373,8 @@ Completed baseline:
 
 Planned milestones:
 
-- **Phase 2J.10 (next) - Domain-backed product integration:** connect the Services and Deployments product pages to first-class records and design the explicit transition from a Deployment record to the existing GitOps publication flow.
+- **Phase 2J.10 - Frontend Domain API Integration:** connect the Services page to authenticated `/api/v1/services` records and the Deployments page to authenticated `/api/v1/deployment-records` records. Service and Deployment record creation now stores first-class product-domain state only. The existing GitOps deploy form remains a separate explicit action and continues to publish through the established GitOps path.
+- **Phase 2J.11 (next) - Deployment Record GitOps Publication Design:** define the explicit, auditable transition from a selected Deployment record to GitOps publication without making record creation itself deploy workloads. GitOps rediscovery remains an internal read-only foundation rather than the primary Services or Deployments list.
 - Add controlled in-cluster GitOps repository and status-reader configuration before claiming the deployed platform can execute the full GitOps flow without local backend wiring.
 - Define safe prune/delete behavior before claiming GitOps deletion is complete.
 - Design and validate workload ingress exposure separately before presenting a local app URL as reachable.

@@ -1,23 +1,34 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, RefreshCw, Rocket, Trash2 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Database, GitBranch, Plus, RefreshCw, Rocket, Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { applicationsApi, deployGitOpsApp, deploymentsApi, getApiErrorMessage, getApiErrorStatus, getGitOpsAppStatus } from "@/api/client";
+import {
+  deployGitOpsApp,
+  deploymentRecordsApi,
+  getApiErrorMessage,
+  getApiErrorStatus,
+  getGitOpsAppStatus,
+  serviceDefinitionsApi
+} from "@/api/client";
+import { CreateDeploymentRecordModal } from "@/components/deployments/CreateDeploymentRecordModal";
+import { CreateGitOpsAppModal } from "@/components/deployments/CreateGitOpsAppModal";
+import { GitOpsDeployStatusCard } from "@/components/deployments/GitOpsDeployStatusCard";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { DataTable, type Column } from "@/components/shared/DataTable";
+import { EmptyState } from "@/components/shared/EmptyState";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Select } from "@/components/ui/select";
-import { PageHeader } from "@/components/layout/PageHeader";
-import { CreateGitOpsAppModal } from "@/components/deployments/CreateGitOpsAppModal";
-import { GitOpsDeployStatusCard } from "@/components/deployments/GitOpsDeployStatusCard";
-import { DataTable, type Column } from "@/components/shared/DataTable";
-import { EmptyState } from "@/components/shared/EmptyState";
-import { StatusBadge } from "@/components/shared/StatusBadge";
-import type { DeploymentListItem, DeploymentStatus, GitOpsAppDeployInput, GitOpsAppDeployStatus, GitOpsAppDeployResponse } from "@/types";
+import { Input } from "@/components/ui/input";
+import type {
+  DeploymentRecord,
+  DeploymentRecordCreateInput,
+  GitOpsAppDeployInput,
+  GitOpsAppDeployResponse,
+  GitOpsAppDeployStatus
+} from "@/types";
 
-const statuses: DeploymentStatus[] = ["pending", "running", "progressing", "success", "failed", "stale", "deletion_requested", "deleted", "unknown"];
 const STATUS_POLL_INTERVAL_MS = 3_000;
 const STATUS_POLL_TIMEOUT_MS = 120_000;
 
@@ -38,10 +49,7 @@ function statusErrorKey(status: number | undefined) {
   return "deployments.gitopsDeploy.errors.statusFailed";
 }
 
-function formatDate(value: string | null) {
-  if (!value) {
-    return "-";
-  }
+function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, {
     month: "short",
     day: "2-digit",
@@ -50,97 +58,47 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
-function formatEnvironment(t: ReturnType<typeof useTranslation>["t"], value: string) {
-  return t(`environment.${value}`, { defaultValue: value });
-}
-
-function imageLabel(deployment: DeploymentListItem) {
-  if (!deployment.image && !deployment.tag) {
-    return "-";
-  }
-  if (!deployment.image) {
-    return deployment.tag ?? "-";
-  }
-  return deployment.tag ? `${deployment.image}:${deployment.tag}` : deployment.image;
-}
-
-function sourceVariant(deployment: DeploymentListItem) {
-  if (deployment.source === "gitops" && (deployment.status === "stale" || deployment.status === "deleted")) {
-    return "muted";
-  }
-  if (deployment.source === "gitops" && deployment.status === "deletion_requested") {
-    return "warning";
-  }
-  if (deployment.source === "gitops" && deployment.status === "failed" && !deployment.is_live) {
-    return "danger";
-  }
-  if (deployment.source === "gitops" && !deployment.is_live) {
-    return "warning";
-  }
-  if (deployment.source === "gitops") {
-    return "success";
-  }
-  if (deployment.source === "cluster") {
-    return "info";
-  }
-  return "muted";
-}
-
-function sourceLabelKey(deployment: DeploymentListItem) {
-  if (deployment.source === "gitops" && deployment.is_live) {
-    return "deployments.source.gitopsLive";
-  }
-  if (deployment.source === "gitops" && deployment.status === "stale") {
-    return "deployments.source.staleRequest";
-  }
-  if (deployment.source === "gitops" && deployment.status === "failed" && !deployment.is_live) {
-    return "deployments.source.failedRequest";
-  }
-  if (deployment.source === "gitops" && !deployment.is_live) {
-    return "deployments.source.pendingRequest";
-  }
-  return `deployments.source.${deployment.source}`;
-}
-
 export function DeploymentsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const [environment, setEnvironment] = useState<string>("all");
-  const [status, setStatus] = useState<DeploymentStatus | "all">("all");
-  const [application, setApplication] = useState("all");
-  const [modalOpen, setModalOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [recordModalOpen, setRecordModalOpen] = useState(false);
+  const [gitOpsModalOpen, setGitOpsModalOpen] = useState(false);
   const [deployResponse, setDeployResponse] = useState<GitOpsAppDeployResponse | null>(null);
   const [pollTimedOut, setPollTimedOut] = useState(false);
-  const deploymentsQuery = useQuery({ queryKey: ["deployments"], queryFn: deploymentsApi.listGitOps });
-  const applicationsQuery = useQuery({ queryKey: ["applications"], queryFn: applicationsApi.list });
-  const deployments = useMemo(() => deploymentsQuery.data ?? [], [deploymentsQuery.data]);
-  const applications = useMemo(() => applicationsQuery.data ?? [], [applicationsQuery.data]);
-  const applicationOptions = useMemo(() => {
-    const appOptions = applications.map((item) => ({ value: String(item.id), label: item.name }));
-    const liveOptions = deployments
-      .filter((deployment) => deployment.application_id === null)
-      .map((deployment) => deployment.app_name)
-      .filter((name, index, names) => names.indexOf(name) === index)
-      .map((name) => ({ value: `name:${name}`, label: name }));
-    return [{ value: "all", label: t("common.all") }, ...appOptions, ...liveOptions];
-  }, [applications, deployments, t]);
-  const environmentOptions = useMemo(() => {
-    const values = deployments
-      .map((deployment) => deployment.environment)
-      .filter((value, index, values) => values.indexOf(value) === index);
-    return [
-      { value: "all", label: t("common.all") },
-      ...values.map((value) => ({ value, label: formatEnvironment(t, value) }))
-    ];
-  }, [deployments, t]);
+  const recordsQuery = useQuery({
+    queryKey: ["deployment-records"],
+    queryFn: deploymentRecordsApi.list
+  });
+  const servicesQuery = useQuery({
+    queryKey: ["service-definitions"],
+    queryFn: serviceDefinitionsApi.list
+  });
+  const records = useMemo(() => recordsQuery.data ?? [], [recordsQuery.data]);
+  const services = useMemo(() => servicesQuery.data ?? [], [servicesQuery.data]);
+  const servicesById = useMemo(
+    () => new Map(services.map((service) => [service.id, service])),
+    [services]
+  );
 
-  const createMutation = useMutation({
+  const createRecordMutation = useMutation({
+    mutationFn: (input: DeploymentRecordCreateInput) => deploymentRecordsApi.create(input),
+    onSuccess: async () => {
+      toast.success(t("deployments.records.createdToast"));
+      await queryClient.invalidateQueries({ queryKey: ["deployment-records"] });
+    },
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error) || t("deployments.records.createFailed"));
+    }
+  });
+
+  const gitOpsMutation = useMutation({
     mutationFn: (input: GitOpsAppDeployInput) => deployGitOpsApp(input),
     onSuccess: async (response) => {
       setDeployResponse(response);
       setPollTimedOut(false);
       toast.success(t("deployments.gitopsDeploy.pushedToast"));
-      await queryClient.invalidateQueries({ queryKey: ["deployments"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
       await queryClient.invalidateQueries({ queryKey: ["user-summary"] });
     },
     onError: (error) => {
@@ -179,135 +137,140 @@ export function DeploymentsPage() {
       return;
     }
 
-    void queryClient.invalidateQueries({ queryKey: ["deployments"] });
     void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
     void queryClient.invalidateQueries({ queryKey: ["user-summary"] });
   }, [liveStatus, queryClient]);
 
-  const deleteMutation = useMutation({
-    mutationFn: (deployment: DeploymentListItem) => deploymentsApi.deleteGitOps(deployment.namespace, deployment.name),
-    onSuccess: async (response) => {
-      if (response.workflow_triggered) {
-        toast.success(t("deployments.gitops.delete.startedToast"));
-      } else {
-        toast.error(t("api.errors.deploymentAutomationUnavailable"));
-      }
-      await queryClient.invalidateQueries({ queryKey: ["deployments"] });
-      await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
-      await queryClient.invalidateQueries({ queryKey: ["user-summary"] });
-    },
-    onError: (error) => {
-      if (getApiErrorStatus(error) === 503) {
-        toast.error(t("api.errors.deploymentAutomationUnavailable"));
-        return;
-      }
-      toast.error(getApiErrorMessage(error) || t("api.errors.deploymentDeleteFailed"));
+  const filteredRecords = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) {
+      return records;
     }
-  });
 
-  const confirmDelete = (deployment: DeploymentListItem) => {
-    if (window.confirm(t("deployments.gitops.delete.confirm", { name: deployment.name }))) {
-      deleteMutation.mutate(deployment);
-    }
-  };
+    return records.filter((record) => {
+      const serviceName = record.service_definition_id
+        ? servicesById.get(record.service_definition_id)?.name ?? ""
+        : "";
+      return [
+        record.app_name,
+        record.image,
+        record.namespace,
+        record.desired_state,
+        record.status_summary ?? "",
+        record.commit_sha ?? "",
+        serviceName
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
+    });
+  }, [records, search, servicesById]);
 
-  const filteredDeployments = useMemo(
-    () =>
-      deployments.filter((deployment) => {
-        const matchesEnvironment = environment === "all" || deployment.environment === environment;
-        const matchesStatus = status === "all" || deployment.status === status;
-        const matchesApplication =
-          application === "all" ||
-          String(deployment.application_id) === application ||
-          `name:${deployment.app_name}` === application;
-        return matchesEnvironment && matchesStatus && matchesApplication;
-      }),
-    [application, deployments, environment, status]
-  );
-
-  const columns: Column<DeploymentListItem>[] = [
+  const columns: Column<DeploymentRecord>[] = [
     {
       key: "deployment",
-      header: t("deployments.table.deployment"),
-      render: (deployment) => (
+      header: t("deployments.records.fields.appName"),
+      render: (record) => (
         <div>
-          <p className="font-medium text-white">{deployment.name}</p>
-          <p className="text-xs text-slate-500">{deployment.namespace}</p>
+          <p className="font-medium text-white">{record.app_name}</p>
+          <p className="text-xs text-slate-500">{record.namespace}</p>
         </div>
       )
     },
-    { key: "application", header: t("deployments.table.application"), render: (deployment) => deployment.app_name },
+    {
+      key: "service",
+      header: t("deployments.records.fields.service"),
+      render: (record) =>
+        record.service_definition_id
+          ? servicesById.get(record.service_definition_id)?.name ?? `#${record.service_definition_id}`
+          : t("deployments.records.noService")
+    },
     {
       key: "image",
-      header: t("deployments.table.imageTag"),
-      render: (deployment) => <span className="break-all font-mono text-xs text-cyan-100">{imageLabel(deployment)}</span>
-    },
-    { key: "environment", header: t("deployments.table.environment"), render: (deployment) => formatEnvironment(t, deployment.environment) },
-    { key: "status", header: t("deployments.table.status"), render: (deployment) => <StatusBadge status={deployment.status} type="deployment" /> },
-    {
-      key: "source",
-      header: t("deployments.table.source"),
-      render: (deployment) => <Badge variant={sourceVariant(deployment)}>{t(sourceLabelKey(deployment))}</Badge>
+      header: t("deployments.records.fields.image"),
+      render: (record) => <span className="break-all font-mono text-xs text-cyan-100">{record.image}</span>
     },
     {
-      key: "replicas",
-      header: t("common.replicas"),
-      render: (deployment) => (
-        <span className="font-mono text-xs">
-          {deployment.available_replicas}/{deployment.replicas}
-          <span className="ml-2 text-slate-500">{t("deployments.table.updatedShort", { count: deployment.updated_replicas })}</span>
+      key: "state",
+      header: t("deployments.records.fields.desiredState"),
+      render: (record) => (
+        <Badge variant={record.desired_state === "pending" ? "warning" : "muted"}>
+          {t(`deployments.records.status.${record.desired_state}`)}
+        </Badge>
+      )
+    },
+    {
+      key: "runtime",
+      header: t("deployments.records.fields.runtimeDefaults"),
+      render: (record) => (
+        <span className="whitespace-nowrap font-mono text-xs">
+          {record.replicas} x :{record.container_port} / {record.service_port}
         </span>
       )
     },
-    { key: "updated", header: t("deployments.table.updated"), render: (deployment) => formatDate(deployment.updated_at ?? deployment.created_at) },
     {
-      key: "actions",
-      header: t("deployments.table.actions"),
-      render: (deployment) => {
-        const href =
-          deployment.source === "legacy" && deployment.legacy_deployment_id
-            ? `/deployments/${deployment.legacy_deployment_id}`
-            : `/deployments/gitops/${deployment.namespace}/${deployment.name}`;
-        return (
-          <div className="flex flex-wrap items-center gap-2">
-            <Button asChild size="sm" variant="ghost">
-              <Link to={href}>{t("common.viewDetails")}</Link>
-            </Button>
-            {deployment.source !== "legacy" ? (
-              <Button
-                aria-label={t("deployments.gitops.delete.action")}
-                disabled={deleteMutation.isPending || deployment.status === "deletion_requested" || deployment.status === "deleted"}
-                size="icon"
-                variant="danger"
-                onClick={() => confirmDelete(deployment)}
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            ) : null}
+      key: "gitops",
+      header: t("deployments.records.fields.gitops"),
+      render: (record) =>
+        record.commit_sha || record.gitops_manifest_path ? (
+          <div className="space-y-1 font-mono text-xs">
+            <p>{record.commit_sha?.slice(0, 8) ?? "-"}</p>
+            <p className="max-w-[220px] truncate text-slate-500">{record.gitops_manifest_path ?? "-"}</p>
           </div>
-        );
-      }
+        ) : (
+          <span className="text-slate-500">{t("deployments.records.notPublished")}</span>
+        )
+    },
+    {
+      key: "updated",
+      header: t("deployments.records.fields.updated"),
+      render: (record) => (
+        <div>
+          <p>{formatDate(record.updated_at)}</p>
+          {record.status_summary ? <p className="mt-1 max-w-[220px] text-xs text-slate-500">{record.status_summary}</p> : null}
+        </div>
+      )
     }
   ];
+
+  const emptyTitle = recordsQuery.isLoading
+    ? t("common.loading")
+    : records.length
+      ? t("deployments.records.emptyNoResultsTitle")
+      : t("deployments.records.emptyTitle");
+  const emptyDescription = recordsQuery.isError
+    ? t("deployments.records.loadError")
+    : records.length
+      ? t("deployments.records.emptyNoResultsDescription")
+      : t("deployments.records.emptyDescription");
 
   return (
     <div>
       <PageHeader
         actions={
           <div className="flex flex-wrap gap-3">
-            <Button variant="outline" onClick={() => void deploymentsQuery.refetch()}>
-              <RefreshCw className="h-4 w-4" />
+            <Button disabled={recordsQuery.isFetching} variant="outline" onClick={() => void recordsQuery.refetch()}>
+              <RefreshCw className={recordsQuery.isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
               {t("common.refresh")}
             </Button>
-            <Button onClick={() => setModalOpen(true)}>
+            <Button variant="secondary" onClick={() => setRecordModalOpen(true)}>
               <Plus className="h-4 w-4" />
-              {t("deployments.createDeployment")}
+              {t("deployments.records.newRecord")}
+            </Button>
+            <Button onClick={() => setGitOpsModalOpen(true)}>
+              <GitBranch className="h-4 w-4" />
+              {t("deployments.records.deployWithGitOps")}
             </Button>
           </div>
         }
-        description={t("deployments.description")}
+        description={t("deployments.records.description")}
         title={t("deployments.title")}
       />
+
+      <div className="mb-5 flex items-start gap-3 rounded-lg border border-cyan-300/15 bg-cyan-400/[0.06] px-4 py-3 text-sm text-slate-300">
+        <Database className="mt-0.5 h-4 w-4 shrink-0 text-cyan-200" />
+        <p>{t("deployments.records.pageNotice")}</p>
+      </div>
 
       {deployResponse ? (
         <GitOpsDeployStatusCard
@@ -331,50 +294,45 @@ export function DeploymentsPage() {
 
       <Card>
         <CardContent className="space-y-5 pt-5">
-          <div className="grid gap-3 lg:grid-cols-3">
-            <Select
-              aria-label={t("deployments.filters.environment")}
-              options={environmentOptions}
-              value={environment}
-              onChange={(event) => setEnvironment(event.target.value)}
-            />
-            <Select
-              aria-label={t("deployments.filters.status")}
-              options={[
-                { value: "all", label: t("common.all") },
-                ...statuses.map((item) => ({ value: item, label: t(`status.${item}`) }))
-              ]}
-              value={status}
-              onChange={(event) => setStatus(event.target.value as DeploymentStatus | "all")}
-            />
-            <Select
-              aria-label={t("deployments.filters.application")}
-              options={applicationOptions}
-              value={application}
-              onChange={(event) => setApplication(event.target.value)}
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+            <Input
+              className="pl-10"
+              placeholder={t("deployments.records.searchPlaceholder")}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
             />
           </div>
 
           <DataTable
             columns={columns}
-            data={filteredDeployments}
+            data={filteredRecords}
             emptyState={
               <EmptyState
-                description={deploymentsQuery.isError ? t("api.errors.deploymentsLoadFailed") : t("deployments.emptyDescription")}
+                action={{ label: t("deployments.records.newRecord"), onClick: () => setRecordModalOpen(true) }}
+                description={emptyDescription}
                 icon={<Rocket className="h-5 w-5" />}
-                title={deploymentsQuery.isLoading ? t("common.loading") : t("deployments.emptyTitle")}
+                title={emptyTitle}
               />
             }
-            getRowKey={(deployment) => `${deployment.source}/${deployment.namespace}/${deployment.name}/${deployment.id ?? "live"}`}
+            getRowKey={(record) => String(record.id)}
           />
         </CardContent>
       </Card>
 
+      <CreateDeploymentRecordModal
+        isSubmitting={createRecordMutation.isPending}
+        open={recordModalOpen}
+        services={services}
+        onCreate={(input) => createRecordMutation.mutateAsync(input)}
+        onOpenChange={setRecordModalOpen}
+      />
+
       <CreateGitOpsAppModal
-        isSubmitting={createMutation.isPending}
-        open={modalOpen}
-        onDeploy={(input) => createMutation.mutateAsync(input)}
-        onOpenChange={setModalOpen}
+        isSubmitting={gitOpsMutation.isPending}
+        open={gitOpsModalOpen}
+        onDeploy={(input) => gitOpsMutation.mutateAsync(input)}
+        onOpenChange={setGitOpsModalOpen}
       />
     </div>
   );

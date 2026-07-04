@@ -12,6 +12,9 @@ import type {
   Deployment,
   DeploymentCreateInput,
   DeploymentListItem,
+  DeploymentRecord,
+  DeploymentRecordCreateInput,
+  DeploymentRecordUpdateInput,
   DeploymentStatusUpdateInput,
   GitOpsDeploymentCreateInput,
   GitOpsDeploymentDeleteResponse,
@@ -29,6 +32,9 @@ import type {
   IntegrationStatusItem,
   ProfileSettings,
   ProfileSettingsUpdateInput,
+  ServiceDefinition,
+  ServiceDefinitionCreateInput,
+  ServiceDefinitionUpdateInput,
   SetupPreflightResponse,
   User,
   UserSummary,
@@ -177,6 +183,44 @@ export const applicationsApi = {
   },
   async remove(id: number) {
     await apiClient.delete(`/applications/${id}`);
+  }
+};
+
+export const serviceDefinitionsApi = {
+  async list() {
+    const { data } = await apiClient.get<ServiceDefinition[]>("/services");
+    return data;
+  },
+  async get(id: number) {
+    const { data } = await apiClient.get<ServiceDefinition>(`/services/${id}`);
+    return data;
+  },
+  async create(input: ServiceDefinitionCreateInput) {
+    const { data } = await apiClient.post<ServiceDefinition>("/services", input);
+    return data;
+  },
+  async update(id: number, input: ServiceDefinitionUpdateInput) {
+    const { data } = await apiClient.patch<ServiceDefinition>(`/services/${id}`, input);
+    return data;
+  }
+};
+
+export const deploymentRecordsApi = {
+  async list() {
+    const { data } = await apiClient.get<DeploymentRecord[]>("/deployment-records");
+    return data;
+  },
+  async get(id: number) {
+    const { data } = await apiClient.get<DeploymentRecord>(`/deployment-records/${id}`);
+    return data;
+  },
+  async create(input: DeploymentRecordCreateInput) {
+    const { data } = await apiClient.post<DeploymentRecord>("/deployment-records", input);
+    return data;
+  },
+  async update(id: number, input: DeploymentRecordUpdateInput) {
+    const { data } = await apiClient.patch<DeploymentRecord>(`/deployment-records/${id}`, input);
+    return data;
   }
 };
 
