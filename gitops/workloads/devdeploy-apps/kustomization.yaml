@@ -5,4 +5,5 @@ resources:
   - apps/nginx-demo
   - apps/try-nginx
   - apps/try2-nginx
+  - apps/try3-nginx
   - apps/ui-status-smoke-nginx
