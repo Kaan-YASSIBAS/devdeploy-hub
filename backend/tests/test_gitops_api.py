@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -8,11 +9,13 @@ from app.api.v1.endpoints.gitops import (
     get_deploy_workload_operation_service,
     get_gitops_app_discovery_service,
     get_gitops_deploy_repository_config,
+    get_gitops_product_record_service,
     router,
 )
 from app.core.deps import get_current_user
 from app.services.gitops.deploy_operation import DeployWorkloadOperationResult
 from app.services.gitops.discovery import DiscoveredGitOpsApp
+from app.services.gitops.product_records import ProductRecordPersistenceError
 
 
 class FakeDeployOperationService:
@@ -50,6 +53,17 @@ class FakeDiscoveryService:
         ]
 
 
+class FakeProductRecordService:
+    def __init__(self, *, raises: bool = False):
+        self.raises = raises
+        self.requests = []
+
+    def record_published_deployment(self, request):
+        self.requests.append(request)
+        if self.raises:
+            raise ProductRecordPersistenceError("internal database detail")
+
+
 class GitOpsApiTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.app = FastAPI()
@@ -63,9 +77,11 @@ class GitOpsApiTestCase(unittest.TestCase):
         )
         self.service = FakeDeployOperationService(self.success_result())
         self.discovery_service = FakeDiscoveryService()
+        self.product_record_service = FakeProductRecordService()
         self.app.dependency_overrides[get_gitops_deploy_repository_config] = lambda: self.config
         self.app.dependency_overrides[get_deploy_workload_operation_service] = lambda: self.service
         self.app.dependency_overrides[get_gitops_app_discovery_service] = lambda: self.discovery_service
+        self.app.dependency_overrides[get_gitops_product_record_service] = lambda: self.product_record_service
         self.client = TestClient(self.app, raise_server_exceptions=False)
 
     def tearDown(self) -> None:
@@ -96,7 +112,7 @@ class GitOpsApiTestCase(unittest.TestCase):
         )
 
     def authenticate(self) -> None:
-        self.app.dependency_overrides[get_current_user] = lambda: object()
+        self.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=7)
 
     def test_unauthenticated_request_is_rejected(self) -> None:
         response = self.client.post("/api/v1/gitops/apps", json=self.payload())
@@ -151,6 +167,11 @@ class GitOpsApiTestCase(unittest.TestCase):
         self.assertEqual(operation_request.app_name, self.payload()["app_name"])
         self.assertEqual(operation_request.image, self.payload()["image"])
         self.assertEqual(operation_request.expected_branch, "main")
+        self.assertEqual(len(self.product_record_service.requests), 1)
+        record_request = self.product_record_service.requests[0]
+        self.assertEqual(record_request.owner_id, 7)
+        self.assertEqual(record_request.app_name, self.payload()["app_name"])
+        self.assertEqual(record_request.commit_sha, "a" * 40)
 
     def test_validation_failure_maps_to_safe_bad_request(self) -> None:
         self.authenticate()
@@ -171,6 +192,7 @@ class GitOpsApiTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["status"], "validation_failed")
         self.assertEqual(response.json()["error_code"], "invalid_app_name")
+        self.assertEqual(self.product_record_service.requests, [])
 
     def test_push_failure_maps_to_safe_gateway_response_and_redacts_credentials(self) -> None:
         self.authenticate()
@@ -198,6 +220,7 @@ class GitOpsApiTestCase(unittest.TestCase):
         self.assertNotIn("user:super-secret", str(body))
         self.assertNotIn("plain-token", str(body))
         self.assertIn("<redacted>", body["message"])
+        self.assertEqual(self.product_record_service.requests, [])
 
     def test_repository_token_namespace_and_commit_fields_are_forbidden(self) -> None:
         self.authenticate()
@@ -227,6 +250,20 @@ class GitOpsApiTestCase(unittest.TestCase):
         self.assertEqual(body["status"], "internal_error")
         self.assertEqual(body["error_code"], "internal_error")
         self.assertNotIn("internal detail", str(body))
+        self.assertEqual(self.product_record_service.requests, [])
+
+    def test_product_record_failure_after_push_is_sanitized(self) -> None:
+        self.authenticate()
+        self.product_record_service.raises = True
+
+        response = self.client.post("/api/v1/gitops/apps", json=self.payload())
+
+        self.assertEqual(response.status_code, 500)
+        body = response.json()
+        self.assertEqual(body["status"], "internal_error")
+        self.assertEqual(body["error_code"], "product_record_persistence_failed")
+        self.assertEqual(body["commit_sha"], "a" * 40)
+        self.assertNotIn("internal database detail", str(body))
 
     def test_unsafe_configured_source_path_is_not_exposed(self) -> None:
         self.authenticate()

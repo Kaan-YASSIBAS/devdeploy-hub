@@ -4,9 +4,10 @@ from pathlib import Path, PureWindowsPath
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, get_db
 from app.models.user import User
 from app.schemas.gitops_app import (
     GitOpsAppCreateRequest,
@@ -26,6 +27,11 @@ from app.services.gitops.discovery import GitOpsAppDiscoveryService
 from app.services.gitops.errors import GitOpsWriterError
 from app.services.gitops.git_adapter import sanitize_git_output
 from app.services.gitops.manifests import WORKLOAD_NAMESPACE
+from app.services.gitops.product_records import (
+    GitOpsProductRecordService,
+    ProductRecordPersistenceError,
+    PublishedDeploymentRecordRequest,
+)
 from app.services.gitops.kubernetes_status_reader import KubernetesGitOpsStatusReader
 from app.services.gitops.status_reader import (
     GitOpsStatusError,
@@ -39,6 +45,9 @@ from app.services.gitops.status_reader import (
 router = APIRouter(prefix="/gitops", tags=["gitops"])
 SUCCESS_MESSAGE = "The GitOps change was pushed. Automatic Argo CD reconciliation is pending."
 INTERNAL_ERROR_MESSAGE = "The GitOps deploy operation failed unexpectedly."
+PRODUCT_RECORD_ERROR_MESSAGE = (
+    "The GitOps change was pushed, but its product records could not be saved."
+)
 ERROR_STATUS_CODES = {
     "validation_failed": status.HTTP_400_BAD_REQUEST,
     "repo_write_failed": status.HTTP_409_CONFLICT,
@@ -81,6 +90,10 @@ def get_gitops_deploy_repository_config() -> GitOpsDeployRepositoryConfig:
 
 def get_deploy_workload_operation_service() -> DeployWorkloadOperationService:
     return DeployWorkloadOperationService()
+
+
+def get_gitops_product_record_service(db: Session = Depends(get_db)) -> GitOpsProductRecordService:
+    return GitOpsProductRecordService(db)
 
 
 def get_gitops_app_discovery_service() -> GitOpsAppDiscoveryService:
@@ -258,8 +271,8 @@ def create_gitops_app(
     current_user: User = Depends(get_current_user),
     config: GitOpsDeployRepositoryConfig = Depends(get_gitops_deploy_repository_config),
     operation_service: DeployWorkloadOperationService = Depends(get_deploy_workload_operation_service),
+    product_record_service: GitOpsProductRecordService = Depends(get_gitops_product_record_service),
 ) -> GitOpsAppCreateResponse | JSONResponse:
-    _ = current_user
     # V1 local-first mode uses one server-configured worktree; per-user repository ownership is future work.
     try:
         result = operation_service.execute(
@@ -290,6 +303,46 @@ def create_gitops_app(
 
     response = _response_from_result(payload, config, result)
     if result.status == "pushed_waiting_for_argocd":
+        if not result.commit_sha:
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content=GitOpsAppCreateResponse(
+                    status="internal_error",
+                    app_name=payload.app_name,
+                    namespace=WORKLOAD_NAMESPACE,
+                    source_path=_safe_response_source_path(config.source_root_relative),
+                    message=INTERNAL_ERROR_MESSAGE,
+                    error_code="internal_error",
+                ).model_dump(),
+            )
+        try:
+            product_record_service.record_published_deployment(
+                PublishedDeploymentRecordRequest(
+                    owner_id=current_user.id,
+                    app_name=payload.app_name,
+                    image=payload.image,
+                    replicas=payload.replicas,
+                    container_port=payload.container_port,
+                    service_port=payload.service_port,
+                    service_type=payload.service_type,
+                    namespace=WORKLOAD_NAMESPACE,
+                    source_path=result.source_path,
+                    commit_sha=result.commit_sha,
+                )
+            )
+        except ProductRecordPersistenceError:
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content=GitOpsAppCreateResponse(
+                    status="internal_error",
+                    app_name=payload.app_name,
+                    namespace=WORKLOAD_NAMESPACE,
+                    source_path=_safe_response_source_path(config.source_root_relative),
+                    commit_sha=result.commit_sha,
+                    message=PRODUCT_RECORD_ERROR_MESSAGE,
+                    error_code="product_record_persistence_failed",
+                ).model_dump(),
+            )
         return response
 
     response_status = ERROR_STATUS_CODES.get(result.status, status.HTTP_500_INTERNAL_SERVER_ERROR)
