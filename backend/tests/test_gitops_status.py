@@ -220,6 +220,27 @@ class GitOpsStatusApiTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self.reader.requests, [])
 
+    def test_api_request_cannot_override_server_cluster_contexts(self) -> None:
+        self.authenticate()
+
+        response = self.client.get(
+            "/api/v1/gitops/apps/payment-api/status",
+            params={
+                "commit_sha": COMMIT_SHA,
+                "management_kubeconfig_context": "untrusted-management-context",
+                "workload_kubeconfig_context": "untrusted-workload-context",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self.reader.requests), 1)
+        request = self.reader.requests[0]
+        self.assertEqual(request.root_application_namespace, "argocd")
+        self.assertEqual(request.namespace, "devdeploy-apps")
+        self.assertFalse(hasattr(request, "management_kubeconfig_context"))
+        self.assertFalse(hasattr(request, "workload_kubeconfig_context"))
+        self.assertNotIn("kubeconfig_context", str(response.json()))
+
     def test_pending_status_is_returned_safely(self) -> None:
         self.authenticate()
         self.reader.snapshot = snapshot(observed_revision=None)

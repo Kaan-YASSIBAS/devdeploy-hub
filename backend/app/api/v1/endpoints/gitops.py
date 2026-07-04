@@ -94,7 +94,9 @@ def get_gitops_status_service() -> GitOpsStatusService:
     try:
         reader = KubernetesGitOpsStatusReader.from_server_config(
             management_kubeconfig=settings.management_kubeconfig,
+            management_kubeconfig_context=settings.management_kubeconfig_context,
             workload_kubeconfig=settings.workload_kubeconfig,
+            workload_kubeconfig_context=settings.workload_kubeconfig_context,
             use_in_cluster_management=settings.kubernetes_in_cluster,
         )
     except GitOpsStatusError:

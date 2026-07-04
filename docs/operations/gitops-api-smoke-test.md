@@ -59,6 +59,11 @@ The API uses server-controlled Git settings:
 | `DEVDEPLOY_GITOPS_BRANCH` | `main` |
 | `DEVDEPLOY_GITOPS_REMOTE` | `origin` |
 | `DEVDEPLOY_GITOPS_REMOTE_BRANCH` | `main` |
+| `DEVDEPLOY_STATUS_READER_MODE` | `kubernetes` |
+| `DEVDEPLOY_MGMT_KUBECONFIG` | Absolute path to the server-side kubeconfig |
+| `DEVDEPLOY_MGMT_KUBECONFIG_CONTEXT` | `kind-devdeploy-mgmt` |
+| `DEVDEPLOY_WORKLOAD_KUBECONFIG` | Absolute path to the server-side kubeconfig |
+| `DEVDEPLOY_WORKLOAD_KUBECONFIG_CONTEXT` | `kind-devdeploy-workload` |
 
 Example for a backend started from PowerShell:
 
@@ -68,9 +73,16 @@ $env:DEVDEPLOY_GITOPS_SOURCE_ROOT = "gitops/workloads/devdeploy-apps"
 $env:DEVDEPLOY_GITOPS_BRANCH = "main"
 $env:DEVDEPLOY_GITOPS_REMOTE = "origin"
 $env:DEVDEPLOY_GITOPS_REMOTE_BRANCH = "main"
+$env:DEVDEPLOY_STATUS_READER_MODE = "kubernetes"
+$env:DEVDEPLOY_MGMT_KUBECONFIG = "<KUBECONFIG_PATH>"
+$env:DEVDEPLOY_MGMT_KUBECONFIG_CONTEXT = "kind-devdeploy-mgmt"
+$env:DEVDEPLOY_WORKLOAD_KUBECONFIG = "<KUBECONFIG_PATH>"
+$env:DEVDEPLOY_WORKLOAD_KUBECONFIG_CONTEXT = "kind-devdeploy-workload"
 ```
 
 `DEVDEPLOY_GITOPS_REPO_ROOT` must be accessible from the backend process. A Windows path such as `C:\Users\...` is not automatically available to a backend container running in Kubernetes.
+
+When one kubeconfig contains both kind clusters, keep the explicit context values above even if the current host context appears correct. Context selection is server-controlled and is not accepted from API requests.
 
 For this smoke test, prefer running the backend in local development mode from the selected worktree. An in-cluster backend is suitable only when that worktree is explicitly mounted into the container and the container has the required Git identity. Do not place a Git token in the API request or generated manifests.
 

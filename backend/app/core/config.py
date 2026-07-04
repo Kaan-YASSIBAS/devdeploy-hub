@@ -49,7 +49,15 @@ class Settings(BaseSettings):
         alias="DEVDEPLOY_STATUS_READER_MODE",
     )
     management_kubeconfig: str | None = Field(default=None, alias="DEVDEPLOY_MGMT_KUBECONFIG")
+    management_kubeconfig_context: str | None = Field(
+        default=None,
+        alias="DEVDEPLOY_MGMT_KUBECONFIG_CONTEXT",
+    )
     workload_kubeconfig: str | None = Field(default=None, alias="DEVDEPLOY_WORKLOAD_KUBECONFIG")
+    workload_kubeconfig_context: str | None = Field(
+        default=None,
+        alias="DEVDEPLOY_WORKLOAD_KUBECONFIG_CONTEXT",
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",

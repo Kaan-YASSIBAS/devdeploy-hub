@@ -251,7 +251,9 @@ class KubernetesGitOpsStatusReaderTestCase(unittest.TestCase):
         with self.assertRaises(GitOpsStatusError) as raised:
             KubernetesGitOpsStatusReader.from_server_config(
                 management_kubeconfig=None,
+                management_kubeconfig_context=None,
                 workload_kubeconfig=None,
+                workload_kubeconfig_context=None,
                 use_in_cluster_management=False,
             )
 
@@ -281,7 +283,9 @@ class KubernetesGitOpsStatusReaderTestCase(unittest.TestCase):
 
         reader = KubernetesGitOpsStatusReader.from_server_config(
             management_kubeconfig=None,
+            management_kubeconfig_context="kind-devdeploy-mgmt",
             workload_kubeconfig="workload-kubeconfig.yaml",
+            workload_kubeconfig_context="kind-devdeploy-workload",
             use_in_cluster_management=True,
         )
 
@@ -290,10 +294,69 @@ class KubernetesGitOpsStatusReaderTestCase(unittest.TestCase):
             load_kube_config.call_args.kwargs["config_file"],
             str(Path("workload-kubeconfig.yaml").expanduser()),
         )
+        self.assertEqual(
+            load_kube_config.call_args.kwargs["context"],
+            "kind-devdeploy-workload",
+        )
         custom_objects_api.assert_called_once_with("management-client")
         apps_api.assert_called_once_with("workload-client")
         core_api.assert_called_once_with("workload-client")
         self.assertIs(reader.management_custom_api, custom_objects_api.return_value)
+
+    @patch("app.services.gitops.kubernetes_status_reader.client.CoreV1Api")
+    @patch("app.services.gitops.kubernetes_status_reader.client.AppsV1Api")
+    @patch("app.services.gitops.kubernetes_status_reader.client.CustomObjectsApi")
+    @patch("app.services.gitops.kubernetes_status_reader.client.ApiClient")
+    @patch("app.services.gitops.kubernetes_status_reader.config.load_kube_config")
+    def test_explicit_management_and_workload_contexts_are_selected(
+        self,
+        load_kube_config,
+        api_client,
+        custom_objects_api,
+        apps_api,
+        core_api,
+    ) -> None:
+        api_client.side_effect = ["management-client", "workload-client"]
+
+        KubernetesGitOpsStatusReader.from_server_config(
+            management_kubeconfig="shared-kubeconfig.yaml",
+            management_kubeconfig_context="kind-devdeploy-mgmt",
+            workload_kubeconfig="shared-kubeconfig.yaml",
+            workload_kubeconfig_context="kind-devdeploy-workload",
+            use_in_cluster_management=False,
+        )
+
+        self.assertEqual(load_kube_config.call_count, 2)
+        management_call, workload_call = load_kube_config.call_args_list
+        self.assertEqual(management_call.kwargs["context"], "kind-devdeploy-mgmt")
+        self.assertEqual(workload_call.kwargs["context"], "kind-devdeploy-workload")
+        self.assertEqual(
+            management_call.kwargs["config_file"],
+            str(Path("shared-kubeconfig.yaml").expanduser()),
+        )
+        self.assertEqual(
+            workload_call.kwargs["config_file"],
+            str(Path("shared-kubeconfig.yaml").expanduser()),
+        )
+        custom_objects_api.assert_called_once_with("management-client")
+        apps_api.assert_called_once_with("workload-client")
+        core_api.assert_called_once_with("workload-client")
+
+    @patch("app.services.gitops.kubernetes_status_reader.client.ApiClient")
+    @patch("app.services.gitops.kubernetes_status_reader.config.load_kube_config")
+    def test_empty_context_preserves_default_kubeconfig_behavior(
+        self,
+        load_kube_config,
+        api_client,
+    ) -> None:
+        KubernetesGitOpsStatusReader._build_api_client(
+            kubeconfig_path="shared-kubeconfig.yaml",
+            kubeconfig_context="",
+            allow_in_cluster=False,
+        )
+
+        self.assertNotIn("context", load_kube_config.call_args.kwargs)
+        api_client.assert_called_once()
 
 
 class GitOpsStatusServiceFactoryTestCase(unittest.TestCase):
@@ -314,7 +377,9 @@ class GitOpsStatusServiceFactoryTestCase(unittest.TestCase):
         with (
             patch.object(settings, "status_reader_mode", "kubernetes"),
             patch.object(settings, "management_kubeconfig", "mgmt.yaml"),
+            patch.object(settings, "management_kubeconfig_context", "kind-devdeploy-mgmt"),
             patch.object(settings, "workload_kubeconfig", "workload.yaml"),
+            patch.object(settings, "workload_kubeconfig_context", "kind-devdeploy-workload"),
             patch.object(settings, "kubernetes_in_cluster", False),
         ):
             get_gitops_status_service.cache_clear()
@@ -322,7 +387,9 @@ class GitOpsStatusServiceFactoryTestCase(unittest.TestCase):
 
         from_server_config.assert_called_once_with(
             management_kubeconfig="mgmt.yaml",
+            management_kubeconfig_context="kind-devdeploy-mgmt",
             workload_kubeconfig="workload.yaml",
+            workload_kubeconfig_context="kind-devdeploy-workload",
             use_in_cluster_management=False,
         )
         self.assertIs(service.reader, live_reader)

@@ -59,15 +59,19 @@ class KubernetesGitOpsStatusReader:
         cls,
         *,
         management_kubeconfig: str | None,
+        management_kubeconfig_context: str | None,
         workload_kubeconfig: str | None,
+        workload_kubeconfig_context: str | None,
         use_in_cluster_management: bool,
     ) -> "KubernetesGitOpsStatusReader":
         management_client = cls._build_api_client(
             kubeconfig_path=management_kubeconfig,
+            kubeconfig_context=management_kubeconfig_context,
             allow_in_cluster=use_in_cluster_management,
         )
         workload_client = cls._build_api_client(
             kubeconfig_path=workload_kubeconfig,
+            kubeconfig_context=workload_kubeconfig_context,
             allow_in_cluster=False,
         )
         return cls(
@@ -301,14 +305,23 @@ class KubernetesGitOpsStatusReader:
         ) from None
 
     @staticmethod
-    def _build_api_client(*, kubeconfig_path: str | None, allow_in_cluster: bool) -> client.ApiClient:
+    def _build_api_client(
+        *,
+        kubeconfig_path: str | None,
+        kubeconfig_context: str | None,
+        allow_in_cluster: bool,
+    ) -> client.ApiClient:
         configuration = client.Configuration()
         try:
             if kubeconfig_path:
-                config.load_kube_config(
-                    config_file=str(Path(kubeconfig_path).expanduser()),
-                    client_configuration=configuration,
-                )
+                load_options = {
+                    "config_file": str(Path(kubeconfig_path).expanduser()),
+                    "client_configuration": configuration,
+                }
+                normalized_context = kubeconfig_context.strip() if kubeconfig_context else ""
+                if normalized_context:
+                    load_options["context"] = normalized_context
+                config.load_kube_config(**load_options)
             elif allow_in_cluster:
                 config.load_incluster_config(client_configuration=configuration)
                 KubernetesGitOpsStatusReader._normalize_authorization_header(configuration)
