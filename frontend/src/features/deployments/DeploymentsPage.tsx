@@ -66,6 +66,13 @@ function runtimeVariant(status: DeploymentRuntimeStatus["display_status"]) {
   return "muted";
 }
 
+function driftVariant(status: NonNullable<DeploymentRecord["drift_status"]>["status"]) {
+  if (status === "aligned") return "success";
+  if (status === "drifted") return "warning";
+  if (status === "gitops_missing" || status === "runtime_missing") return "danger";
+  return "muted";
+}
+
 function hasPublishedGitOpsSummary(summary: string | null) {
   return summary?.toLowerCase().includes("gitops manifests published") ?? false;
 }
@@ -242,6 +249,9 @@ export function DeploymentsPage() {
         record.namespace,
         record.desired_state,
         record.runtime_status?.display_status ?? "",
+        record.drift_status?.status ?? "",
+        ...(record.drift_status?.db_to_gitops.differences.map((difference) => difference.field) ?? []),
+        ...(record.drift_status?.db_to_runtime.differences.map((difference) => difference.field) ?? []),
         record.status_summary ?? "",
         record.commit_sha ?? "",
         serviceName
@@ -349,6 +359,41 @@ export function DeploymentsPage() {
                 total: runtime.pod_total_count ?? 0
               })}
             </p>
+          </div>
+        );
+      }
+    },
+    {
+      key: "drift",
+      header: t("deployments.records.fields.reconcileStatus"),
+      render: (record) => {
+        const drift = record.drift_status;
+        if (!drift) {
+          return <Badge variant="muted">{t("deployments.records.drift.status.unknown")}</Badge>;
+        }
+        const differences = [
+          ...drift.db_to_gitops.differences,
+          ...drift.db_to_runtime.differences
+        ].slice(0, 2);
+        return (
+          <div className="max-w-[240px] space-y-1.5">
+            <Badge variant={driftVariant(drift.status)}>
+              {t(`deployments.records.drift.status.${drift.status}`)}
+            </Badge>
+            {drift.status === "drifted"
+              ? differences.map((difference) => (
+                  <p
+                    className="break-words text-xs text-slate-500"
+                    key={`${difference.source}-${difference.field}`}
+                  >
+                    {t("deployments.records.drift.difference", {
+                      field: difference.field,
+                      expected: difference.expected ?? "-",
+                      actual: difference.actual ?? "-"
+                    })}
+                  </p>
+                ))
+              : null}
           </div>
         );
       }

@@ -80,7 +80,20 @@ def root_application(*, conditions=None) -> dict:
 def deployment() -> SimpleNamespace:
     return SimpleNamespace(
         metadata=SimpleNamespace(name="payment-api", generation=3),
-        spec=SimpleNamespace(replicas=1),
+        spec=SimpleNamespace(
+            replicas=1,
+            template=SimpleNamespace(
+                spec=SimpleNamespace(
+                    containers=[
+                        SimpleNamespace(
+                            name="payment-api",
+                            image="ghcr.io/example/payment-api:v1",
+                            ports=[SimpleNamespace(name="http", container_port=8080)],
+                        )
+                    ]
+                )
+            ),
+        ),
         status=SimpleNamespace(
             ready_replicas=1,
             available_replicas=1,
@@ -149,6 +162,8 @@ class KubernetesGitOpsStatusReaderTestCase(unittest.TestCase):
         self.assertEqual(result.root_application.sync_status, "Synced")
         self.assertEqual(result.root_application.health_status, "Healthy")
         self.assertTrue(result.workload.deployment_exists)
+        self.assertEqual(result.workload.deployment_image, "ghcr.io/example/payment-api:v1")
+        self.assertEqual(result.workload.container_port, 8080)
         self.assertEqual(result.workload.desired_replicas, 1)
         self.assertEqual(result.workload.ready_replicas, 1)
         self.assertEqual(result.workload.available_replicas, 1)

@@ -469,6 +469,16 @@
       "gitopsPublished": "GitOps: Yayınlandı",
       "runtimeReplicas": "Replica {{ready}}/{{desired}} hazır",
       "runtimePods": "Pod {{ready}}/{{total}} hazır",
+      "drift": {
+        "difference": "{{field}} beklenen {{expected}}, mevcut {{actual}}",
+        "status": {
+          "aligned": "Uyumlu",
+          "drifted": "Drift tespit edildi",
+          "gitops_missing": "GitOps eksik",
+          "runtime_missing": "Runtime eksik",
+          "unknown": "Bilinmiyor"
+        }
+      },
       "archive": {
         "action": "Arşivle",
         "confirm": "Bu işlem yalnızca DevDeploy kaydını arşivler. Kubernetes veya GitOps kaynaklarını silmez.",
@@ -498,6 +508,7 @@
         "serviceType": "Service türü",
         "status": "Durum",
         "runtimeDefaults": "Replica / portlar",
+        "reconcileStatus": "Reconcile durumu",
         "gitops": "GitOps bilgisi",
         "updated": "Güncellendi"
       },

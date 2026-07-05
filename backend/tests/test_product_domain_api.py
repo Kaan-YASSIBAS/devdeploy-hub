@@ -619,6 +619,8 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = WorkloadSnapshot(
             deployment_exists=True,
             service_exists=True,
+            deployment_image="ghcr.io/example/payments:v1",
+            container_port=8080,
             desired_replicas=2,
             ready_replicas=2,
             available_replicas=2,
@@ -637,6 +639,7 @@ class ProductDomainApiTestCase(unittest.TestCase):
 
         self.assertEqual(listed.status_code, 200)
         self.assertEqual(fetched.status_code, 200)
+        self.assertEqual(len(listed.json()), 1)
         for runtime in (listed.json()[0]["runtime_status"], fetched.json()["runtime_status"]):
             self.assertEqual(runtime["display_status"], "running")
             self.assertTrue(runtime["deployment_found"])
@@ -644,6 +647,14 @@ class ProductDomainApiTestCase(unittest.TestCase):
             self.assertEqual(runtime["available_replicas"], 2)
             self.assertEqual(runtime["pod_ready_count"], 2)
             self.assertEqual(runtime["service_cluster_ip"], "10.96.0.10")
+        for drift in (listed.json()[0]["drift_status"], fetched.json()["drift_status"]):
+            self.assertEqual(drift["status"], "gitops_missing")
+            self.assertEqual(drift["db_to_gitops"]["status"], "missing")
+            self.assertEqual(drift["db_to_runtime"]["status"], "aligned")
+
+        listed_again = self.client.get("/api/v1/deployment-records")
+        self.assertEqual(listed_again.status_code, 200)
+        self.assertEqual(len(listed_again.json()), 1)
 
     def test_product_lists_include_safe_not_found_runtime_status(self) -> None:
         service = self.create_service("payments-api")
@@ -668,10 +679,14 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(deployments_response.status_code, 200)
         self.assertEqual(services_response.status_code, 200)
         deployment_runtime = deployments_response.json()[0]["runtime_status"]
+        deployment_drift = deployments_response.json()[0]["drift_status"]
         service_runtime = services_response.json()[0]["runtime_status"]
         self.assertEqual(deployment_runtime["display_status"], "unknown")
         self.assertEqual(service_runtime["display_status"], "unknown")
+        self.assertEqual(deployment_drift["status"], "unknown")
+        self.assertEqual(deployment_drift["db_to_runtime"]["status"], "unknown")
         self.assertNotIn("kubeconfig", str(deployment_runtime).lower())
+        self.assertNotIn("kubeconfig", str(deployment_drift).lower())
         self.assertNotIn("credential", str(service_runtime).lower())
 
     def test_service_list_includes_ready_runtime_details(self) -> None:

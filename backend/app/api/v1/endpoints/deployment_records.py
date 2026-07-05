@@ -8,7 +8,10 @@ from app.api.v1.endpoints.gitops import (
     get_gitops_deploy_repository_config,
 )
 from app.core.deps import get_current_user, get_db
-from app.api.v1.runtime_status import get_product_runtime_status_service
+from app.api.v1.runtime_status import (
+    get_deployment_drift_service,
+    get_product_runtime_status_service,
+)
 from app.models.deployment_record import DeploymentRecord
 from app.models.user import User
 from app.schemas.archive import ArchiveFilter
@@ -20,6 +23,7 @@ from app.schemas.deployment_record import (
 )
 from app.schemas.runtime_status import UntrackedDeploymentListResponse
 from app.services.deployment_record_service import DeploymentRecordService
+from app.services.deployment_drift import DeploymentDriftService
 from app.services.gitops.deploy_operation import (
     DeployWorkloadOperationRequest,
     DeployWorkloadOperationService,
@@ -42,10 +46,14 @@ RECOVER_ERROR_STATUS_CODES = {
 def _read_response(
     deployment: DeploymentRecord,
     runtime_service: ProductRuntimeStatusService,
+    drift_service: DeploymentDriftService,
 ) -> DeploymentRecordRead:
     response = DeploymentRecordRead.model_validate(deployment)
     return response.model_copy(
-        update={"runtime_status": runtime_service.deployment_status(deployment)}
+        update={
+            "runtime_status": runtime_service.deployment_status(deployment),
+            "drift_status": drift_service.evaluate(deployment),
+        }
     )
 
 
@@ -64,9 +72,13 @@ def list_deployment_records(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     runtime_service: ProductRuntimeStatusService = Depends(get_product_runtime_status_service),
+    drift_service: DeploymentDriftService = Depends(get_deployment_drift_service),
 ) -> list[DeploymentRecordRead]:
     deployments = DeploymentRecordService(db).list_for_user(current_user, archive_filter)
-    return [_read_response(deployment, runtime_service) for deployment in deployments]
+    return [
+        _read_response(deployment, runtime_service, drift_service)
+        for deployment in deployments
+    ]
 
 
 @router.get("/untracked", response_model=UntrackedDeploymentListResponse)
@@ -85,9 +97,10 @@ def get_deployment_record(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     runtime_service: ProductRuntimeStatusService = Depends(get_product_runtime_status_service),
+    drift_service: DeploymentDriftService = Depends(get_deployment_drift_service),
 ) -> DeploymentRecordRead:
     deployment = DeploymentRecordService(db).get(deployment_id, current_user)
-    return _read_response(deployment, runtime_service)
+    return _read_response(deployment, runtime_service, drift_service)
 
 
 @router.patch("/{deployment_id}", response_model=DeploymentRecordRead)

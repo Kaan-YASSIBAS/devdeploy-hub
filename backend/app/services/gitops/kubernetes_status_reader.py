@@ -225,6 +225,8 @@ class KubernetesGitOpsStatusReader:
 
     @staticmethod
     def _workload_snapshot(deployment: Any, service: Any, pods: list[Any]) -> WorkloadSnapshot:
+        deployment_image = None
+        container_port = None
         desired_replicas = None
         ready_replicas = None
         available_replicas = None
@@ -233,6 +235,36 @@ class KubernetesGitOpsStatusReader:
         observed_generation = None
         deployment_failure = False
         if deployment is not None:
+            deployment_name = KubernetesGitOpsStatusReader._resource_name(deployment)
+            pod_template = getattr(getattr(deployment, "spec", None), "template", None)
+            pod_spec = getattr(pod_template, "spec", None)
+            containers = getattr(pod_spec, "containers", None) or []
+            container = next(
+                (
+                    item
+                    for item in containers
+                    if getattr(item, "name", None) == deployment_name
+                ),
+                containers[0] if containers else None,
+            )
+            deployment_image = KubernetesGitOpsStatusReader._string_or_none(
+                getattr(container, "image", None)
+            )
+            container_ports = getattr(container, "ports", None) or []
+            named_port = next(
+                (
+                    port
+                    for port in container_ports
+                    if getattr(port, "name", None) == "http"
+                ),
+                container_ports[0] if container_ports else None,
+            )
+            port_value = getattr(named_port, "container_port", None)
+            container_port = (
+                port_value
+                if KubernetesGitOpsStatusReader._valid_port(port_value)
+                else None
+            )
             desired_replicas = KubernetesGitOpsStatusReader._int_or_none(
                 getattr(getattr(deployment, "spec", None), "replicas", None)
             )
@@ -293,6 +325,8 @@ class KubernetesGitOpsStatusReader:
         return WorkloadSnapshot(
             deployment_exists=deployment is not None,
             service_exists=service is not None,
+            deployment_image=deployment_image,
+            container_port=container_port,
             desired_replicas=desired_replicas,
             ready_replicas=ready_replicas,
             available_replicas=available_replicas,

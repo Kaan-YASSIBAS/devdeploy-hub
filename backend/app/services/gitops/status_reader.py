@@ -79,6 +79,8 @@ class ServicePortSnapshot:
 class WorkloadSnapshot:
     deployment_exists: bool = False
     service_exists: bool = False
+    deployment_image: str | None = None
+    container_port: int | None = None
     desired_replicas: int | None = None
     ready_replicas: int | None = None
     available_replicas: int | None = None

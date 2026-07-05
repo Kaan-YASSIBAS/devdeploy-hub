@@ -82,6 +82,9 @@ class ProductRuntimeStatusService:
             message=message,
         )
 
+    def workload_snapshot(self, app_name: str, namespace: str) -> WorkloadSnapshot | None:
+        return self._safe_snapshot(app_name, namespace)
+
     def service_status(self, service: ServiceDefinition) -> ServiceRuntimeStatusRead:
         snapshot = self._safe_snapshot(service.name, self.workload_namespace)
         observed_at = datetime.now(timezone.utc)

@@ -87,6 +87,26 @@ export type DeploymentRuntimeStatus = {
   message: string | null;
 };
 
+export type DriftDifference = {
+  field: string;
+  expected: string | number | null;
+  actual: string | number | null;
+  source: "gitops" | "runtime";
+};
+
+export type DriftComparison = {
+  status: "aligned" | "drifted" | "missing" | "unknown";
+  differences: DriftDifference[];
+};
+
+export type DeploymentDriftStatus = {
+  status: "aligned" | "drifted" | "gitops_missing" | "runtime_missing" | "unknown";
+  db_to_gitops: DriftComparison;
+  db_to_runtime: DriftComparison;
+  checked_at: string;
+  message: string;
+};
+
 export type UntrackedDeploymentRuntime = {
   name: string;
   namespace: string;
@@ -175,6 +195,7 @@ export type DeploymentRecord = {
   created_at: string;
   updated_at: string;
   runtime_status: DeploymentRuntimeStatus | null;
+  drift_status: DeploymentDriftStatus | null;
 };
 
 export type DeploymentRecordUpdateInput = Partial<{
