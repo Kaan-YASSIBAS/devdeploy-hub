@@ -8,6 +8,7 @@ from app.repositories.deployment_record_repository import DeploymentRecordReposi
 from app.repositories.service_definition_repository import ServiceDefinitionRepository
 from app.schemas.archive import ArchiveFilter
 from app.schemas.deployment_record import DeploymentRecordCreate, DeploymentRecordUpdate
+from app.services.gitops.product_records import PUBLISHED_STATUS_SUMMARY, build_manifest_path
 
 
 class DeploymentRecordService:
@@ -65,6 +66,14 @@ class DeploymentRecordService:
     def get(self, deployment_id: int, user: User) -> DeploymentRecord:
         return self._ensure_access(self.deployments.get_by_id(deployment_id), user)
 
+    def get_owned(self, deployment_id: int, user: User) -> DeploymentRecord:
+        deployment = self.deployments.get_by_id(deployment_id)
+        if deployment is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment record not found")
+        if deployment.owner_id != user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Deployment record access denied")
+        return deployment
+
     def update(
         self,
         deployment_id: int,
@@ -85,11 +94,7 @@ class DeploymentRecordService:
         return self.deployments.get_by_id(updated.id) or updated
 
     def archive(self, deployment_id: int, user: User) -> DeploymentRecord:
-        deployment = self.deployments.get_by_id(deployment_id)
-        if deployment is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment record not found")
-        if deployment.owner_id != user.id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Deployment record access denied")
+        deployment = self.get_owned(deployment_id, user)
         if deployment.archived_at is None:
             deployment.archived_at = utc_now()
             self.db.commit()
@@ -97,10 +102,25 @@ class DeploymentRecordService:
         return self.deployments.get_by_id(deployment.id) or deployment
 
     def delete(self, deployment_id: int, user: User) -> None:
-        deployment = self.deployments.get_by_id(deployment_id)
-        if deployment is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment record not found")
-        if deployment.owner_id != user.id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Deployment record access denied")
+        deployment = self.get_owned(deployment_id, user)
         self.deployments.delete(deployment)
         self.db.commit()
+
+    def mark_recovered(
+        self,
+        deployment: DeploymentRecord,
+        *,
+        source_path: str,
+        commit_sha: str | None,
+    ) -> DeploymentRecord:
+        data = {
+            "gitops_manifest_path": build_manifest_path(source_path, deployment.app_name),
+            "desired_state": "pending",
+            "status_summary": PUBLISHED_STATUS_SUMMARY,
+        }
+        if commit_sha is not None:
+            data["commit_sha"] = commit_sha.lower()
+        updated = self.deployments.update(deployment, data)
+        self.db.commit()
+        self.db.refresh(updated)
+        return self.deployments.get_by_id(updated.id) or updated

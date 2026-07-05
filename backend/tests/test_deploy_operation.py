@@ -86,7 +86,12 @@ class DeployWorkloadOperationTestCase(unittest.TestCase):
             self.fail(f"Test repository Git command failed: {completed.stderr}")
         return completed.stdout
 
-    def request(self, *, app_name: str = "payment-api") -> DeployWorkloadOperationRequest:
+    def request(
+        self,
+        *,
+        app_name: str = "payment-api",
+        write_mode: str = "create",
+    ) -> DeployWorkloadOperationRequest:
         return DeployWorkloadOperationRequest(
             repo_root=self.repo_root,
             app_name=app_name,
@@ -94,6 +99,7 @@ class DeployWorkloadOperationTestCase(unittest.TestCase):
             replicas=2,
             container_port=8080,
             service_port=80,
+            write_mode=write_mode,
         )
 
     def remote_refs(self) -> str:
@@ -180,6 +186,32 @@ class DeployWorkloadOperationTestCase(unittest.TestCase):
         self.assertFalse(result.pushed)
         self.assertEqual(self._git(self.repo_root, "rev-parse", "HEAD").strip(), self.initial_sha)
         self.assertEqual(self.remote_refs(), "")
+
+    def test_recovery_operation_restores_commits_and_pushes_missing_manifests(self) -> None:
+        result = DeployWorkloadOperationService().execute(self.request(write_mode="recover"))
+
+        self.assertEqual(result.status, "pushed_waiting_for_argocd")
+        self.assertTrue(result.committed)
+        self.assertTrue(result.pushed)
+        self.assertEqual(
+            self._git(self.repo_root, "show", "-s", "--format=%s", "HEAD").strip(),
+            "recover: restore payment-api workload",
+        )
+        root = yaml.safe_load((self.source_root / "kustomization.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(root["resources"], ["apps/payment-api"])
+
+    def test_recovery_operation_handles_matching_manifests_without_duplicate_commit(self) -> None:
+        first = DeployWorkloadOperationService().execute(self.request(write_mode="recover"))
+        first_head = self._git(self.repo_root, "rev-parse", "HEAD").strip()
+
+        second = DeployWorkloadOperationService().execute(self.request(write_mode="recover"))
+
+        self.assertEqual(first.status, "pushed_waiting_for_argocd")
+        self.assertEqual(second.status, "no_changes")
+        self.assertFalse(second.committed)
+        self.assertFalse(second.pushed)
+        self.assertEqual(second.commit_sha, first_head)
+        self.assertEqual(self._git(self.repo_root, "rev-parse", "HEAD").strip(), first_head)
 
     def test_commit_failure_stops_before_push(self) -> None:
         adapter = CommitFailureGitAdapter()

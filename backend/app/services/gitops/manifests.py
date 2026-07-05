@@ -46,7 +46,7 @@ def generate_workload_manifests(request: WorkloadWriteRequest) -> GeneratedManif
         "kind": "Deployment",
         "metadata": {
             "name": request.app_name,
-            "namespace": WORKLOAD_NAMESPACE,
+            "namespace": request.namespace,
             "labels": workload_labels(request.app_name),
         },
         "spec": {
@@ -127,7 +127,7 @@ def generate_workload_manifests(request: WorkloadWriteRequest) -> GeneratedManif
         "kind": "Service",
         "metadata": {
             "name": request.app_name,
-            "namespace": WORKLOAD_NAMESPACE,
+            "namespace": request.namespace,
             "labels": workload_labels(request.app_name),
         },
         "spec": {

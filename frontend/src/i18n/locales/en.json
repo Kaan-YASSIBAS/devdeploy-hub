@@ -475,6 +475,12 @@
         "success": "Deployment record archived.",
         "error": "Deployment record could not be archived."
       },
+      "recover": {
+        "action": "Redeploy",
+        "confirm": "This regenerates GitOps manifests from the existing DevDeploy record and lets Argo CD deploy it again. It does not create a new record.",
+        "success": "Recovery started.",
+        "error": "Recovery failed."
+      },
       "delete": {
         "action": "Delete record",
         "confirm": "This permanently deletes only the DevDeploy deployment record. It does not delete Kubernetes resources or GitOps manifests.",

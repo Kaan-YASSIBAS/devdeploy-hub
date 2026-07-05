@@ -136,6 +136,12 @@ class GitAdapter:
             message="The GitOps changes were committed locally.",
         )
 
+    def read_head(self, *, repo_root: Path | str, expected_branch: str) -> str:
+        resolved_root = self._validate_repository(repo_root)
+        self._validate_operation_state(resolved_root)
+        self._validate_branch(resolved_root, expected_branch)
+        return self._read_head_sha(resolved_root)
+
     def validate_commit_preconditions(
         self,
         *,

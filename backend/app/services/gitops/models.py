@@ -7,6 +7,7 @@ from app.services.gitops.errors import GitOpsWriterError
 APP_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 CONTROL_CHARACTER_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
 MAX_APP_NAME_LENGTH = 40
+MAX_NAMESPACE_LENGTH = 63
 MAX_REPLICAS = 20
 MIN_PORT = 1
 MAX_PORT = 65535
@@ -29,6 +30,17 @@ def validate_image(value: object) -> str:
         raise GitOpsWriterError("invalid_image", "Container image is required.")
     if any(character.isspace() for character in value) or CONTROL_CHARACTER_PATTERN.search(value):
         raise GitOpsWriterError("invalid_image", "Container image contains unsupported characters.")
+    return value
+
+
+def validate_namespace(value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > MAX_NAMESPACE_LENGTH
+        or not APP_NAME_PATTERN.fullmatch(value)
+    ):
+        raise GitOpsWriterError("invalid_namespace", "Namespace is not a supported DNS label.")
     return value
 
 
@@ -58,10 +70,12 @@ class WorkloadWriteRequest:
     container_port: int = 80
     service_port: int = 80
     service_type: str = "ClusterIP"
+    namespace: str = "devdeploy-apps"
 
     def __post_init__(self) -> None:
         validate_app_name(self.app_name)
         validate_image(self.image)
+        validate_namespace(self.namespace)
         validate_replicas(self.replicas)
         validate_port(self.container_port, "Container port")
         validate_port(self.service_port, "Service port")

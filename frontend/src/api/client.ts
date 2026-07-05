@@ -14,6 +14,7 @@ import type {
   DeploymentCreateInput,
   DeploymentListItem,
   DeploymentRecord,
+  DeploymentRecordRecoverResponse,
   DeploymentRecordUpdateInput,
   DeploymentStatusUpdateInput,
   GitOpsDeploymentCreateInput,
@@ -242,6 +243,12 @@ export const deploymentRecordsApi = {
   },
   async archive(id: number) {
     const { data } = await apiClient.post<DeploymentRecord>(`/deployment-records/${id}/archive`);
+    return data;
+  },
+  async recover(id: number) {
+    const { data } = await apiClient.post<DeploymentRecordRecoverResponse>(
+      `/deployment-records/${id}/recover`
+    );
     return data;
   },
   async remove(id: number) {

@@ -157,3 +157,22 @@ class DeploymentRecordRead(BaseModel):
     runtime_status: DeploymentRuntimeStatusRead | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class DeploymentRecordRecoverResponse(BaseModel):
+    status: Literal[
+        "pushed_waiting_for_argocd",
+        "no_changes_waiting_for_argocd",
+        "validation_failed",
+        "repo_write_failed",
+        "render_failed",
+        "commit_failed",
+        "push_failed",
+        "internal_error",
+    ]
+    deployment_id: int
+    app_name: str
+    commit_sha: str | None = None
+    manifest_path: str | None = None
+    message: str
+    error_code: str | None = None

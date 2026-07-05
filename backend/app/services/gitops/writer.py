@@ -18,6 +18,7 @@ class WorkloadWriteResult:
     app_dir: Path
     written_files: tuple[Path, ...]
     root_kustomization: Path
+    changed: bool
 
 
 class GitOpsWorkloadWriter:
@@ -75,7 +76,69 @@ class GitOpsWorkloadWriter:
             app_dir=app_dir,
             written_files=written_files,
             root_kustomization=self.paths.root_kustomization,
+            changed=True,
         )
+
+    def recover(self, request: WorkloadWriteRequest) -> WorkloadWriteResult:
+        app_dir = self.paths.app_dir(request.app_name)
+        if app_dir.exists() and not app_dir.is_dir():
+            raise GitOpsWriterError("write_failed", "The GitOps workload path is not a directory.")
+
+        generated = generate_workload_manifests(request)
+        root_content = RootKustomizationEditor(self.paths).add_app(request.app_name)
+        self.render_validator.validate(
+            source_root=self.paths.source_root,
+            app_name=request.app_name,
+            generated_files=generated.files,
+            root_kustomization=root_content,
+        )
+
+        written_files = tuple(app_dir / file_name for file_name in MANIFEST_FILE_ORDER)
+        app_changed = any(
+            not self._matches_content(path, generated.files[path.name])
+            for path in written_files
+        )
+        root_changed = not self._matches_content(self.paths.root_kustomization, root_content)
+        changed = app_changed or root_changed
+        if not changed:
+            return WorkloadWriteResult(
+                app_name=request.app_name,
+                app_dir=app_dir,
+                written_files=written_files,
+                root_kustomization=self.paths.root_kustomization,
+                changed=False,
+            )
+
+        created_app_dir = not app_dir.exists()
+        try:
+            app_dir.mkdir(exist_ok=True)
+            if app_changed:
+                for file_name in MANIFEST_FILE_ORDER:
+                    self._atomic_write(app_dir / file_name, generated.files[file_name])
+            if root_changed:
+                self._atomic_write(self.paths.root_kustomization, root_content)
+        except (OSError, UnicodeError):
+            if created_app_dir:
+                shutil.rmtree(app_dir, ignore_errors=True)
+            raise GitOpsWriterError(
+                "write_failed",
+                "The GitOps workload files could not be recovered safely.",
+            ) from None
+
+        return WorkloadWriteResult(
+            app_name=request.app_name,
+            app_dir=app_dir,
+            written_files=written_files,
+            root_kustomization=self.paths.root_kustomization,
+            changed=True,
+        )
+
+    @staticmethod
+    def _matches_content(path: Path, expected: str) -> bool:
+        try:
+            return path.is_file() and path.read_text(encoding="utf-8") == expected
+        except (OSError, UnicodeError):
+            return False
 
     @staticmethod
     def _atomic_write(path: Path, content: str) -> None:

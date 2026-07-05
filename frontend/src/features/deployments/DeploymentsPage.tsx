@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Archive, Database, Plus, RefreshCw, Rocket, Search, Trash2 } from "lucide-react";
+import { Archive, Database, Plus, RefreshCw, Rocket, RotateCcw, Search, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -70,6 +70,16 @@ function hasPublishedGitOpsSummary(summary: string | null) {
   return summary?.toLowerCase().includes("gitops manifests published") ?? false;
 }
 
+function canRecover(record: DeploymentRecord) {
+  const runtime = record.runtime_status;
+  if (record.archived_at || !runtime) return false;
+  return (
+    runtime.display_status === "not_found" ||
+    (runtime.display_status === "unknown" &&
+      runtime.message === "Runtime status is temporarily unavailable.")
+  );
+}
+
 export function DeploymentsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -136,6 +146,26 @@ export function DeploymentsPage() {
   const deleteRecord = (record: DeploymentRecord) => {
     if (window.confirm(t("deployments.records.delete.confirm"))) {
       deleteMutation.mutate(record.id);
+    }
+  };
+
+  const recoverMutation = useMutation({
+    mutationFn: (id: number) => deploymentRecordsApi.recover(id),
+    onSuccess: async () => {
+      toast.success(t("deployments.records.recover.success"));
+      await queryClient.invalidateQueries({ queryKey: ["deployment-records"] });
+      await queryClient.invalidateQueries({ queryKey: ["service-definitions"] });
+      await queryClient.invalidateQueries({ queryKey: ["untracked-deployments"] });
+      await queryClient.invalidateQueries({ queryKey: ["untracked-services"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      await queryClient.invalidateQueries({ queryKey: ["user-summary"] });
+    },
+    onError: () => toast.error(t("deployments.records.recover.error"))
+  });
+
+  const recoverRecord = (record: DeploymentRecord) => {
+    if (window.confirm(t("deployments.records.recover.confirm"))) {
+      recoverMutation.mutate(record.id);
     }
   };
 
@@ -361,18 +391,33 @@ export function DeploymentsPage() {
             </Button>
           );
         }
-        return record.runtime_status?.display_status === "not_found" ? (
-          <Button
-            aria-label={t("deployments.records.archive.action")}
-            disabled={archiveMutation.isPending && archiveMutation.variables === record.id}
-            size="sm"
-            variant="outline"
-            onClick={() => archiveRecord(record)}
-          >
-            <Archive className="h-4 w-4" />
-            {t("deployments.records.archive.action")}
-          </Button>
-        ) : null;
+        if (!canRecover(record)) return null;
+        return (
+          <div className="flex flex-wrap gap-2">
+            <Button
+              aria-label={t("deployments.records.recover.action")}
+              disabled={recoverMutation.isPending && recoverMutation.variables === record.id}
+              size="sm"
+              variant="outline"
+              onClick={() => recoverRecord(record)}
+            >
+              <RotateCcw className="h-4 w-4" />
+              {t("deployments.records.recover.action")}
+            </Button>
+            {record.runtime_status?.display_status === "not_found" ? (
+              <Button
+                aria-label={t("deployments.records.archive.action")}
+                disabled={archiveMutation.isPending && archiveMutation.variables === record.id}
+                size="sm"
+                variant="ghost"
+                onClick={() => archiveRecord(record)}
+              >
+                <Archive className="h-4 w-4" />
+                {t("deployments.records.archive.action")}
+              </Button>
+            ) : null}
+          </div>
+        );
       }
     }
   ];

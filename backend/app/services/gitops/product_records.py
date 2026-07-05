@@ -15,6 +15,17 @@ class ProductRecordPersistenceError(RuntimeError):
     """Raised when a published GitOps change cannot be recorded safely."""
 
 
+def build_manifest_path(source_path: str, app_name: str) -> str:
+    root = PurePosixPath(source_path)
+    if (
+        not source_path
+        or root.is_absolute()
+        or any(part in {"", ".", ".."} or part.lower() == ".git" for part in root.parts)
+    ):
+        raise ProductRecordPersistenceError("The published GitOps manifest path is invalid.")
+    return (root / "apps" / app_name).as_posix()
+
+
 @dataclass(frozen=True, slots=True)
 class PublishedDeploymentRecordRequest:
     owner_id: int
@@ -45,7 +56,7 @@ class GitOpsProductRecordService:
         self,
         request: PublishedDeploymentRecordRequest,
     ) -> PublishedDeploymentRecordResult:
-        manifest_path = self._manifest_path(request.source_path, request.app_name)
+        manifest_path = build_manifest_path(request.source_path, request.app_name)
         try:
             service = self.services.get_by_owner_and_name(request.owner_id, request.app_name)
             service_defaults = {
@@ -92,14 +103,3 @@ class GitOpsProductRecordService:
             raise ProductRecordPersistenceError(
                 "The published GitOps change could not be recorded in the product database."
             ) from error
-
-    @staticmethod
-    def _manifest_path(source_path: str, app_name: str) -> str:
-        root = PurePosixPath(source_path)
-        if (
-            not source_path
-            or root.is_absolute()
-            or any(part in {"", ".", ".."} or part.lower() == ".git" for part in root.parts)
-        ):
-            raise ProductRecordPersistenceError("The published GitOps manifest path is invalid.")
-        return (root / "apps" / app_name).as_posix()

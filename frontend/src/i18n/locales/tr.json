@@ -475,6 +475,12 @@
         "success": "Deployment kaydı arşivlendi.",
         "error": "Deployment kaydı arşivlenemedi."
       },
+      "recover": {
+        "action": "Yeniden deploy et",
+        "confirm": "Bu işlem mevcut DevDeploy kaydından GitOps manifestlerini yeniden üretir ve Argo CD'nin tekrar deploy etmesini sağlar. Yeni kayıt oluşturmaz.",
+        "success": "Kurtarma başlatıldı.",
+        "error": "Kurtarma başarısız oldu."
+      },
       "delete": {
         "action": "Kaydı sil",
         "confirm": "Bu işlem yalnızca DevDeploy deployment kaydını kalıcı olarak siler. Kubernetes kaynaklarını veya GitOps manifestlerini silmez.",

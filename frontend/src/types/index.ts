@@ -192,6 +192,24 @@ export type DeploymentRecordUpdateInput = Partial<{
   status_summary: string | null;
 }>;
 
+export type DeploymentRecordRecoverResponse = {
+  status:
+    | "pushed_waiting_for_argocd"
+    | "no_changes_waiting_for_argocd"
+    | "validation_failed"
+    | "repo_write_failed"
+    | "render_failed"
+    | "commit_failed"
+    | "push_failed"
+    | "internal_error";
+  deployment_id: number;
+  app_name: string;
+  commit_sha: string | null;
+  manifest_path: string | null;
+  message: string;
+  error_code: string | null;
+};
+
 export type MockApplication = {
   id: string;
   name: string;

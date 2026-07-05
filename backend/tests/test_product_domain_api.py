@@ -12,6 +12,7 @@ from app.api.v1.runtime_status import get_product_runtime_status_service
 from app.core.deps import get_current_user, get_db
 from app.db.database import Base
 from app.models.user import User
+from app.services.gitops.deploy_operation import DeployWorkloadOperationResult
 from app.services.gitops.status_reader import (
     NamedWorkloadSnapshot,
     ServicePortSnapshot,
@@ -38,6 +39,25 @@ class FakeWorkloadRuntimeReader:
         if self.error is not None:
             raise self.error
         return self.discovered
+
+
+class FakeRecoverOperationService:
+    def __init__(self):
+        self.requests = []
+        self.result = DeployWorkloadOperationResult(
+            status="pushed_waiting_for_argocd",
+            app_name="payments-api",
+            source_path="gitops/workloads/devdeploy-apps",
+            expected_paths=(),
+            committed=True,
+            pushed=True,
+            commit_sha="c" * 40,
+            message="Recovery commit pushed.",
+        )
+
+    def execute(self, request):
+        self.requests.append(request)
+        return self.result
 
 
 class ProductDomainApiTestCase(unittest.TestCase):
@@ -70,6 +90,7 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.db.refresh(self.user_b)
         self.current_user = self.user_a
         self.runtime_reader = FakeWorkloadRuntimeReader()
+        self.recover_operation = FakeRecoverOperationService()
 
         self.app = FastAPI()
         self.app.include_router(services.router, prefix="/api/v1")
@@ -84,6 +105,18 @@ class ProductDomainApiTestCase(unittest.TestCase):
             reader=self.runtime_reader,
             workload_namespace="devdeploy-apps",
         )
+        self.app.dependency_overrides[
+            deployment_records.get_gitops_deploy_repository_config
+        ] = lambda: deployment_records.GitOpsDeployRepositoryConfig(
+            repo_root="C:/safe/devdeploy-repository",
+            source_root_relative="gitops/workloads/devdeploy-apps",
+            expected_branch="main",
+            remote_name="origin",
+            remote_branch="main",
+        )
+        self.app.dependency_overrides[
+            deployment_records.get_deploy_workload_operation_service
+        ] = lambda: self.recover_operation
         self.client = TestClient(self.app, raise_server_exceptions=False)
 
     def tearDown(self) -> None:
@@ -246,6 +279,131 @@ class ProductDomainApiTestCase(unittest.TestCase):
             f"/api/v1/deployment-records/{deployment['id']}/archive"
         )
         self.assertEqual(denied.status_code, 403)
+
+    def test_owner_can_recover_active_record_without_creating_duplicate_records(self) -> None:
+        service = self.create_service("payments-api")
+        deployment = self.create_deployment(service["id"])
+
+        response = self.client.post(
+            f"/api/v1/deployment-records/{deployment['id']}/recover"
+        )
+
+        self.assertEqual(response.status_code, 202, response.text)
+        body = response.json()
+        self.assertEqual(body["status"], "pushed_waiting_for_argocd")
+        self.assertEqual(body["deployment_id"], deployment["id"])
+        self.assertEqual(body["commit_sha"], "c" * 40)
+        self.assertEqual(
+            body["manifest_path"],
+            "gitops/workloads/devdeploy-apps/apps/payments-api",
+        )
+        self.assertEqual(
+            len(self.client.get("/api/v1/deployment-records", params={"archive_filter": "all"}).json()),
+            1,
+        )
+        self.assertEqual(
+            len(self.client.get("/api/v1/services", params={"archive_filter": "all"}).json()),
+            1,
+        )
+        updated = self.client.get(f"/api/v1/deployment-records/{deployment['id']}").json()
+        self.assertEqual(updated["commit_sha"], "c" * 40)
+        self.assertEqual(updated["desired_state"], "pending")
+        self.assertEqual(updated["status_summary"], "GitOps manifests published")
+        operation_request = self.recover_operation.requests[0]
+        self.assertEqual(operation_request.write_mode, "recover")
+        self.assertEqual(operation_request.app_name, deployment["app_name"])
+        self.assertEqual(operation_request.image, deployment["image"])
+        self.assertEqual(operation_request.namespace, deployment["namespace"])
+
+    def test_archived_deployment_record_cannot_be_recovered(self) -> None:
+        deployment = self.create_deployment()
+        self.assertEqual(
+            self.client.post(f"/api/v1/deployment-records/{deployment['id']}/archive").status_code,
+            200,
+        )
+
+        response = self.client.post(
+            f"/api/v1/deployment-records/{deployment['id']}/recover"
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.recover_operation.requests, [])
+
+    def test_user_cannot_recover_another_users_deployment_record(self) -> None:
+        deployment = self.create_deployment()
+        self.current_user = self.user_b
+
+        response = self.client.post(
+            f"/api/v1/deployment-records/{deployment['id']}/recover"
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.recover_operation.requests, [])
+
+    def test_recover_missing_record_returns_not_found(self) -> None:
+        response = self.client.post("/api/v1/deployment-records/99999/recover")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(self.recover_operation.requests, [])
+
+    def test_recover_no_change_reuses_existing_commit_and_record(self) -> None:
+        deployment = self.create_deployment()
+        existing_commit = "b" * 40
+        self.assertEqual(
+            self.client.patch(
+                f"/api/v1/deployment-records/{deployment['id']}",
+                json={
+                    "commit_sha": existing_commit,
+                    "gitops_manifest_path": "gitops/workloads/devdeploy-apps/apps/payments-api",
+                    "desired_state": "pending",
+                },
+            ).status_code,
+            200,
+        )
+        self.recover_operation.result = DeployWorkloadOperationResult(
+            status="no_changes",
+            app_name="payments-api",
+            source_path="gitops/workloads/devdeploy-apps",
+            expected_paths=(),
+            committed=False,
+            pushed=False,
+            commit_sha=None,
+            message="No changes.",
+        )
+
+        response = self.client.post(
+            f"/api/v1/deployment-records/{deployment['id']}/recover"
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["status"], "no_changes_waiting_for_argocd")
+        self.assertEqual(response.json()["commit_sha"], existing_commit)
+        self.assertEqual(
+            len(self.client.get("/api/v1/deployment-records", params={"archive_filter": "all"}).json()),
+            1,
+        )
+
+    def test_recover_failure_returns_sanitized_git_message(self) -> None:
+        deployment = self.create_deployment()
+        self.recover_operation.result = DeployWorkloadOperationResult(
+            status="push_failed",
+            app_name="payments-api",
+            source_path="gitops/workloads/devdeploy-apps",
+            expected_paths=(),
+            committed=True,
+            pushed=False,
+            commit_sha="d" * 40,
+            message="fatal: https://user:super-secret@example.invalid/repository.git",
+            error_code="git_push_failed",
+        )
+
+        response = self.client.post(
+            f"/api/v1/deployment-records/{deployment['id']}/recover"
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertNotIn("user:super-secret", response.text)
+        self.assertIn("<redacted>", response.json()["message"])
 
     def test_service_list_filters_active_archived_and_all_with_owner_isolation(self) -> None:
         archived_service = self.create_service("Archived Service")
@@ -451,6 +609,7 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(self.client.get("/api/v1/deployment-records").status_code, 401)
         self.assertEqual(self.client.post("/api/v1/services/1/archive").status_code, 401)
         self.assertEqual(self.client.post("/api/v1/deployment-records/1/archive").status_code, 401)
+        self.assertEqual(self.client.post("/api/v1/deployment-records/1/recover").status_code, 401)
         self.assertEqual(self.client.delete("/api/v1/services/1").status_code, 401)
         self.assertEqual(self.client.delete("/api/v1/deployment-records/1").status_code, 401)
 

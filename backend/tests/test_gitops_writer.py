@@ -237,6 +237,26 @@ class GitOpsWriterTestCase(unittest.TestCase):
         root = yaml.safe_load((self.source_root / "kustomization.yaml").read_text(encoding="utf-8"))
         self.assertEqual(root["resources"], ["apps/nginx-demo"])
 
+    def test_writer_recover_restores_missing_app_from_empty_root(self) -> None:
+        writer = GitOpsWorkloadWriter(self.source_root)
+        request = WorkloadWriteRequest(app_name="nginx-demo", image="nginx:latest")
+
+        result = writer.recover(request)
+
+        self.assertTrue(result.changed)
+        self.assertTrue(all(path.is_file() for path in result.written_files))
+        root = yaml.safe_load((self.source_root / "kustomization.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(root["resources"], ["apps/nginx-demo"])
+
+    def test_writer_recover_returns_no_change_when_manifests_already_match(self) -> None:
+        writer = GitOpsWorkloadWriter(self.source_root)
+        request = WorkloadWriteRequest(app_name="nginx-demo", image="nginx:latest")
+        self.assertTrue(writer.recover(request).changed)
+
+        result = writer.recover(request)
+
+        self.assertFalse(result.changed)
+
     def test_writer_fails_when_app_folder_exists(self) -> None:
         (self.apps_root / "nginx-demo").mkdir()
         writer = GitOpsWorkloadWriter(self.source_root)

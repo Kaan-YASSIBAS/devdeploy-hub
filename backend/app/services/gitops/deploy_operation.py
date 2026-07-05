@@ -15,8 +15,10 @@ DeployOperationStatus = Literal[
     "render_failed",
     "commit_failed",
     "push_failed",
+    "no_changes",
     "pushed_waiting_for_argocd",
 ]
+DeployWriteMode = Literal["create", "recover"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +34,8 @@ class DeployWorkloadOperationRequest:
     container_port: int = 80
     service_port: int = 80
     service_type: str = "ClusterIP"
+    namespace: str = "devdeploy-apps"
+    write_mode: DeployWriteMode = "create"
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +58,8 @@ class DeployWorkloadOperationService:
     def execute(self, request: DeployWorkloadOperationRequest) -> DeployWorkloadOperationResult:
         app_name = request.app_name if isinstance(request.app_name, str) else ""
         try:
+            if request.write_mode not in ("create", "recover"):
+                raise GitOpsWriterError("invalid_write_mode", "The GitOps write mode is invalid.")
             workload_request = WorkloadWriteRequest(
                 app_name=request.app_name,
                 image=request.image,
@@ -61,6 +67,7 @@ class DeployWorkloadOperationService:
                 container_port=request.container_port,
                 service_port=request.service_port,
                 service_type=request.service_type,
+                namespace=request.namespace,
             )
             repo_root, source_root, source_path = self._resolve_source_root(
                 request.repo_root,
@@ -96,7 +103,12 @@ class DeployWorkloadOperationService:
             )
 
         try:
-            write_result = GitOpsWorkloadWriter(source_root).create(workload_request)
+            writer = GitOpsWorkloadWriter(source_root)
+            write_result = (
+                writer.recover(workload_request)
+                if request.write_mode == "recover"
+                else writer.create(workload_request)
+            )
             self._verify_write_result(repo_root, write_result, expected_paths)
         except GitOpsWriterError as error:
             return self._failure(
@@ -107,13 +119,42 @@ class DeployWorkloadOperationService:
                 error=error,
             )
 
+        if not write_result.changed:
+            try:
+                current_commit_sha = self.git_adapter.read_head(
+                    repo_root=repo_root,
+                    expected_branch=request.expected_branch,
+                )
+            except GitOpsWriterError as error:
+                return self._failure(
+                    status="commit_failed",
+                    app_name=workload_request.app_name,
+                    source_path=source_path,
+                    expected_paths=expected_paths,
+                    error=error,
+                )
+            return DeployWorkloadOperationResult(
+                status="no_changes",
+                app_name=workload_request.app_name,
+                source_path=source_path,
+                expected_paths=expected_paths,
+                committed=False,
+                pushed=False,
+                commit_sha=current_commit_sha,
+                message="The GitOps workload manifests already match the requested recovery state.",
+            )
+
         try:
             commit_result = self.git_adapter.create_commit(
                 GitCommitRequest(
                     repo_root=repo_root,
                     expected_branch=request.expected_branch,
                     expected_paths=expected_paths,
-                    commit_message=f"deploy: add {workload_request.app_name} workload",
+                    commit_message=(
+                        f"recover: restore {workload_request.app_name} workload"
+                        if request.write_mode == "recover"
+                        else f"deploy: add {workload_request.app_name} workload"
+                    ),
                 )
             )
         except GitOpsWriterError as error:
