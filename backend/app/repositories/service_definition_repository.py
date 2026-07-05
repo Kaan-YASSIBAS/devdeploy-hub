@@ -58,3 +58,7 @@ class ServiceDefinitionRepository:
             setattr(service, key, value)
         self.db.flush()
         return service
+
+    def delete(self, service: ServiceDefinition) -> None:
+        self.db.delete(service)
+        self.db.flush()

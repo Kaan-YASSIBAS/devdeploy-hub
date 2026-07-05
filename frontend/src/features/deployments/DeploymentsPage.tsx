@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Archive, Database, Plus, RefreshCw, Rocket, Search } from "lucide-react";
+import { Archive, Database, Plus, RefreshCw, Rocket, Search, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -118,6 +118,24 @@ export function DeploymentsPage() {
   const archiveRecord = (record: DeploymentRecord) => {
     if (window.confirm(t("deployments.records.archive.confirm"))) {
       archiveMutation.mutate(record.id);
+    }
+  };
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => deploymentRecordsApi.remove(id),
+    onSuccess: async () => {
+      toast.success(t("deployments.records.delete.success"));
+      await queryClient.invalidateQueries({ queryKey: ["deployment-records"] });
+      await queryClient.invalidateQueries({ queryKey: ["untracked-deployments"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      await queryClient.invalidateQueries({ queryKey: ["user-summary"] });
+    },
+    onError: () => toast.error(t("deployments.records.delete.error"))
+  });
+
+  const deleteRecord = (record: DeploymentRecord) => {
+    if (window.confirm(t("deployments.records.delete.confirm"))) {
+      deleteMutation.mutate(record.id);
     }
   };
 
@@ -328,8 +346,22 @@ export function DeploymentsPage() {
     {
       key: "actions",
       header: t("common.actions"),
-      render: (record) =>
-        !record.archived_at && record.runtime_status?.display_status === "not_found" ? (
+      render: (record) => {
+        if (record.archived_at) {
+          return (
+            <Button
+              aria-label={t("deployments.records.delete.action")}
+              disabled={deleteMutation.isPending && deleteMutation.variables === record.id}
+              size="sm"
+              variant="danger"
+              onClick={() => deleteRecord(record)}
+            >
+              <Trash2 className="h-4 w-4" />
+              {t("deployments.records.delete.action")}
+            </Button>
+          );
+        }
+        return record.runtime_status?.display_status === "not_found" ? (
           <Button
             aria-label={t("deployments.records.archive.action")}
             disabled={archiveMutation.isPending && archiveMutation.variables === record.id}
@@ -340,7 +372,8 @@ export function DeploymentsPage() {
             <Archive className="h-4 w-4" />
             {t("deployments.records.archive.action")}
           </Button>
-        ) : null
+        ) : null;
+      }
     }
   ];
 

@@ -363,6 +363,13 @@
         "confirm": "Bu işlem yalnızca DevDeploy kaydını arşivler. Kubernetes veya GitOps kaynaklarını silmez.",
         "success": "Servis kaydı arşivlendi.",
         "error": "Servis kaydı arşivlenemedi."
+      },
+      "delete": {
+        "action": "Kaydı sil",
+        "confirm": "Bu işlem yalnızca DevDeploy servis kaydını kalıcı olarak siler. Kubernetes Service veya GitOps manifestlerini silmez.",
+        "success": "Servis kaydı kalıcı olarak silindi.",
+        "error": "Servis kaydı silinemedi.",
+        "inUse": "Bu servis hâlâ deployment kayıtları tarafından kullanılıyor."
       }
     },
     "table": {
@@ -467,6 +474,12 @@
         "confirm": "Bu işlem yalnızca DevDeploy kaydını arşivler. Kubernetes veya GitOps kaynaklarını silmez.",
         "success": "Deployment kaydı arşivlendi.",
         "error": "Deployment kaydı arşivlenemedi."
+      },
+      "delete": {
+        "action": "Kaydı sil",
+        "confirm": "Bu işlem yalnızca DevDeploy deployment kaydını kalıcı olarak siler. Kubernetes kaynaklarını veya GitOps manifestlerini silmez.",
+        "success": "Deployment kaydı kalıcı olarak silindi.",
+        "error": "Deployment kaydı silinemedi."
       },
       "fields": {
         "service": "Servis tanımı",

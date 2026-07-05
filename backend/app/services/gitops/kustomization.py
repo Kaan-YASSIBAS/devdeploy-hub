@@ -16,6 +16,28 @@ class RootKustomizationEditor:
     def add_app(self, app_name: str) -> str:
         validated_name = validate_app_name(app_name)
         document = self._load_document(self.paths.root_kustomization)
+        resources = self._validated_resources(document)
+
+        app_entry = f"apps/{validated_name}"
+        self.paths.validate_resource_entry(app_entry)
+        if app_entry not in resources:
+            resources.append(app_entry)
+
+        document["resources"] = sorted(resources)
+        return dump_yaml(document)
+
+    def remove_app(self, app_name: str) -> str:
+        validated_name = validate_app_name(app_name)
+        document = self._load_document(self.paths.root_kustomization)
+        resources = self._validated_resources(document)
+        app_entry = f"apps/{validated_name}"
+        self.paths.validate_resource_entry(app_entry)
+        document["resources"] = sorted(
+            resource for resource in resources if resource != app_entry
+        )
+        return dump_yaml(document)
+
+    def _validated_resources(self, document: dict[str, Any]) -> list[str]:
         resources_value = document.get("resources", [])
         if resources_value is None:
             resources_value = []
@@ -30,14 +52,7 @@ class RootKustomizationEditor:
             safe_entry = self.paths.validate_resource_entry(entry)
             if safe_entry not in resources:
                 resources.append(safe_entry)
-
-        app_entry = f"apps/{validated_name}"
-        self.paths.validate_resource_entry(app_entry)
-        if app_entry not in resources:
-            resources.append(app_entry)
-
-        document["resources"] = sorted(resources)
-        return dump_yaml(document)
+        return resources
 
     @staticmethod
     def _load_document(path: Path) -> dict[str, Any]:

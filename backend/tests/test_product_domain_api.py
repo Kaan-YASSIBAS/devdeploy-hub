@@ -333,6 +333,88 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(services_response.status_code, 422)
         self.assertEqual(deployments_response.status_code, 422)
 
+    def test_owner_can_delete_active_and_archived_deployment_records(self) -> None:
+        active = self.create_deployment()
+        archived = self.create_deployment()
+        self.assertEqual(
+            self.client.post(f"/api/v1/deployment-records/{archived['id']}/archive").status_code,
+            200,
+        )
+
+        self.assertEqual(
+            self.client.delete(f"/api/v1/deployment-records/{active['id']}").status_code,
+            204,
+        )
+        self.assertEqual(
+            self.client.delete(f"/api/v1/deployment-records/{archived['id']}").status_code,
+            204,
+        )
+
+        for archive_filter in ("active", "archived", "all"):
+            response = self.client.get(
+                "/api/v1/deployment-records",
+                params={"archive_filter": archive_filter},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), [])
+        self.assertEqual(
+            self.client.get(f"/api/v1/deployment-records/{active['id']}").status_code,
+            404,
+        )
+        self.assertEqual(self.client.delete("/api/v1/deployment-records/99999").status_code, 404)
+
+    def test_user_cannot_delete_another_users_deployment_record(self) -> None:
+        deployment = self.create_deployment()
+        self.current_user = self.user_b
+
+        denied = self.client.delete(f"/api/v1/deployment-records/{deployment['id']}")
+
+        self.assertEqual(denied.status_code, 403)
+        self.current_user = self.user_a
+        self.assertEqual(
+            self.client.get(f"/api/v1/deployment-records/{deployment['id']}").status_code,
+            200,
+        )
+
+    def test_owner_can_delete_unreferenced_active_and_archived_services(self) -> None:
+        active = self.create_service("Active Service")
+        archived = self.create_service("Archived Service")
+        self.assertEqual(
+            self.client.post(f"/api/v1/services/{archived['id']}/archive").status_code,
+            200,
+        )
+
+        self.assertEqual(self.client.delete(f"/api/v1/services/{active['id']}").status_code, 204)
+        self.assertEqual(self.client.delete(f"/api/v1/services/{archived['id']}").status_code, 204)
+        self.assertEqual(
+            self.client.get("/api/v1/services", params={"archive_filter": "all"}).json(),
+            [],
+        )
+
+    def test_service_delete_is_blocked_while_any_deployment_record_references_it(self) -> None:
+        service = self.create_service()
+        deployment = self.create_deployment(service["id"])
+        self.assertEqual(
+            self.client.post(f"/api/v1/deployment-records/{deployment['id']}/archive").status_code,
+            200,
+        )
+
+        response = self.client.delete(f"/api/v1/services/{service['id']}")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"], "Service definition is still used by deployment records.")
+        self.assertEqual(self.client.get(f"/api/v1/services/{service['id']}").status_code, 200)
+
+    def test_user_cannot_delete_another_users_service(self) -> None:
+        service = self.create_service()
+        self.current_user = self.user_b
+
+        denied = self.client.delete(f"/api/v1/services/{service['id']}")
+
+        self.assertEqual(denied.status_code, 403)
+        self.current_user = self.user_a
+        self.assertEqual(self.client.get(f"/api/v1/services/{service['id']}").status_code, 200)
+
     def test_cross_owner_service_link_is_denied(self) -> None:
         service = self.create_service()
         self.current_user = self.user_b
@@ -369,6 +451,8 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(self.client.get("/api/v1/deployment-records").status_code, 401)
         self.assertEqual(self.client.post("/api/v1/services/1/archive").status_code, 401)
         self.assertEqual(self.client.post("/api/v1/deployment-records/1/archive").status_code, 401)
+        self.assertEqual(self.client.delete("/api/v1/services/1").status_code, 401)
+        self.assertEqual(self.client.delete("/api/v1/deployment-records/1").status_code, 401)
 
     def test_deployment_record_list_and_get_include_running_runtime_status(self) -> None:
         service = self.create_service("payments-api")

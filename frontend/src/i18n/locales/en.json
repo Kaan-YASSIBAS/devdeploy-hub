@@ -363,6 +363,13 @@
         "confirm": "This only archives the DevDeploy record. It does not delete Kubernetes or GitOps resources.",
         "success": "Service record archived.",
         "error": "Service record could not be archived."
+      },
+      "delete": {
+        "action": "Delete record",
+        "confirm": "This permanently deletes only the DevDeploy service record. It does not delete Kubernetes Services or GitOps manifests.",
+        "success": "Service record permanently deleted.",
+        "error": "Service record could not be deleted.",
+        "inUse": "This service is still used by deployment records."
       }
     },
     "table": {
@@ -467,6 +474,12 @@
         "confirm": "This only archives the DevDeploy record. It does not delete Kubernetes or GitOps resources.",
         "success": "Deployment record archived.",
         "error": "Deployment record could not be archived."
+      },
+      "delete": {
+        "action": "Delete record",
+        "confirm": "This permanently deletes only the DevDeploy deployment record. It does not delete Kubernetes resources or GitOps manifests.",
+        "success": "Deployment record permanently deleted.",
+        "error": "Deployment record could not be deleted."
       },
       "fields": {
         "service": "Service definition",

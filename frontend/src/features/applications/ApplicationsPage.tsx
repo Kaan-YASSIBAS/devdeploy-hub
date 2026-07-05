@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
-import { Archive, Boxes, RefreshCw, Search } from "lucide-react";
+import { Archive, Boxes, RefreshCw, Search, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { serviceDefinitionsApi } from "@/api/client";
+import { getApiErrorStatus, serviceDefinitionsApi } from "@/api/client";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -77,6 +77,30 @@ export function ApplicationsPage() {
   const archiveService = (service: ServiceDefinition) => {
     if (window.confirm(t("applications.domain.archive.confirm"))) {
       archiveMutation.mutate(service.id);
+    }
+  };
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => serviceDefinitionsApi.remove(id),
+    onSuccess: async () => {
+      toast.success(t("applications.domain.delete.success"));
+      await queryClient.invalidateQueries({ queryKey: ["service-definitions"] });
+      await queryClient.invalidateQueries({ queryKey: ["untracked-services"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      await queryClient.invalidateQueries({ queryKey: ["user-summary"] });
+    },
+    onError: (error) => {
+      toast.error(
+        getApiErrorStatus(error) === 409
+          ? t("applications.domain.delete.inUse")
+          : t("applications.domain.delete.error")
+      );
+    }
+  });
+
+  const deleteService = (service: ServiceDefinition) => {
+    if (window.confirm(t("applications.domain.delete.confirm"))) {
+      deleteMutation.mutate(service.id);
     }
   };
 
@@ -180,8 +204,22 @@ export function ApplicationsPage() {
     {
       key: "actions",
       header: t("common.actions"),
-      render: (service) =>
-        !service.archived_at && service.runtime_status?.display_status === "not_found" ? (
+      render: (service) => {
+        if (service.archived_at) {
+          return (
+            <Button
+              aria-label={t("applications.domain.delete.action")}
+              disabled={deleteMutation.isPending && deleteMutation.variables === service.id}
+              size="sm"
+              variant="danger"
+              onClick={() => deleteService(service)}
+            >
+              <Trash2 className="h-4 w-4" />
+              {t("applications.domain.delete.action")}
+            </Button>
+          );
+        }
+        return service.runtime_status?.display_status === "not_found" ? (
           <Button
             aria-label={t("applications.domain.archive.action")}
             disabled={archiveMutation.isPending && archiveMutation.variables === service.id}
@@ -192,7 +230,8 @@ export function ApplicationsPage() {
             <Archive className="h-4 w-4" />
             {t("applications.domain.archive.action")}
           </Button>
-        ) : null
+        ) : null;
+      }
     }
   ];
 

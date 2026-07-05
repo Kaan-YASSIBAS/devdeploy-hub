@@ -211,6 +211,9 @@ export const serviceDefinitionsApi = {
   async archive(id: number) {
     const { data } = await apiClient.post<ServiceDefinition>(`/services/${id}/archive`);
     return data;
+  },
+  async remove(id: number) {
+    await apiClient.delete(`/services/${id}`);
   }
 };
 
@@ -240,6 +243,9 @@ export const deploymentRecordsApi = {
   async archive(id: number) {
     const { data } = await apiClient.post<DeploymentRecord>(`/deployment-records/${id}/archive`);
     return data;
+  },
+  async remove(id: number) {
+    await apiClient.delete(`/deployment-records/${id}`);
   }
 };
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, get_db
@@ -85,3 +85,13 @@ def archive_service_definition(
     current_user: User = Depends(get_current_user),
 ) -> ServiceDefinition:
     return ServiceDefinitionService(db).archive(service_id, current_user)
+
+
+@router.delete("/{service_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_service_definition(
+    service_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    ServiceDefinitionService(db).delete(service_id, current_user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -95,3 +95,12 @@ class DeploymentRecordService:
             self.db.commit()
             self.db.refresh(deployment)
         return self.deployments.get_by_id(deployment.id) or deployment
+
+    def delete(self, deployment_id: int, user: User) -> None:
+        deployment = self.deployments.get_by_id(deployment_id)
+        if deployment is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment record not found")
+        if deployment.owner_id != user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Deployment record access denied")
+        self.deployments.delete(deployment)
+        self.db.commit()

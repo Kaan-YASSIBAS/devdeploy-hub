@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.models.service_definition import ServiceDefinition, utc_now
 from app.models.user import User
+from app.repositories.deployment_record_repository import DeploymentRecordRepository
 from app.repositories.service_definition_repository import ServiceDefinitionRepository
 from app.schemas.archive import ArchiveFilter
 from app.schemas.service_definition import ServiceDefinitionCreate, ServiceDefinitionUpdate
@@ -12,6 +13,7 @@ class ServiceDefinitionService:
     def __init__(self, db: Session):
         self.db = db
         self.services = ServiceDefinitionRepository(db)
+        self.deployments = DeploymentRecordRepository(db)
 
     @staticmethod
     def _ensure_access(service: ServiceDefinition | None, user: User) -> ServiceDefinition:
@@ -85,3 +87,17 @@ class ServiceDefinitionService:
             self.db.commit()
             self.db.refresh(service)
         return service
+
+    def delete(self, service_id: int, user: User) -> None:
+        service = self.services.get_by_id(service_id)
+        if service is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service definition not found")
+        if service.owner_id != user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Service definition access denied")
+        if self.deployments.count_for_service_definition(service.id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Service definition is still used by deployment records.",
+            )
+        self.services.delete(service)
+        self.db.commit()

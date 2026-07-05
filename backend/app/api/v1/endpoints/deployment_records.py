@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, get_db
@@ -87,3 +87,13 @@ def archive_deployment_record(
     current_user: User = Depends(get_current_user),
 ) -> DeploymentRecord:
     return DeploymentRecordService(db).archive(deployment_id, current_user)
+
+
+@router.delete("/{deployment_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_deployment_record(
+    deployment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    DeploymentRecordService(db).delete(deployment_id, current_user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

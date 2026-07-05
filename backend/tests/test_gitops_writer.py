@@ -190,6 +190,24 @@ class GitOpsWriterTestCase(unittest.TestCase):
 
         self.assertEqual(document["resources"], ["apps/alpha", "apps/zeta"])
 
+    def test_root_kustomization_remove_last_app_uses_valid_empty_list(self) -> None:
+        root_path = self.source_root / "kustomization.yaml"
+        root_path.write_text(
+            ROOT_KUSTOMIZATION.replace("resources: []", "resources:\n  - apps/only-app"),
+            encoding="utf-8",
+        )
+        editor = RootKustomizationEditor(GitOpsRepositoryPaths.from_source_root(self.source_root))
+
+        empty_content = editor.remove_app("only-app")
+        empty_document = yaml.safe_load(empty_content)
+
+        self.assertEqual(empty_document["resources"], [])
+        self.assertIn("resources: []", empty_content)
+
+        root_path.write_text(empty_content, encoding="utf-8")
+        added_content = editor.add_app("new-app")
+        self.assertEqual(yaml.safe_load(added_content)["resources"], ["apps/new-app"])
+
     def test_root_kustomization_rejects_unsafe_resource_entry(self) -> None:
         (self.source_root / "kustomization.yaml").write_text(
             ROOT_KUSTOMIZATION.replace("resources: []", "resources:\n  - ../outside"),
