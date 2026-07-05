@@ -114,7 +114,7 @@ class DeployWorkloadOperationTestCase(unittest.TestCase):
             "gitops/workloads/devdeploy-apps/apps/payment-api/deployment.yaml",
             "gitops/workloads/devdeploy-apps/apps/payment-api/service.yaml",
         }
-        self.assertEqual(result.status, "pushed_waiting_for_argocd")
+        self.assertEqual(result.status, "pushed_waiting_for_argocd", result.message)
         self.assertTrue(result.committed)
         self.assertTrue(result.pushed)
         self.assertRegex(result.commit_sha or "", r"^[0-9a-f]{40,64}$")
@@ -205,6 +205,50 @@ class DeployWorkloadOperationTestCase(unittest.TestCase):
         first_head = self._git(self.repo_root, "rev-parse", "HEAD").strip()
 
         second = DeployWorkloadOperationService().execute(self.request(write_mode="recover"))
+
+        self.assertEqual(first.status, "pushed_waiting_for_argocd")
+        self.assertEqual(second.status, "no_changes")
+        self.assertFalse(second.committed)
+        self.assertFalse(second.pushed)
+        self.assertEqual(second.commit_sha, first_head)
+        self.assertEqual(self._git(self.repo_root, "rev-parse", "HEAD").strip(), first_head)
+
+    def test_reconcile_rewrites_drifted_manifest_and_uses_scoped_commit(self) -> None:
+        initial = DeployWorkloadOperationService().execute(self.request(write_mode="recover"))
+        deployment_path = self.source_root / "apps" / "payment-api" / "deployment.yaml"
+        deployment = yaml.safe_load(deployment_path.read_text(encoding="utf-8"))
+        deployment["spec"]["replicas"] = 1
+        deployment_path.write_text(
+            yaml.safe_dump(deployment, sort_keys=False),
+            encoding="utf-8",
+        )
+        self._git(self.repo_root, "add", "--", deployment_path.relative_to(self.repo_root).as_posix())
+        self._git(self.repo_root, "commit", "-m", "test: simulate GitOps drift")
+
+        result = DeployWorkloadOperationService().execute(self.request(write_mode="reconcile"))
+
+        self.assertEqual(initial.status, "pushed_waiting_for_argocd")
+        self.assertEqual(result.status, "pushed_waiting_for_argocd", result.message)
+        self.assertTrue(result.committed)
+        self.assertTrue(result.pushed)
+        self.assertEqual(
+            self._git(self.repo_root, "show", "-s", "--format=%s", "HEAD").strip(),
+            "reconcile: align payment-api workload",
+        )
+        reconciled = yaml.safe_load(deployment_path.read_text(encoding="utf-8"))
+        self.assertEqual(reconciled["spec"]["replicas"], 2)
+        self.assertEqual(
+            yaml.safe_load((self.source_root / "kustomization.yaml").read_text(encoding="utf-8"))[
+                "resources"
+            ],
+            ["apps/payment-api"],
+        )
+
+    def test_reconcile_no_change_reuses_head_without_empty_commit(self) -> None:
+        first = DeployWorkloadOperationService().execute(self.request(write_mode="reconcile"))
+        first_head = self._git(self.repo_root, "rev-parse", "HEAD").strip()
+
+        second = DeployWorkloadOperationService().execute(self.request(write_mode="reconcile"))
 
         self.assertEqual(first.status, "pushed_waiting_for_argocd")
         self.assertEqual(second.status, "no_changes")

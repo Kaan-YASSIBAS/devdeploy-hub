@@ -251,6 +251,12 @@ export const deploymentRecordsApi = {
     );
     return data;
   },
+  async reconcile(id: number) {
+    const { data } = await apiClient.post<DeploymentRecordRecoverResponse>(
+      `/deployment-records/${id}/reconcile`
+    );
+    return data;
+  },
   async remove(id: number) {
     await apiClient.delete(`/deployment-records/${id}`);
   }

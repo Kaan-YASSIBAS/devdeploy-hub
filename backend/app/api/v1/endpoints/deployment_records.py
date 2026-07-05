@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -34,6 +36,7 @@ from app.services.product_runtime_status import ProductRuntimeStatusService
 
 router = APIRouter(prefix="/deployment-records", tags=["deployment-records"])
 RECOVER_INTERNAL_MESSAGE = "The deployment recovery operation failed unexpectedly."
+RECONCILE_INTERNAL_MESSAGE = "The deployment reconcile operation failed unexpectedly."
 RECOVER_ERROR_STATUS_CODES = {
     "validation_failed": status.HTTP_400_BAD_REQUEST,
     "repo_write_failed": status.HTTP_409_CONFLICT,
@@ -41,6 +44,7 @@ RECOVER_ERROR_STATUS_CODES = {
     "commit_failed": status.HTTP_409_CONFLICT,
     "push_failed": status.HTTP_502_BAD_GATEWAY,
 }
+RegenerateAction = Literal["recover", "reconcile"]
 
 
 def _read_response(
@@ -144,6 +148,61 @@ def recover_deployment_record(
             detail="Archived deployment records cannot be recovered.",
         )
 
+    return _regenerate_deployment_record(
+        action="recover",
+        records=records,
+        deployment=deployment,
+        db=db,
+        config=config,
+        operation_service=operation_service,
+    )
+
+
+@router.post(
+    "/{deployment_id}/reconcile",
+    response_model=DeploymentRecordRecoverResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def reconcile_deployment_record(
+    deployment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    config: GitOpsDeployRepositoryConfig = Depends(get_gitops_deploy_repository_config),
+    operation_service: DeployWorkloadOperationService = Depends(
+        get_deploy_workload_operation_service
+    ),
+) -> DeploymentRecordRecoverResponse | JSONResponse:
+    records = DeploymentRecordService(db)
+    deployment = records.get_owned(deployment_id, current_user)
+    if deployment.archived_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Archived deployment records cannot be reconciled.",
+        )
+
+    return _regenerate_deployment_record(
+        action="reconcile",
+        records=records,
+        deployment=deployment,
+        db=db,
+        config=config,
+        operation_service=operation_service,
+    )
+
+
+def _regenerate_deployment_record(
+    *,
+    action: RegenerateAction,
+    records: DeploymentRecordService,
+    deployment: DeploymentRecord,
+    db: Session,
+    config: GitOpsDeployRepositoryConfig,
+    operation_service: DeployWorkloadOperationService,
+) -> DeploymentRecordRecoverResponse | JSONResponse:
+    internal_message = (
+        RECOVER_INTERNAL_MESSAGE if action == "recover" else RECONCILE_INTERNAL_MESSAGE
+    )
+
     try:
         result = operation_service.execute(
             DeployWorkloadOperationRequest(
@@ -159,7 +218,7 @@ def recover_deployment_record(
                 service_port=deployment.service_port,
                 service_type=deployment.service_type,
                 namespace=deployment.namespace,
-                write_mode="recover",
+                write_mode=action,
             )
         )
     except Exception:
@@ -169,7 +228,7 @@ def recover_deployment_record(
             app_name=deployment.app_name,
             commit_sha=deployment.commit_sha,
             manifest_path=deployment.gitops_manifest_path,
-            message=RECOVER_INTERNAL_MESSAGE,
+            message=internal_message,
             error_code="internal_error",
         )
         return JSONResponse(
@@ -185,7 +244,7 @@ def recover_deployment_record(
                 app_name=deployment.app_name,
                 commit_sha=deployment.commit_sha,
                 manifest_path=deployment.gitops_manifest_path,
-                message=RECOVER_INTERNAL_MESSAGE,
+                message=internal_message,
                 error_code="internal_error",
             )
             return JSONResponse(
@@ -193,7 +252,7 @@ def recover_deployment_record(
                 content=response.model_dump(),
             )
         try:
-            updated = records.mark_recovered(
+            updated = records.mark_regenerated(
                 deployment,
                 source_path=result.source_path,
                 commit_sha=result.commit_sha,
@@ -206,7 +265,11 @@ def recover_deployment_record(
                 app_name=deployment.app_name,
                 commit_sha=result.commit_sha or deployment.commit_sha,
                 manifest_path=deployment.gitops_manifest_path,
-                message="The GitOps recovery succeeded, but the deployment record could not be updated.",
+                message=(
+                    "The GitOps recovery succeeded, but the deployment record could not be updated."
+                    if action == "recover"
+                    else "The GitOps reconcile operation succeeded, but the deployment record could not be updated."
+                ),
                 error_code="product_record_persistence_failed",
             )
             return JSONResponse(
@@ -217,16 +280,28 @@ def recover_deployment_record(
             status=(
                 "pushed_waiting_for_argocd"
                 if result.status == "pushed_waiting_for_argocd"
-                else "no_changes_waiting_for_argocd"
+                else (
+                    "no_changes_waiting_for_argocd"
+                    if action == "recover"
+                    else "no_changes"
+                )
             ),
             deployment_id=updated.id,
             app_name=updated.app_name,
             commit_sha=updated.commit_sha,
             manifest_path=updated.gitops_manifest_path,
             message=(
-                "The recovery commit was pushed and is waiting for Argo CD reconciliation."
+                (
+                    "The recovery commit was pushed and is waiting for Argo CD reconciliation."
+                    if action == "recover"
+                    else "The reconcile commit was pushed and is waiting for Argo CD reconciliation."
+                )
                 if result.status == "pushed_waiting_for_argocd"
-                else "The GitOps manifests already match this record; Argo CD reconciliation is pending."
+                else (
+                    "The GitOps manifests already match this record; Argo CD reconciliation is pending."
+                    if action == "recover"
+                    else "The deployment is already aligned with its GitOps manifests."
+                )
             ),
         )
 

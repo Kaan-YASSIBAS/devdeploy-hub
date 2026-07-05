@@ -405,6 +405,102 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertNotIn("user:super-secret", response.text)
         self.assertIn("<redacted>", response.json()["message"])
 
+    def test_owner_can_reconcile_active_record_without_duplicate_product_records(self) -> None:
+        service = self.create_service("payments-api")
+        deployment = self.create_deployment(service["id"])
+
+        response = self.client.post(
+            f"/api/v1/deployment-records/{deployment['id']}/reconcile"
+        )
+
+        self.assertEqual(response.status_code, 202, response.text)
+        body = response.json()
+        self.assertEqual(body["status"], "pushed_waiting_for_argocd")
+        self.assertEqual(body["deployment_id"], deployment["id"])
+        self.assertEqual(body["commit_sha"], "c" * 40)
+        self.assertEqual(
+            body["manifest_path"],
+            "gitops/workloads/devdeploy-apps/apps/payments-api",
+        )
+        self.assertEqual(
+            len(self.client.get("/api/v1/deployment-records", params={"archive_filter": "all"}).json()),
+            1,
+        )
+        self.assertEqual(
+            len(self.client.get("/api/v1/services", params={"archive_filter": "all"}).json()),
+            1,
+        )
+        updated = self.client.get(f"/api/v1/deployment-records/{deployment['id']}").json()
+        self.assertEqual(updated["commit_sha"], "c" * 40)
+        self.assertEqual(updated["desired_state"], "pending")
+        self.assertEqual(updated["status_summary"], "GitOps manifests published")
+        operation_request = self.recover_operation.requests[0]
+        self.assertEqual(operation_request.write_mode, "reconcile")
+        self.assertEqual(operation_request.app_name, deployment["app_name"])
+        self.assertEqual(operation_request.image, deployment["image"])
+
+    def test_archived_cross_owner_and_missing_records_cannot_be_reconciled(self) -> None:
+        deployment = self.create_deployment()
+        self.assertEqual(
+            self.client.post(f"/api/v1/deployment-records/{deployment['id']}/archive").status_code,
+            200,
+        )
+        archived = self.client.post(
+            f"/api/v1/deployment-records/{deployment['id']}/reconcile"
+        )
+        self.assertEqual(archived.status_code, 409)
+        self.assertEqual(self.recover_operation.requests, [])
+
+        self.current_user = self.user_b
+        denied = self.client.post(
+            f"/api/v1/deployment-records/{deployment['id']}/reconcile"
+        )
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(self.recover_operation.requests, [])
+
+        self.current_user = self.user_a
+        missing = self.client.post("/api/v1/deployment-records/99999/reconcile")
+        self.assertEqual(missing.status_code, 404)
+        self.assertEqual(self.recover_operation.requests, [])
+
+    def test_reconcile_no_change_reuses_existing_commit_without_duplicate_record(self) -> None:
+        deployment = self.create_deployment()
+        existing_commit = "b" * 40
+        self.assertEqual(
+            self.client.patch(
+                f"/api/v1/deployment-records/{deployment['id']}",
+                json={
+                    "commit_sha": existing_commit,
+                    "gitops_manifest_path": "gitops/workloads/devdeploy-apps/apps/payments-api",
+                    "desired_state": "pending",
+                },
+            ).status_code,
+            200,
+        )
+        self.recover_operation.result = DeployWorkloadOperationResult(
+            status="no_changes",
+            app_name="payments-api",
+            source_path="gitops/workloads/devdeploy-apps",
+            expected_paths=(),
+            committed=False,
+            pushed=False,
+            commit_sha=None,
+            message="No changes.",
+        )
+
+        response = self.client.post(
+            f"/api/v1/deployment-records/{deployment['id']}/reconcile"
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["status"], "no_changes")
+        self.assertEqual(response.json()["commit_sha"], existing_commit)
+        self.assertIn("already aligned", response.json()["message"])
+        self.assertEqual(
+            len(self.client.get("/api/v1/deployment-records", params={"archive_filter": "all"}).json()),
+            1,
+        )
+
     def test_service_list_filters_active_archived_and_all_with_owner_isolation(self) -> None:
         archived_service = self.create_service("Archived Service")
         active_service = self.create_service("Active Service")
@@ -610,6 +706,7 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(self.client.post("/api/v1/services/1/archive").status_code, 401)
         self.assertEqual(self.client.post("/api/v1/deployment-records/1/archive").status_code, 401)
         self.assertEqual(self.client.post("/api/v1/deployment-records/1/recover").status_code, 401)
+        self.assertEqual(self.client.post("/api/v1/deployment-records/1/reconcile").status_code, 401)
         self.assertEqual(self.client.delete("/api/v1/services/1").status_code, 401)
         self.assertEqual(self.client.delete("/api/v1/deployment-records/1").status_code, 401)
 

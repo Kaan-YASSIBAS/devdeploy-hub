@@ -106,7 +106,7 @@ class DeploymentRecordService:
         self.deployments.delete(deployment)
         self.db.commit()
 
-    def mark_recovered(
+    def mark_regenerated(
         self,
         deployment: DeploymentRecord,
         *,

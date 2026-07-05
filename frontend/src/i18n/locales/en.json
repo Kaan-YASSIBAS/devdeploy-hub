@@ -491,6 +491,13 @@
         "success": "Recovery started.",
         "error": "Recovery failed."
       },
+      "reconcile": {
+        "action": "Reconcile",
+        "confirm": "This rewrites the GitOps manifests from the DevDeploy record and lets Argo CD converge the deployment. It does not directly modify Kubernetes.",
+        "success": "Reconcile started.",
+        "noChanges": "Deployment is already aligned.",
+        "error": "Reconcile failed."
+      },
       "delete": {
         "action": "Delete record",
         "confirm": "This permanently deletes only the DevDeploy deployment record. It does not delete Kubernetes resources or GitOps manifests.",

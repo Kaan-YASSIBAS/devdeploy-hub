@@ -87,6 +87,16 @@ function canRecover(record: DeploymentRecord) {
   );
 }
 
+function canReconcile(record: DeploymentRecord) {
+  const runtime = record.runtime_status;
+  const drift = record.drift_status;
+  if (record.archived_at || !runtime || !drift) return false;
+  if (runtime.display_status !== "running" && runtime.display_status !== "progressing") {
+    return false;
+  }
+  return drift.status === "drifted" || drift.status === "gitops_missing";
+}
+
 export function DeploymentsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -173,6 +183,32 @@ export function DeploymentsPage() {
   const recoverRecord = (record: DeploymentRecord) => {
     if (window.confirm(t("deployments.records.recover.confirm"))) {
       recoverMutation.mutate(record.id);
+    }
+  };
+
+  const reconcileMutation = useMutation({
+    mutationFn: (id: number) => deploymentRecordsApi.reconcile(id),
+    onSuccess: async (response) => {
+      toast.success(
+        t(
+          response.status === "no_changes"
+            ? "deployments.records.reconcile.noChanges"
+            : "deployments.records.reconcile.success"
+        )
+      );
+      await queryClient.invalidateQueries({ queryKey: ["deployment-records"] });
+      await queryClient.invalidateQueries({ queryKey: ["service-definitions"] });
+      await queryClient.invalidateQueries({ queryKey: ["untracked-deployments"] });
+      await queryClient.invalidateQueries({ queryKey: ["untracked-services"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      await queryClient.invalidateQueries({ queryKey: ["user-summary"] });
+    },
+    onError: () => toast.error(t("deployments.records.reconcile.error"))
+  });
+
+  const reconcileRecord = (record: DeploymentRecord) => {
+    if (window.confirm(t("deployments.records.reconcile.confirm"))) {
+      reconcileMutation.mutate(record.id);
     }
   };
 
@@ -436,20 +472,36 @@ export function DeploymentsPage() {
             </Button>
           );
         }
-        if (!canRecover(record)) return null;
+        const recoverEligible = canRecover(record);
+        const reconcileEligible = canReconcile(record);
+        if (!recoverEligible && !reconcileEligible) return null;
         return (
           <div className="flex flex-wrap gap-2">
-            <Button
-              aria-label={t("deployments.records.recover.action")}
-              disabled={recoverMutation.isPending && recoverMutation.variables === record.id}
-              size="sm"
-              variant="outline"
-              onClick={() => recoverRecord(record)}
-            >
-              <RotateCcw className="h-4 w-4" />
-              {t("deployments.records.recover.action")}
-            </Button>
-            {record.runtime_status?.display_status === "not_found" ? (
+            {recoverEligible ? (
+              <Button
+                aria-label={t("deployments.records.recover.action")}
+                disabled={recoverMutation.isPending && recoverMutation.variables === record.id}
+                size="sm"
+                variant="outline"
+                onClick={() => recoverRecord(record)}
+              >
+                <RotateCcw className="h-4 w-4" />
+                {t("deployments.records.recover.action")}
+              </Button>
+            ) : null}
+            {reconcileEligible ? (
+              <Button
+                aria-label={t("deployments.records.reconcile.action")}
+                disabled={reconcileMutation.isPending && reconcileMutation.variables === record.id}
+                size="sm"
+                variant="outline"
+                onClick={() => reconcileRecord(record)}
+              >
+                <RefreshCw className="h-4 w-4" />
+                {t("deployments.records.reconcile.action")}
+              </Button>
+            ) : null}
+            {recoverEligible && record.runtime_status?.display_status === "not_found" ? (
               <Button
                 aria-label={t("deployments.records.archive.action")}
                 disabled={archiveMutation.isPending && archiveMutation.variables === record.id}

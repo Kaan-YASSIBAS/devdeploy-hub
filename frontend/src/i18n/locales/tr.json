@@ -491,6 +491,13 @@
         "success": "Kurtarma başlatıldı.",
         "error": "Kurtarma başarısız oldu."
       },
+      "reconcile": {
+        "action": "GitOps ile düzelt",
+        "confirm": "Bu işlem GitOps manifestlerini DevDeploy kaydına göre yeniden yazar ve Argo CD'nin deployment'ı bu duruma yaklaştırmasını sağlar. Kubernetes'i doğrudan değiştirmez.",
+        "success": "Uzlaştırma başlatıldı.",
+        "noChanges": "Deployment zaten uyumlu.",
+        "error": "Uzlaştırma başarısız oldu."
+      },
       "delete": {
         "action": "Kaydı sil",
         "confirm": "Bu işlem yalnızca DevDeploy deployment kaydını kalıcı olarak siler. Kubernetes kaynaklarını veya GitOps manifestlerini silmez.",

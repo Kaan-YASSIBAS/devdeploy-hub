@@ -217,6 +217,7 @@ export type DeploymentRecordRecoverResponse = {
   status:
     | "pushed_waiting_for_argocd"
     | "no_changes_waiting_for_argocd"
+    | "no_changes"
     | "validation_failed"
     | "repo_write_failed"
     | "render_failed"
