@@ -719,6 +719,8 @@ export type PlatformClusterHealthItem = {
   reason: PlatformClusterHealthReason;
   message: string;
   recommended_action: string | null;
+  impact: string[];
+  recovery_steps: string[];
   checked_at: string;
 };
 

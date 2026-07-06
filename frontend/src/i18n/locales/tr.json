@@ -132,11 +132,19 @@
     "title": "Platform cluster sağlığı",
     "management": {
       "title": "Management cluster erişilemiyor",
-      "description": "Management cluster erişilemiyor. DevDeploy platform servisleri kararsız olabilir. Launcher preflight çalıştırın."
+      "description": "Management cluster erişilemiyor. DevDeploy platform servisleri kararsız olabilir. Launcher preflight çalıştırın.",
+      "recovery": "Management cluster; DevDeploy platformunu, Postgres'i ve Argo CD'yi barındırır. Yeniden oluşturma veri kaybına neden olabilir. Önce launcher preflight ve Docker/WSL restart adımlarını deneyin.",
+      "impact": "Platform verileri yedeklenmeden veya yerel veri kaybı kabul edilmeden devdeploy-mgmt cluster'ını yeniden oluşturmayın."
     },
     "workload": {
       "title": "Workload cluster erişilemiyor",
-      "description": "Workload cluster erişilemiyor. Runtime durumları, takipsiz kaynaklar ve reconcile kontrolleri güncel olmayabilir. Launcher preflight çalıştırın."
+      "description": "Workload cluster erişilemiyor. Runtime durumları, takipsiz kaynaklar ve reconcile kontrolleri güncel olmayabilir. Launcher preflight çalıştırın.",
+      "recovery": "Önce wsl --shutdown çalıştırıp Docker Desktop'ı tamamen yeniden başlatın. Sorun devam ederse yalnızca devdeploy-workload cluster'ını yeniden oluşturun. Management cluster ve veritabanı korunur.",
+      "impact": "Workload cluster yeniden oluşturulursa o cluster'daki runtime kaynakları kaybolabilir; DevDeploy kayıtları ve GitOps manifestleri korunur."
+    },
+    "recovery": {
+      "title": "Kurtarma adımları",
+      "guidanceOnly": "Bu adımlar yalnızca yönlendirme amaçlıdır. DevDeploy kurtarma veya yıkıcı komutları otomatik çalıştırmaz."
     },
     "status": {
       "healthy": "Sağlıklı",

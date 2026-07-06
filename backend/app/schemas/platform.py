@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 PlatformClusterRole = Literal["management", "workload"]
@@ -24,6 +24,8 @@ class PlatformClusterHealthItem(BaseModel):
     reason: PlatformClusterHealthReason
     message: str
     recommended_action: str | None = None
+    impact: list[str] = Field(default_factory=list)
+    recovery_steps: list[str] = Field(default_factory=list)
     checked_at: datetime
 
 

@@ -10,6 +10,16 @@ from app.services.gitops.status_reader import GitOpsStatusError
 
 API_REQUEST_TIMEOUT = (3, 5)
 LAUNCHER_RECOMMENDATION = "Run launcher preflight for detailed Docker/kind diagnostics."
+WORKLOAD_RECOVERY_STEPS = [
+    LAUNCHER_RECOMMENDATION,
+    "Restart Docker Desktop and WSL before considering cluster recreation.",
+    "Recreate only devdeploy-workload if launcher preflight still reports a corrupted API port.",
+]
+MANAGEMENT_RECOVERY_STEPS = [
+    LAUNCHER_RECOMMENDATION,
+    "Restart Docker Desktop and WSL before considering cluster recreation.",
+    "Do not recreate devdeploy-mgmt unless platform data is backed up or local data loss is accepted.",
+]
 
 
 class ClusterApiProbe(Protocol):
@@ -156,10 +166,28 @@ class PlatformClusterHealthService:
     ) -> PlatformClusterHealthItem:
         if role == "management":
             message = "Management cluster API is not reachable. Platform services may be unavailable."
+            recommended_action = (
+                "Run launcher preflight first. Management cluster recovery may affect platform data; "
+                "do not recreate it without a backup or accepting local data loss."
+            )
+            impact = [
+                "DevDeploy platform services, PostgreSQL, and Argo CD may be unavailable.",
+                "Recreating the management cluster may remove local platform data.",
+            ]
+            recovery_steps = MANAGEMENT_RECOVERY_STEPS
         else:
             message = (
                 "Workload cluster API is not reachable. Runtime status and reconcile checks may be unavailable."
             )
+            recommended_action = (
+                "Run launcher preflight. Recreate only devdeploy-workload if preflight still reports a "
+                "corrupted API port after Docker Desktop and WSL restart."
+            )
+            impact = [
+                "Runtime status, untracked discovery, drift comparison, and reconcile validation may be unavailable.",
+                "If the workload cluster is recreated, runtime resources may be lost while DevDeploy records and GitOps manifests remain.",
+            ]
+            recovery_steps = WORKLOAD_RECOVERY_STEPS
         return PlatformClusterHealthItem(
             cluster_name=cluster_name,
             context=context,
@@ -168,7 +196,9 @@ class PlatformClusterHealthService:
             api_reachable=False,
             reason=reason,
             message=message,
-            recommended_action=LAUNCHER_RECOMMENDATION,
+            recommended_action=recommended_action,
+            impact=impact,
+            recovery_steps=recovery_steps,
             checked_at=checked_at,
         )
 

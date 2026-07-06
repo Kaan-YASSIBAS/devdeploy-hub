@@ -4634,6 +4634,164 @@ function Test-WorkloadClusterIntegrityRequired {
         ))
 }
 
+function Get-KindIntegrityRecommendedAction {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ClusterName,
+
+        [Parameter(Mandatory = $true)]
+        [string]$IntegrityStatus
+    )
+
+    $isWorkload = $ClusterName -eq "devdeploy-workload"
+    switch ($IntegrityStatus) {
+        "cluster_missing" {
+            if ($isWorkload) {
+                return "Recreate only devdeploy-workload through its explicit launcher mode, then rebootstrap workload cluster access. Do not recreate devdeploy-mgmt."
+            }
+            return "Management recovery requires caution because devdeploy-mgmt hosts platform data. Verify backups or accept local data loss before any manual recreation."
+        }
+        "container_missing" {
+            if ($isWorkload) {
+                return "Recreate only devdeploy-workload through its explicit launcher mode, then rebootstrap workload cluster access. Do not recreate devdeploy-mgmt."
+            }
+            return "Verify Docker Desktop state and management backups. Do not recreate devdeploy-mgmt unless non-destructive recovery fails and data-loss risk is accepted."
+        }
+        "container_stopped" {
+            if ($isWorkload) {
+                return "Try docker start devdeploy-workload-control-plane, rerun preflight, then restart Docker Desktop if needed. Recreate only devdeploy-workload if it remains unusable."
+            }
+            return "Try docker start devdeploy-mgmt-control-plane and rerun preflight. Restart Docker Desktop if needed; do not recreate management without protecting platform data."
+        }
+        { $_ -in @("api_port_unpublished", "api_port_mismatch", "kubeconfig_unreachable") } {
+            if ($isWorkload) {
+                return "Run wsl --shutdown, fully quit and restart Docker Desktop, then rerun preflight. If the issue remains, recreate only devdeploy-workload and rebootstrap workload cluster access."
+            }
+            return "Run wsl --shutdown, fully quit and restart Docker Desktop, then rerun preflight. Do not recreate devdeploy-mgmt without first protecting or accepting loss of local platform data."
+        }
+        default {
+            return "Review the sanitized launcher log and rerun preflight. No automatic recovery was performed."
+        }
+    }
+}
+
+function New-ClusterRecoveryPlan {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Cluster,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("management", "workload")]
+        [string]$Role
+    )
+
+    $clusterName = [string]$Cluster["name"]
+    $clusterStatus = [string]$Cluster["status"]
+    $integrityStatus = [string]$Cluster["integrity_status"]
+    $healthy = $clusterStatus -eq "ready" -and $integrityStatus -eq "ok"
+    if ($healthy) {
+        return [ordered]@{
+            required                     = $false
+            affected_cluster             = $clusterName
+            severity                     = "none"
+            summary                      = ("{0} is healthy; no recovery guidance is required." -f $clusterName)
+            impact                       = [string[]]@()
+            recommended_steps             = [string[]]@()
+            destructive_steps_required    = $false
+            automatic_recovery_performed  = $false
+            checked_at                    = [string](Get-Timestamp)
+        }
+    }
+
+    if ($Role -eq "workload") {
+        $impact = [string[]]@(
+            "Runtime status and untracked resource discovery are unavailable or unreliable.",
+            "Deploy and reconcile GitOps commits may still be created, but runtime convergence cannot be verified.",
+            "If the workload cluster is recreated, Kubernetes runtime resources in that cluster may be lost; DevDeploy records and GitOps manifests remain."
+        )
+        $steps = switch ($integrityStatus) {
+            { $_ -in @("api_port_unpublished", "api_port_mismatch", "kubeconfig_unreachable") } {
+                [string[]]@(
+                    "Run wsl --shutdown.",
+                    "Fully quit and restart Docker Desktop.",
+                    "Rerun launcher preflight.",
+                    "If the issue remains, recreate only devdeploy-workload through its explicit launcher mode.",
+                    "Rebootstrap workload cluster access from management and Argo CD.",
+                    "Use Recover or Redeploy for managed deployments if runtime resources were lost."
+                )
+                break
+            }
+            { $_ -in @("cluster_missing", "container_missing") } {
+                [string[]]@(
+                    "Recreate only devdeploy-workload through its explicit launcher mode.",
+                    "Rebootstrap workload cluster access from management and Argo CD.",
+                    "Do not recreate devdeploy-mgmt unless management is also unhealthy.",
+                    "Use Recover or Redeploy for managed deployments if runtime resources were lost."
+                )
+                break
+            }
+            "container_stopped" {
+                [string[]]@(
+                    "Try docker start devdeploy-workload-control-plane.",
+                    "Rerun launcher preflight.",
+                    "If the API port remains unavailable, fully restart Docker Desktop.",
+                    "If the issue remains, recreate only devdeploy-workload through its explicit launcher mode.",
+                    "Rebootstrap workload cluster access from management and Argo CD."
+                )
+                break
+            }
+            default {
+                [string[]]@(
+                    "Review the sanitized launcher log.",
+                    "Rerun launcher preflight after Docker Desktop is healthy.",
+                    "Do not recreate devdeploy-mgmt for a workload-only failure."
+                )
+            }
+        }
+        return [ordered]@{
+            required                     = $true
+            affected_cluster             = $clusterName
+            severity                     = "blocking_runtime_features"
+            summary                      = "Workload cluster API is not reachable or its integrity could not be confirmed."
+            impact                       = [string[]]@($impact)
+            recommended_steps             = [string[]]@($steps)
+            destructive_steps_required    = $false
+            automatic_recovery_performed  = $false
+            checked_at                    = [string](Get-Timestamp)
+        }
+    }
+
+    $managementSteps = [string[]]@(
+        "Run launcher preflight and review the sanitized integrity result.",
+        "Run wsl --shutdown.",
+        "Fully quit and restart Docker Desktop.",
+        "Rerun launcher preflight.",
+        "Do not recreate devdeploy-mgmt unless platform data is backed up or local data loss is accepted."
+    )
+    if ($integrityStatus -eq "container_stopped") {
+        $managementSteps = [string[]]@(
+            "Try docker start devdeploy-mgmt-control-plane.",
+            "Rerun launcher preflight.",
+            "If needed, fully restart Docker Desktop and rerun preflight.",
+            "Do not recreate devdeploy-mgmt unless platform data is backed up or local data loss is accepted."
+        )
+    }
+    return [ordered]@{
+        required                     = $true
+        affected_cluster             = $clusterName
+        severity                     = "blocking_platform"
+        summary                      = "Management cluster health is degraded or unknown. Platform services may be unavailable."
+        impact                       = [string[]]@(
+            "DevDeploy backend, frontend, PostgreSQL, and Argo CD may be unavailable.",
+            "Recreating the management cluster may remove local platform data, including the platform database."
+        )
+        recommended_steps             = [string[]]@($managementSteps)
+        destructive_steps_required    = $false
+        automatic_recovery_performed  = $false
+        checked_at                    = [string](Get-Timestamp)
+    }
+}
+
 function Get-KindClusterIntegrity {
     param(
         [Parameter(Mandatory = $true)]
@@ -4655,7 +4813,7 @@ function Get-KindClusterIntegrity {
         [bool]$Required
     )
 
-    $recommendedAction = "Run wsl --shutdown, fully quit Docker Desktop, restart Docker Desktop, then rerun preflight. If the port is still missing, recreate the affected kind cluster."
+    $recommendedAction = Get-KindIntegrityRecommendedAction -ClusterName $ClusterName -IntegrityStatus "api_port_unpublished"
     $result = [ordered]@{
         cluster_name            = $ClusterName
         context                 = $Context
@@ -4674,7 +4832,7 @@ function Get-KindClusterIntegrity {
     if (-not $ClusterExists) {
         $result["integrity_status"] = "cluster_missing"
         $result["message"] = "kind cluster $ClusterName does not exist yet."
-        $result["recommended_action"] = "Create $ClusterName only through its explicit launcher create mode when ready."
+        $result["recommended_action"] = Get-KindIntegrityRecommendedAction -ClusterName $ClusterName -IntegrityStatus "cluster_missing"
         Add-Check -Id ("kind_integrity_{0}" -f $ClusterName) -Label ("{0} kind integrity" -f $ClusterName) -Status "warning" -Message ([string]$result["message"]) -Details @{
             required                = $false
             cluster_name            = $ClusterName
@@ -4720,7 +4878,7 @@ function Get-KindClusterIntegrity {
         $result["container_running"] = $false
         $result["integrity_status"] = "container_missing"
         $result["message"] = "The expected kind control-plane container $ControlPlaneContainer was not found."
-        $result["recommended_action"] = "Verify Docker Desktop state and kind cluster metadata before recreating the affected cluster."
+        $result["recommended_action"] = Get-KindIntegrityRecommendedAction -ClusterName $ClusterName -IntegrityStatus "container_missing"
         Add-Check -Id ("kind_integrity_{0}" -f $ClusterName) -Label ("{0} kind integrity" -f $ClusterName) -Status $(if ($Required) { "failed" } else { "warning" }) -Message ([string]$result["message"]) -Details @{
             required                = $Required
             cluster_name            = $ClusterName
@@ -4738,7 +4896,7 @@ function Get-KindClusterIntegrity {
         $result["api_port_published"] = $false
         $result["integrity_status"] = "container_stopped"
         $result["message"] = "The kind control-plane container $ControlPlaneContainer exists but is not running."
-        $result["recommended_action"] = "Restart Docker Desktop and rerun preflight. Recreate the cluster only if the container remains unusable."
+        $result["recommended_action"] = Get-KindIntegrityRecommendedAction -ClusterName $ClusterName -IntegrityStatus "container_stopped"
         Add-Check -Id ("kind_integrity_{0}" -f $ClusterName) -Label ("{0} kind integrity" -f $ClusterName) -Status $(if ($Required) { "failed" } else { "warning" }) -Message ([string]$result["message"]) -Details @{
             required                = $Required
             cluster_name            = $ClusterName
@@ -4805,7 +4963,7 @@ function Get-KindClusterIntegrity {
     if (-not $KubectlAvailable) {
         $result["integrity_status"] = "kubeconfig_unreachable"
         $result["message"] = "The expected kind API port is published, but kubectl is unavailable for kubeconfig and API verification."
-        $result["recommended_action"] = "Restore kubectl access and rerun preflight."
+        $result["recommended_action"] = Get-KindIntegrityRecommendedAction -ClusterName $ClusterName -IntegrityStatus "kubeconfig_unreachable"
         Add-Check -Id ("kind_integrity_{0}" -f $ClusterName) -Label ("{0} kubeconfig integrity" -f $ClusterName) -Status $(if ($Required) { "failed" } else { "warning" }) -Message ([string]$result["message"]) -Details @{
             required                = $Required
             cluster_name            = $ClusterName
@@ -4834,7 +4992,7 @@ function Get-KindClusterIntegrity {
         $result["kubeconfig_reachable"] = $false
         $result["integrity_status"] = "kubeconfig_unreachable"
         $result["message"] = "The kubeconfig context could not be read safely for the expected kind cluster."
-        $result["recommended_action"] = "Verify the kubeconfig context, restart Docker Desktop if needed, and rerun preflight."
+        $result["recommended_action"] = Get-KindIntegrityRecommendedAction -ClusterName $ClusterName -IntegrityStatus "kubeconfig_unreachable"
         Add-Check -Id ("kind_integrity_{0}" -f $ClusterName) -Label ("{0} kubeconfig integrity" -f $ClusterName) -Status $(if ($Required) { "failed" } else { "warning" }) -Message ([string]$result["message"]) -Details @{
             required                = $Required
             cluster_name            = $ClusterName
@@ -4938,6 +5096,25 @@ function Write-KindIntegrityConsole {
     $actual = if ($null -eq $Cluster["actual_api_port"]) { "no 6443/tcp published port found" } else { "host port {0}" -f [string]$Cluster["actual_api_port"] }
     Write-Host ("        Actual: {0}." -f $actual)
     Write-Host ("        Suggested fix: {0}" -f [string]$Cluster["recommended_action"])
+}
+
+function Write-ClusterRecoveryPlanConsole {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$RecoveryPlan
+    )
+
+    if (-not [bool]$RecoveryPlan["required"]) {
+        return
+    }
+
+    Write-Host ("[RECOVERY] {0}" -f [string]$RecoveryPlan["summary"])
+    $stepNumber = 1
+    foreach ($step in @($RecoveryPlan["recommended_steps"])) {
+        Write-Host ("           {0}. {1}" -f $stepNumber, [string]$step)
+        $stepNumber++
+    }
+    Write-Host "           Guidance only: no automatic recovery or destructive action was performed."
 }
 
 function New-ManagementClusterStatus {
@@ -10148,6 +10325,8 @@ $overallStatus = [string](Get-OverallStatus -StableChecks $stableChecks)
 $summary = New-LauncherSummary -StableChecks $stableChecks
 $artifacts = New-LauncherArtifacts -IncludeManagementKindConfig ([bool]($GenerateKindConfigs -or $CreateManagementCluster)) -IncludeWorkloadKindConfig ([bool]($GenerateKindConfigs -or $CreateWorkloadCluster))
 $nextActions = @(New-NextActions -StableChecks $stableChecks -LauncherMode $launcherMode -OverallStatus $overallStatus -ManagementCluster $managementCluster -WorkloadCluster $workloadCluster -PlatformBootstrap $platformBootstrap)
+$managementRecoveryPlan = New-ClusterRecoveryPlan -Cluster $managementCluster -Role "management"
+$workloadRecoveryPlan = New-ClusterRecoveryPlan -Cluster $workloadCluster -Role "workload"
 
 $statusDocument = [ordered]@{
     schema_version   = "1"
@@ -10162,6 +10341,8 @@ $statusDocument = [ordered]@{
     summary          = $summary
     management_cluster = $managementCluster
     workload_cluster = $workloadCluster
+    management_recovery_plan = $managementRecoveryPlan
+    workload_recovery_plan = $workloadRecoveryPlan
     platform_bootstrap = $platformBootstrap
     checks           = $stableChecks
     artifacts        = $artifacts
@@ -10176,6 +10357,8 @@ if (-not $Quiet) {
     Write-Host ("DevDeploy Launcher preflight status: {0}" -f $overallStatus)
     Write-KindIntegrityConsole -Cluster $managementCluster -Required (Test-ManagementClusterIntegrityRequired)
     Write-KindIntegrityConsole -Cluster $workloadCluster -Required (Test-WorkloadClusterIntegrityRequired)
+    Write-ClusterRecoveryPlanConsole -RecoveryPlan $managementRecoveryPlan
+    Write-ClusterRecoveryPlanConsole -RecoveryPlan $workloadRecoveryPlan
     if ($CreateManagementCluster) {
         Write-Host ("Management kind config: {0}" -f $MgmtKindConfigPath)
     }

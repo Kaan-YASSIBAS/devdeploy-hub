@@ -132,11 +132,19 @@
     "title": "Platform cluster health",
     "management": {
       "title": "Management cluster unreachable",
-      "description": "Management cluster is unreachable. DevDeploy platform services may be unstable. Run launcher preflight."
+      "description": "Management cluster is unreachable. DevDeploy platform services may be unstable. Run launcher preflight.",
+      "recovery": "The management cluster hosts the DevDeploy platform, Postgres, and Argo CD. Recreating it may cause data loss. Try launcher preflight and Docker/WSL restart steps first.",
+      "impact": "Do not recreate devdeploy-mgmt unless platform data is backed up or you have accepted local data loss."
     },
     "workload": {
       "title": "Workload cluster unreachable",
-      "description": "Workload cluster is unreachable. Runtime status, untracked resources, and reconcile checks may be unavailable. Run launcher preflight."
+      "description": "Workload cluster is unreachable. Runtime status, untracked resources, and reconcile checks may be unavailable. Run launcher preflight.",
+      "recovery": "First run wsl --shutdown and fully restart Docker Desktop. If the issue persists, recreate only the devdeploy-workload cluster. The management cluster and database are preserved.",
+      "impact": "If the workload cluster is recreated, runtime resources in that cluster may be lost; DevDeploy records and GitOps manifests are preserved."
+    },
+    "recovery": {
+      "title": "Recovery guidance",
+      "guidanceOnly": "These steps are guidance only. DevDeploy does not run recovery or destructive commands automatically."
     },
     "status": {
       "healthy": "Healthy",

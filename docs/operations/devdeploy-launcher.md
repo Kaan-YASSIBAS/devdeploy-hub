@@ -612,6 +612,46 @@ The launcher does not stop Docker Desktop, delete clusters, recreate clusters, e
 
 The authenticated backend endpoint `GET /api/v1/platform/cluster-health` provides the UI with a coarse, sanitized API reachability status for both clusters. The product shell uses that status to warn when management services may be unstable or when workload runtime, untracked discovery, drift comparison, and reconcile validation may be unavailable. The backend does not inspect Docker or WSL; run launcher preflight for the detailed container and host port mapping diagnosis described above.
 
+### Guided Recovery Plans
+
+Launcher status always includes `management_recovery_plan` and `workload_recovery_plan`. A healthy cluster reports `required: false` with empty impact and step arrays. A missing, stopped, unreachable, or integrity-degraded cluster reports ordered guidance with:
+
+- `required`
+- `affected_cluster`
+- `severity`
+- `summary`
+- `impact`
+- `recommended_steps`
+- `destructive_steps_required`
+- `automatic_recovery_performed`
+- `checked_at`
+
+These plans are guidance only. The launcher prints the steps but does not execute recovery commands, stop containers, delete or recreate clusters, mutate Kubernetes, or change GitOps state.
+
+#### Workload API Port Unpublished
+
+Typical symptoms are:
+
+- `docker ps` shows `devdeploy-workload-control-plane` as running.
+- `docker port devdeploy-workload-control-plane 6443/tcp` returns no host mapping.
+- `kubectl --context kind-devdeploy-workload get nodes` cannot reach `127.0.0.1:58081`.
+- Launcher integrity reports `api_port_unpublished`.
+
+Try non-destructive recovery first:
+
+1. Run `wsl --shutdown`.
+2. Fully quit Docker Desktop.
+3. Restart Docker Desktop and wait for the engine to become ready.
+4. Rerun launcher preflight.
+
+If the mapping is still broken, recreate only `devdeploy-workload` through its explicit launcher mode and then rebootstrap workload cluster access from management and Argo CD. Do not recreate `devdeploy-mgmt` for a workload-only failure. Workload runtime resources may be lost, but DevDeploy product records in the management database and GitOps manifests remain. Managed deployments can then use Recover or Redeploy after workload access is healthy.
+
+For a stopped workload control-plane container, the plan first suggests `docker start devdeploy-workload-control-plane`, followed by another preflight. The launcher does not run that command itself.
+
+#### Management Cluster Warning
+
+Management failures are more severe because `devdeploy-mgmt` hosts the frontend, backend, PostgreSQL, and Argo CD. Symptoms can include an unreachable `127.0.0.1:58080`, unavailable platform services, and failed database access. Try launcher preflight and the Docker Desktop/WSL restart sequence first. Do not recreate `devdeploy-mgmt` unless platform data is backed up or local data loss has been explicitly accepted.
+
 Port check details include:
 
 - `port`

@@ -29,6 +29,18 @@ function ClusterWarning({ cluster }: { cluster: PlatformClusterHealthItem }) {
         <p className="mt-1 text-sm text-current/80">
           {t(`platformHealth.${cluster.role}.description`)}
         </p>
+        <details className="mt-2 text-sm text-current/85">
+          <summary className="cursor-pointer font-medium">
+            {t("platformHealth.recovery.title")}
+          </summary>
+          <div className="mt-2 space-y-2 border-l border-current/20 pl-3">
+            <p>{t(`platformHealth.${cluster.role}.recovery`)}</p>
+            <p>{t(`platformHealth.${cluster.role}.impact`)}</p>
+            <p className="text-xs text-current/70">
+              {t("platformHealth.recovery.guidanceOnly")}
+            </p>
+          </div>
+        </details>
       </div>
     </div>
   );

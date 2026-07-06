@@ -76,6 +76,11 @@ class PlatformClusterHealthApiTestCase(unittest.TestCase):
         self.assertEqual(body["workload"]["status"], "unreachable")
         self.assertFalse(body["workload"]["api_reachable"])
         self.assertEqual(body["workload"]["reason"], "api_unreachable")
+        self.assertIn("launcher preflight", body["workload"]["recommended_action"].lower())
+        self.assertTrue(any("runtime status" in item.lower() for item in body["workload"]["impact"]))
+        self.assertTrue(
+            any("only devdeploy-workload" in item.lower() for item in body["workload"]["recovery_steps"])
+        )
 
     def test_management_failure_is_sanitized(self) -> None:
         self.authenticate()
@@ -89,6 +94,9 @@ class PlatformClusterHealthApiTestCase(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["management"]["status"], "unreachable")
         self.assertFalse(body["management"]["api_reachable"])
+        self.assertTrue(
+            any("platform data" in item.lower() for item in body["management"]["recovery_steps"])
+        )
         response_text = str(body).lower()
         for forbidden in ("raw-token", "kubeconfig", "client.yaml", "certificate data", "secret"):
             self.assertNotIn(forbidden, response_text)
