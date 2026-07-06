@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Archive, Database, Plus, RefreshCw, Rocket, RotateCcw, Search, Trash2 } from "lucide-react";
+import { Archive, Database, ExternalLink, Plus, RefreshCw, Rocket, RotateCcw, Search, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -22,6 +22,8 @@ import { Input } from "@/components/ui/input";
 import { Tabs } from "@/components/ui/tabs";
 import type {
   ArchiveFilter,
+  DeploymentAccess,
+  DeploymentAccessStatus,
   DeploymentRecord,
   DeploymentRuntimeStatus,
   GitOpsAppDeployInput,
@@ -73,6 +75,13 @@ function driftVariant(status: NonNullable<DeploymentRecord["drift_status"]>["sta
   return "muted";
 }
 
+function accessVariant(status: DeploymentAccessStatus) {
+  if (status === "available") return "success";
+  if (status === "not_ready" || status === "runtime_unavailable") return "warning";
+  if (status === "service_missing") return "danger";
+  return "muted";
+}
+
 function hasPublishedGitOpsSummary(summary: string | null) {
   return summary?.toLowerCase().includes("gitops manifests published") ?? false;
 }
@@ -105,6 +114,7 @@ export function DeploymentsPage() {
   const [gitOpsModalOpen, setGitOpsModalOpen] = useState(false);
   const [deployResponse, setDeployResponse] = useState<GitOpsAppDeployResponse | null>(null);
   const [pollTimedOut, setPollTimedOut] = useState(false);
+  const [accessByDeployment, setAccessByDeployment] = useState<Record<number, DeploymentAccess>>({});
   const recordsQuery = useQuery({
     queryKey: ["deployment-records", archiveFilter],
     queryFn: () => deploymentRecordsApi.list({ archiveFilter })
@@ -211,6 +221,14 @@ export function DeploymentsPage() {
       reconcileMutation.mutate(record.id);
     }
   };
+
+  const accessMutation = useMutation({
+    mutationFn: (id: number) => deploymentRecordsApi.access(id),
+    onSuccess: (response, id) => {
+      setAccessByDeployment((current) => ({ ...current, [id]: response }));
+    },
+    onError: () => toast.error(t("deployments.records.access.error"))
+  });
 
   const gitOpsMutation = useMutation({
     mutationFn: (input: GitOpsAppDeployInput) => deployGitOpsApp(input),
@@ -474,44 +492,71 @@ export function DeploymentsPage() {
         }
         const recoverEligible = canRecover(record);
         const reconcileEligible = canReconcile(record);
-        if (!recoverEligible && !reconcileEligible) return null;
+        const access = accessByDeployment[record.id];
         return (
-          <div className="flex flex-wrap gap-2">
-            {recoverEligible ? (
+          <div className="min-w-[220px] space-y-2">
+            <div className="flex flex-wrap gap-2">
               <Button
-                aria-label={t("deployments.records.recover.action")}
-                disabled={recoverMutation.isPending && recoverMutation.variables === record.id}
+                aria-label={t("deployments.records.access.action")}
+                disabled={accessMutation.isPending && accessMutation.variables === record.id}
                 size="sm"
                 variant="outline"
-                onClick={() => recoverRecord(record)}
+                onClick={() => accessMutation.mutate(record.id)}
               >
-                <RotateCcw className="h-4 w-4" />
-                {t("deployments.records.recover.action")}
+                <ExternalLink className="h-4 w-4" />
+                {t("deployments.records.access.action")}
               </Button>
-            ) : null}
-            {reconcileEligible ? (
-              <Button
-                aria-label={t("deployments.records.reconcile.action")}
-                disabled={reconcileMutation.isPending && reconcileMutation.variables === record.id}
-                size="sm"
-                variant="outline"
-                onClick={() => reconcileRecord(record)}
-              >
-                <RefreshCw className="h-4 w-4" />
-                {t("deployments.records.reconcile.action")}
-              </Button>
-            ) : null}
-            {recoverEligible && record.runtime_status?.display_status === "not_found" ? (
-              <Button
-                aria-label={t("deployments.records.archive.action")}
-                disabled={archiveMutation.isPending && archiveMutation.variables === record.id}
-                size="sm"
-                variant="ghost"
-                onClick={() => archiveRecord(record)}
-              >
-                <Archive className="h-4 w-4" />
-                {t("deployments.records.archive.action")}
-              </Button>
+              {recoverEligible ? (
+                <Button
+                  aria-label={t("deployments.records.recover.action")}
+                  disabled={recoverMutation.isPending && recoverMutation.variables === record.id}
+                  size="sm"
+                  variant="outline"
+                  onClick={() => recoverRecord(record)}
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  {t("deployments.records.recover.action")}
+                </Button>
+              ) : null}
+              {reconcileEligible ? (
+                <Button
+                  aria-label={t("deployments.records.reconcile.action")}
+                  disabled={reconcileMutation.isPending && reconcileMutation.variables === record.id}
+                  size="sm"
+                  variant="outline"
+                  onClick={() => reconcileRecord(record)}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  {t("deployments.records.reconcile.action")}
+                </Button>
+              ) : null}
+              {recoverEligible && record.runtime_status?.display_status === "not_found" ? (
+                <Button
+                  aria-label={t("deployments.records.archive.action")}
+                  disabled={archiveMutation.isPending && archiveMutation.variables === record.id}
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => archiveRecord(record)}
+                >
+                  <Archive className="h-4 w-4" />
+                  {t("deployments.records.archive.action")}
+                </Button>
+              ) : null}
+            </div>
+            {access ? (
+              <div className="space-y-1 border-l border-white/10 pl-2 text-xs">
+                <Badge variant={accessVariant(access.status)}>
+                  {t(`deployments.records.access.status.${access.status}`)}
+                </Badge>
+                <p className="max-w-[260px] text-slate-400">
+                  {t(`deployments.records.access.message.${access.status}`)}
+                </p>
+                {access.service ? (
+                  <p className="font-mono text-slate-500">
+                    {access.service.name} · {access.service.namespace} · {access.service.port ?? "-"}/{access.service.service_type ?? "-"}
+                  </p>
+                ) : null}
+              </div>
             ) : null}
           </div>
         );

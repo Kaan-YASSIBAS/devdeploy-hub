@@ -23,8 +23,10 @@ from app.schemas.deployment_record import (
     DeploymentRecordRecoverResponse,
     DeploymentRecordUpdate,
 )
+from app.schemas.deployment_access import DeploymentAccessRead
 from app.schemas.runtime_status import UntrackedDeploymentListResponse
 from app.services.deployment_record_service import DeploymentRecordService
+from app.services.deployment_access_service import DeploymentAccessService
 from app.services.deployment_drift import DeploymentDriftService
 from app.services.gitops.deploy_operation import (
     DeployWorkloadOperationRequest,
@@ -105,6 +107,22 @@ def get_deployment_record(
 ) -> DeploymentRecordRead:
     deployment = DeploymentRecordService(db).get(deployment_id, current_user)
     return _read_response(deployment, runtime_service, drift_service)
+
+
+@router.get("/{deployment_id}/access", response_model=DeploymentAccessRead)
+def get_deployment_access(
+    deployment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    runtime_service: ProductRuntimeStatusService = Depends(get_product_runtime_status_service),
+) -> DeploymentAccessRead:
+    deployment = DeploymentRecordService(db).get_owned(deployment_id, current_user)
+    if deployment.archived_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Archived deployment records are not available for app access.",
+        )
+    return DeploymentAccessService(runtime_service).evaluate(deployment)
 
 
 @router.patch("/{deployment_id}", response_model=DeploymentRecordRead)

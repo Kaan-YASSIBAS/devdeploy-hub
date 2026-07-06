@@ -523,6 +523,26 @@
         "noChanges": "Deployment is already aligned.",
         "error": "Reconcile failed."
       },
+      "access": {
+        "action": "Check access",
+        "error": "App access could not be checked.",
+        "status": {
+          "available": "Available",
+          "not_ready": "Not ready",
+          "service_missing": "Service missing",
+          "runtime_unavailable": "Runtime unavailable",
+          "unsupported": "Unsupported",
+          "unknown": "Unknown"
+        },
+        "message": {
+          "available": "The app appears reachable. Browser preview will be enabled in a later phase.",
+          "not_ready": "The deployment and pods must be ready before app access can be enabled.",
+          "service_missing": "The managed Kubernetes Service was not found.",
+          "runtime_unavailable": "Workload cluster access is unavailable. Review the cluster health warning and run launcher preflight.",
+          "unsupported": "The Service type or port cannot be previewed safely.",
+          "unknown": "App access status could not be determined safely."
+        }
+      },
       "delete": {
         "action": "Delete record",
         "confirm": "This permanently deletes only the DevDeploy deployment record. It does not delete Kubernetes resources or GitOps manifests.",

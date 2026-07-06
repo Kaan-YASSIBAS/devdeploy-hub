@@ -523,6 +523,26 @@
         "noChanges": "Deployment zaten uyumlu.",
         "error": "Uzlaştırma başarısız oldu."
       },
+      "access": {
+        "action": "Erişimi kontrol et",
+        "error": "Uygulama erişimi kontrol edilemedi.",
+        "status": {
+          "available": "Erişilebilir",
+          "not_ready": "Hazır değil",
+          "service_missing": "Service bulunamadı",
+          "runtime_unavailable": "Runtime erişilemiyor",
+          "unsupported": "Desteklenmiyor",
+          "unknown": "Bilinmiyor"
+        },
+        "message": {
+          "available": "Uygulama erişilebilir görünüyor. Tarayıcıdan açma özelliği bir sonraki fazda etkinleştirilecek.",
+          "not_ready": "Uygulama erişimi etkinleştirilmeden önce deployment ve podlar hazır olmalıdır.",
+          "service_missing": "Yönetilen Kubernetes Service bulunamadı.",
+          "runtime_unavailable": "Workload cluster erişilemiyor. Cluster health uyarısını inceleyip launcher preflight çalıştırın.",
+          "unsupported": "Service türü veya port güvenli önizleme için desteklenmiyor.",
+          "unknown": "Uygulama erişim durumu güvenli biçimde belirlenemedi."
+        }
+      },
       "delete": {
         "action": "Kaydı sil",
         "confirm": "Bu işlem yalnızca DevDeploy deployment kaydını kalıcı olarak siler. Kubernetes kaynaklarını veya GitOps manifestlerini silmez.",

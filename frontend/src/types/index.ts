@@ -232,6 +232,30 @@ export type DeploymentRecordRecoverResponse = {
   error_code: string | null;
 };
 
+export type DeploymentAccessStatus =
+  | "available"
+  | "not_ready"
+  | "service_missing"
+  | "runtime_unavailable"
+  | "unsupported"
+  | "unknown";
+
+export type DeploymentAccessService = {
+  name: string;
+  namespace: string;
+  port: number | null;
+  service_type: string | null;
+};
+
+export type DeploymentAccess = {
+  available: boolean;
+  status: DeploymentAccessStatus;
+  app_name: string;
+  message: string;
+  preview_url: null;
+  service: DeploymentAccessService | null;
+};
+
 export type MockApplication = {
   id: string;
   name: string;

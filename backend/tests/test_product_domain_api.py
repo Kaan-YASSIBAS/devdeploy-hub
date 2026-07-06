@@ -707,6 +707,7 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(self.client.post("/api/v1/deployment-records/1/archive").status_code, 401)
         self.assertEqual(self.client.post("/api/v1/deployment-records/1/recover").status_code, 401)
         self.assertEqual(self.client.post("/api/v1/deployment-records/1/reconcile").status_code, 401)
+        self.assertEqual(self.client.get("/api/v1/deployment-records/1/access").status_code, 401)
         self.assertEqual(self.client.delete("/api/v1/services/1").status_code, 401)
         self.assertEqual(self.client.delete("/api/v1/deployment-records/1").status_code, 401)
 
@@ -892,6 +893,113 @@ class ProductDomainApiTestCase(unittest.TestCase):
             self.assertEqual(body["items"], [])
             self.assertNotIn("kubeconfig", str(body).lower())
             self.assertNotIn("credential", str(body).lower())
+
+    def test_owner_can_check_ready_app_access_without_cluster_ip_exposure(self) -> None:
+        deployment = self.create_deployment()
+        self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = WorkloadSnapshot(
+            deployment_exists=True,
+            service_exists=True,
+            desired_replicas=2,
+            ready_replicas=2,
+            available_replicas=2,
+            updated_replicas=2,
+            pod_count=2,
+            running_pod_count=2,
+            ready_pod_count=2,
+            service_type="ClusterIP",
+            service_cluster_ip="10.96.0.99",
+            service_ports=(ServicePortSnapshot("http", 80, "http", "TCP"),),
+        )
+
+        response = self.client.get(f"/api/v1/deployment-records/{deployment['id']}/access")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertTrue(body["available"])
+        self.assertEqual(body["status"], "available")
+        self.assertIsNone(body["preview_url"])
+        self.assertEqual(body["service"]["port"], 80)
+        self.assertEqual(body["service"]["service_type"], "ClusterIP")
+        self.assertNotIn("cluster_ip", body["service"])
+        self.assertNotIn("10.96.0.99", str(body))
+
+    def test_app_access_is_owner_scoped_and_archived_records_are_blocked(self) -> None:
+        deployment = self.create_deployment()
+
+        self.current_user = self.user_b
+        denied = self.client.get(f"/api/v1/deployment-records/{deployment['id']}/access")
+        self.current_user = self.user_a
+        archived = self.client.post(f"/api/v1/deployment-records/{deployment['id']}/archive")
+        blocked = self.client.get(f"/api/v1/deployment-records/{deployment['id']}/access")
+        missing = self.client.get("/api/v1/deployment-records/99999/access")
+
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(archived.status_code, 200)
+        self.assertEqual(blocked.status_code, 409)
+        self.assertEqual(missing.status_code, 404)
+
+    def test_app_access_reports_missing_service_and_not_ready_runtime(self) -> None:
+        deployment = self.create_deployment()
+        key = ("devdeploy-apps", "payments-api")
+        self.runtime_reader.snapshots[key] = WorkloadSnapshot(
+            deployment_exists=True,
+            service_exists=False,
+            desired_replicas=2,
+            ready_replicas=2,
+            available_replicas=2,
+            pod_count=2,
+            ready_pod_count=2,
+        )
+        missing_service = self.client.get(
+            f"/api/v1/deployment-records/{deployment['id']}/access"
+        )
+
+        self.runtime_reader.snapshots[key] = WorkloadSnapshot(
+            deployment_exists=True,
+            service_exists=True,
+            desired_replicas=2,
+            ready_replicas=1,
+            available_replicas=1,
+            pod_count=2,
+            ready_pod_count=1,
+            service_type="ClusterIP",
+            service_ports=(ServicePortSnapshot("http", 80, "http", "TCP"),),
+        )
+        not_ready = self.client.get(f"/api/v1/deployment-records/{deployment['id']}/access")
+
+        self.assertEqual(missing_service.status_code, 200)
+        self.assertEqual(missing_service.json()["status"], "service_missing")
+        self.assertEqual(not_ready.status_code, 200)
+        self.assertEqual(not_ready.json()["status"], "not_ready")
+
+    def test_app_access_reports_unsupported_port_and_runtime_failure_safely(self) -> None:
+        deployment = self.create_deployment()
+        key = ("devdeploy-apps", "payments-api")
+        self.runtime_reader.snapshots[key] = WorkloadSnapshot(
+            deployment_exists=True,
+            service_exists=True,
+            desired_replicas=2,
+            ready_replicas=2,
+            available_replicas=2,
+            pod_count=2,
+            ready_pod_count=2,
+            service_type="ClusterIP",
+            service_ports=(ServicePortSnapshot("metrics", 9090, "metrics", "TCP"),),
+        )
+        unsupported = self.client.get(f"/api/v1/deployment-records/{deployment['id']}/access")
+
+        self.runtime_reader.error = RuntimeError(
+            "raw kubeconfig C:/sensitive/client.yaml token=secret-value"
+        )
+        unavailable = self.client.get(f"/api/v1/deployment-records/{deployment['id']}/access")
+
+        self.assertEqual(unsupported.status_code, 200)
+        self.assertEqual(unsupported.json()["status"], "unsupported")
+        self.assertEqual(unavailable.status_code, 200)
+        self.assertEqual(unavailable.json()["status"], "runtime_unavailable")
+        response_text = str(unavailable.json()).lower()
+        for forbidden in ("kubeconfig", "sensitive", "secret-value", "client.yaml"):
+            self.assertNotIn(forbidden, response_text)
 
 
 if __name__ == "__main__":

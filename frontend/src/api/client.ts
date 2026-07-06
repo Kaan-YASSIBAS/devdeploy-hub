@@ -14,6 +14,7 @@ import type {
   DeploymentCreateInput,
   DeploymentListItem,
   DeploymentRecord,
+  DeploymentAccess,
   DeploymentRecordRecoverResponse,
   DeploymentRecordUpdateInput,
   DeploymentStatusUpdateInput,
@@ -237,6 +238,10 @@ export const deploymentRecordsApi = {
   },
   async get(id: number) {
     const { data } = await apiClient.get<DeploymentRecord>(`/deployment-records/${id}`);
+    return data;
+  },
+  async access(id: number) {
+    const { data } = await apiClient.get<DeploymentAccess>(`/deployment-records/${id}/access`);
     return data;
   },
   async listUntracked() {
