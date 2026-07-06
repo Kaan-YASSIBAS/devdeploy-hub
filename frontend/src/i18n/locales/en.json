@@ -128,6 +128,23 @@
     "observed": "Observed",
     "unavailable": "Untracked runtime resources cannot be read right now. Managed records remain available."
   },
+  "platformHealth": {
+    "title": "Platform cluster health",
+    "management": {
+      "title": "Management cluster unreachable",
+      "description": "Management cluster is unreachable. DevDeploy platform services may be unstable. Run launcher preflight."
+    },
+    "workload": {
+      "title": "Workload cluster unreachable",
+      "description": "Workload cluster is unreachable. Runtime status, untracked resources, and reconcile checks may be unavailable. Run launcher preflight."
+    },
+    "status": {
+      "healthy": "Healthy",
+      "degraded": "Degraded",
+      "unreachable": "Unreachable",
+      "unknown": "Unknown"
+    }
+  },
   "health": {
     "healthy": "Healthy",
     "degraded": "Degraded",

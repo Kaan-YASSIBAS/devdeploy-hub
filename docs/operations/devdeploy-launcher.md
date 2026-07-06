@@ -610,6 +610,8 @@ Recovery is intentionally manual:
 
 The launcher does not stop Docker Desktop, delete clusters, recreate clusters, export kubeconfig, or mutate Kubernetes as part of this diagnostic.
 
+The authenticated backend endpoint `GET /api/v1/platform/cluster-health` provides the UI with a coarse, sanitized API reachability status for both clusters. The product shell uses that status to warn when management services may be unstable or when workload runtime, untracked discovery, drift comparison, and reconcile validation may be unavailable. The backend does not inspect Docker or WSL; run launcher preflight for the detailed container and host port mapping diagnosis described above.
+
 Port check details include:
 
 - `port`

@@ -30,6 +30,7 @@ import type {
   LogEntry,
   MetricsTimeSeries,
   ObservabilityHealth,
+  PlatformClusterHealthResponse,
   IntegrationStatusItem,
   ProfileSettings,
   ProfileSettingsUpdateInput,
@@ -162,6 +163,13 @@ export const dashboardApi = {
 export const setupApi = {
   async preflight() {
     const { data } = await apiClient.get<SetupPreflightResponse>("/setup/preflight");
+    return data;
+  }
+};
+
+export const platformApi = {
+  async clusterHealth() {
+    const { data } = await apiClient.get<PlatformClusterHealthResponse>("/platform/cluster-health");
     return data;
   }
 };

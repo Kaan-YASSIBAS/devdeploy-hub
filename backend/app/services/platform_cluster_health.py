@@ -1,0 +1,177 @@
+from datetime import datetime, timezone
+from typing import Protocol
+
+from kubernetes import client
+
+from app.schemas.platform import PlatformClusterHealthItem, PlatformClusterHealthResponse
+from app.services.gitops.kubernetes_status_reader import KubernetesGitOpsStatusReader
+from app.services.gitops.status_reader import GitOpsStatusError
+
+
+API_REQUEST_TIMEOUT = (3, 5)
+LAUNCHER_RECOMMENDATION = "Run launcher preflight for detailed Docker/kind diagnostics."
+
+
+class ClusterApiProbe(Protocol):
+    def check_api(self) -> None: ...
+
+
+class KubernetesVersionApiProbe:
+    def __init__(self, api_client: client.ApiClient):
+        self.version_api = client.VersionApi(api_client)
+
+    def check_api(self) -> None:
+        self.version_api.get_code(_request_timeout=API_REQUEST_TIMEOUT)
+
+
+class UnavailableClusterApiProbe:
+    def check_api(self) -> None:
+        raise GitOpsStatusError(
+            "status_reader_unavailable",
+            "Cluster API configuration is unavailable.",
+        )
+
+
+class PlatformClusterHealthService:
+    def __init__(
+        self,
+        *,
+        management_probe: ClusterApiProbe,
+        workload_probe: ClusterApiProbe,
+        management_context: str = "kind-devdeploy-mgmt",
+        workload_context: str = "kind-devdeploy-workload",
+    ):
+        self.management_probe = management_probe
+        self.workload_probe = workload_probe
+        self.management_context = management_context
+        self.workload_context = workload_context
+
+    @classmethod
+    def from_server_config(
+        cls,
+        *,
+        management_kubeconfig: str | None,
+        management_kubeconfig_context: str | None,
+        workload_kubeconfig: str | None,
+        workload_kubeconfig_context: str | None,
+        use_in_cluster_management: bool,
+    ) -> "PlatformClusterHealthService":
+        management_probe = cls._build_probe(
+            kubeconfig_path=management_kubeconfig,
+            kubeconfig_context=management_kubeconfig_context,
+            allow_in_cluster=use_in_cluster_management,
+        )
+        workload_probe = cls._build_probe(
+            kubeconfig_path=workload_kubeconfig,
+            kubeconfig_context=workload_kubeconfig_context,
+            allow_in_cluster=False,
+        )
+        return cls(
+            management_probe=management_probe,
+            workload_probe=workload_probe,
+            management_context=management_kubeconfig_context or "kind-devdeploy-mgmt",
+            workload_context=workload_kubeconfig_context or "kind-devdeploy-workload",
+        )
+
+    def read_health(self) -> PlatformClusterHealthResponse:
+        return PlatformClusterHealthResponse(
+            management=self._check_cluster(
+                probe=self.management_probe,
+                cluster_name="devdeploy-mgmt",
+                context=self.management_context,
+                role="management",
+            ),
+            workload=self._check_cluster(
+                probe=self.workload_probe,
+                cluster_name="devdeploy-workload",
+                context=self.workload_context,
+                role="workload",
+            ),
+        )
+
+    @staticmethod
+    def _build_probe(
+        *,
+        kubeconfig_path: str | None,
+        kubeconfig_context: str | None,
+        allow_in_cluster: bool,
+    ) -> ClusterApiProbe:
+        try:
+            api_client = KubernetesGitOpsStatusReader._build_api_client(
+                kubeconfig_path=kubeconfig_path,
+                kubeconfig_context=kubeconfig_context,
+                allow_in_cluster=allow_in_cluster,
+            )
+        except GitOpsStatusError:
+            return UnavailableClusterApiProbe()
+        return KubernetesVersionApiProbe(api_client)
+
+    @staticmethod
+    def _check_cluster(
+        *,
+        probe: ClusterApiProbe,
+        cluster_name: str,
+        context: str,
+        role: str,
+    ) -> PlatformClusterHealthItem:
+        checked_at = datetime.now(timezone.utc)
+        try:
+            probe.check_api()
+        except GitOpsStatusError:
+            return PlatformClusterHealthService._unreachable_item(
+                cluster_name=cluster_name,
+                context=context,
+                role=role,
+                reason="kubeconfig_unreachable",
+                checked_at=checked_at,
+            )
+        except Exception:
+            return PlatformClusterHealthService._unreachable_item(
+                cluster_name=cluster_name,
+                context=context,
+                role=role,
+                reason="api_unreachable",
+                checked_at=checked_at,
+            )
+
+        return PlatformClusterHealthItem(
+            cluster_name=cluster_name,
+            context=context,
+            role=role,
+            status="healthy",
+            api_reachable=True,
+            reason="ok",
+            message=f"{PlatformClusterHealthService._role_label(role)} cluster API is reachable.",
+            checked_at=checked_at,
+        )
+
+    @staticmethod
+    def _unreachable_item(
+        *,
+        cluster_name: str,
+        context: str,
+        role: str,
+        reason: str,
+        checked_at: datetime,
+    ) -> PlatformClusterHealthItem:
+        if role == "management":
+            message = "Management cluster API is not reachable. Platform services may be unavailable."
+        else:
+            message = (
+                "Workload cluster API is not reachable. Runtime status and reconcile checks may be unavailable."
+            )
+        return PlatformClusterHealthItem(
+            cluster_name=cluster_name,
+            context=context,
+            role=role,
+            status="unreachable",
+            api_reachable=False,
+            reason=reason,
+            message=message,
+            recommended_action=LAUNCHER_RECOMMENDATION,
+            checked_at=checked_at,
+        )
+
+    @staticmethod
+    def _role_label(role: str) -> str:
+        return "Management" if role == "management" else "Workload"

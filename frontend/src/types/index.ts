@@ -700,3 +700,29 @@ export type SetupPreflightResponse = {
   platform_ready: boolean;
   checks: SetupPreflightCheck[];
 };
+
+export type PlatformClusterHealthStatus = "healthy" | "degraded" | "unreachable" | "unknown";
+
+export type PlatformClusterHealthReason =
+  | "ok"
+  | "kubeconfig_unreachable"
+  | "api_unreachable"
+  | "api_port_unpublished"
+  | "unknown";
+
+export type PlatformClusterHealthItem = {
+  cluster_name: string;
+  context: string;
+  role: "management" | "workload";
+  status: PlatformClusterHealthStatus;
+  api_reachable: boolean;
+  reason: PlatformClusterHealthReason;
+  message: string;
+  recommended_action: string | null;
+  checked_at: string;
+};
+
+export type PlatformClusterHealthResponse = {
+  management: PlatformClusterHealthItem;
+  workload: PlatformClusterHealthItem;
+};

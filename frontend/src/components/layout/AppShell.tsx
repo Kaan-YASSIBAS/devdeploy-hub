@@ -5,6 +5,7 @@ import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Topbar } from "@/components/layout/Topbar";
+import { PlatformClusterHealthBanner } from "@/components/layout/PlatformClusterHealthBanner";
 import { Button } from "@/components/ui/button";
 
 export function AppShell() {
@@ -39,6 +40,7 @@ export function AppShell() {
       <div className="lg:pl-72">
         <Topbar onMenuClick={() => setMobileOpen(true)} />
         <main className="px-4 py-6 lg:px-6">
+          <PlatformClusterHealthBanner />
           <motion.div animate={{ opacity: 1, y: 0 }} initial={{ opacity: 0, y: 8 }} transition={{ duration: 0.24 }}>
             <Outlet />
           </motion.div>

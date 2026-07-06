@@ -9,6 +9,7 @@ from app.api.v1.endpoints import (
     deployment_records,
     deployments,
     gitops,
+    platform,
     services,
     settings,
     setup,
@@ -47,6 +48,7 @@ api_router.include_router(services.router)
 api_router.include_router(deployments.router)
 api_router.include_router(deployment_records.router)
 api_router.include_router(gitops.router)
+api_router.include_router(platform.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(observability.router)
 api_router.include_router(settings.router)

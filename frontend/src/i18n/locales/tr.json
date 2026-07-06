@@ -128,6 +128,23 @@
     "observed": "Gözlemlendi",
     "unavailable": "Takipsiz runtime kaynakları şu anda okunamıyor. Yönetilen kayıtlar kullanılabilir durumda."
   },
+  "platformHealth": {
+    "title": "Platform cluster sağlığı",
+    "management": {
+      "title": "Management cluster erişilemiyor",
+      "description": "Management cluster erişilemiyor. DevDeploy platform servisleri kararsız olabilir. Launcher preflight çalıştırın."
+    },
+    "workload": {
+      "title": "Workload cluster erişilemiyor",
+      "description": "Workload cluster erişilemiyor. Runtime durumları, takipsiz kaynaklar ve reconcile kontrolleri güncel olmayabilir. Launcher preflight çalıştırın."
+    },
+    "status": {
+      "healthy": "Sağlıklı",
+      "degraded": "Degrade",
+      "unreachable": "Erişilemiyor",
+      "unknown": "Bilinmiyor"
+    }
+  },
   "health": {
     "healthy": "Sağlıklı",
     "degraded": "Zayıflamış",
