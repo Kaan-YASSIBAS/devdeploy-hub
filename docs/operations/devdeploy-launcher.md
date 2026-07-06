@@ -538,6 +538,10 @@ It only runs read-only Kubernetes queries, temporary port-forwarding, and HTTP r
 
 ## Initialize The Management Backend Database
 
+The management backend Deployment now runs `python -m app.db.migrate` in a hardened init container before the API container starts. It reads only `DATABASE_URL` from the existing backend Secret, applies Alembic migrations idempotently, and blocks backend startup if migration fails. Backend readiness then verifies that the current database revision matches the Alembic head at `/api/v1/health/ready`.
+
+The launcher command below remains a developer recovery and verification fallback for an already-deployed platform; it is not required during normal platform startup.
+
 After PostgreSQL and the backend are Ready, initialize or advance the management database schema with:
 
 ```powershell

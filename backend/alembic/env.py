@@ -1,14 +1,19 @@
 from logging.config import fileConfig
+import os
 
 from alembic import context
+from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 
-from app.core.config import settings
 from app.db.database import Base
 
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.database_url)
+load_dotenv()
+database_url = os.getenv("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+if not database_url:
+    raise RuntimeError("DATABASE_URL is required to run database migrations.")
+config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -18,7 +23,7 @@ target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=settings.database_url,
+        url=database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},

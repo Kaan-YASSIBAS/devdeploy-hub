@@ -18,12 +18,14 @@ Start PostgreSQL from the repository root:
 docker compose up -d postgres
 ```
 
-Run migrations:
+Run migrations with the same sanitized runner used by the platform:
 
 ```powershell
 cd backend
-alembic upgrade head
+python -m app.db.migrate
 ```
+
+Direct `alembic upgrade head` remains available as a developer fallback. The management-cluster backend Deployment runs the migration runner in an init container, so platform users do not need to invoke either command manually.
 
 Run the API:
 
@@ -45,7 +47,7 @@ From the repository root, run the full stack:
 docker compose up --build
 ```
 
-The backend container waits for PostgreSQL, runs Alembic migrations with `alembic upgrade head`, then starts:
+The backend container waits for PostgreSQL, runs the sanitized `python -m app.db.migrate` entrypoint, then starts:
 
 ```text
 uvicorn app.main:app --host 0.0.0.0 --port 8000
@@ -57,7 +59,10 @@ Backend URLs:
 API:    http://localhost:8000
 Docs:   http://localhost:8000/docs
 Health: http://localhost:8000/api/v1/health
+Ready:  http://localhost:8000/api/v1/health/ready
 ```
+
+The liveness endpoint confirms that the API process is running. The readiness endpoint returns `503` unless the database Alembic revision matches the repository head.
 
 Stop the stack:
 
