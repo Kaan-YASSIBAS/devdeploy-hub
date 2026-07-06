@@ -16,6 +16,8 @@ param(
 
     [switch]$CreateWorkloadCluster,
 
+    [switch]$PlanWorkloadRebootstrap,
+
     [switch]$BootstrapManagementIngress,
 
     [switch]$BootstrapManagementPostgres,
@@ -73,6 +75,37 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if ($PlanWorkloadRebootstrap -and (
+        $GenerateKindConfigs -or
+        $CreateManagementCluster -or
+        $CreateWorkloadCluster -or
+        $BootstrapManagementIngress -or
+        $BootstrapManagementPostgres -or
+        $BuildManagementBackendImage -or
+        $LoadManagementBackendImage -or
+        $EnsureManagementBackendSecret -or
+        $VerifyManagementBackendSecret -or
+        $BootstrapManagementBackend -or
+        $VerifyManagementBackend -or
+        $BuildManagementFrontendImage -or
+        $LoadManagementFrontendImage -or
+        $BootstrapManagementFrontend -or
+        $VerifyManagementFrontend -or
+        $BootstrapManagementArgoCD -or
+        $VerifyManagementArgoCD -or
+        $DiscoverWorkloadClusterEndpoint -or
+        $RegisterWorkloadClusterWithArgoCD -or
+        $VerifyWorkloadClusterRegistration -or
+        $GrantWorkloadDeployPermissions -or
+        $VerifyWorkloadDeployPermissions -or
+        $ConfigureGitOpsRepository -or
+        $BootstrapGitOpsRootApplication -or
+        $VerifyGitOpsRootApplication -or
+        $InitializeManagementBackendDatabase
+    )) {
+    throw "-PlanWorkloadRebootstrap is plan-only and cannot be combined with launcher execution or preview modes."
+}
 
 $LauncherVersion = "0.1.0"
 $RequiredPorts = @(58080, 8080, 8443, 58081, 8081, 8444)
@@ -827,6 +860,15 @@ function New-NextActions {
         }
         else {
             $actions.Add("Review the sanitized Root Application verification checks. Use -BootstrapGitOpsRootApplication only when you explicitly intend to reconcile the Application.") | Out-Null
+        }
+    }
+
+    if ($LauncherMode -eq "workload_rebootstrap_plan") {
+        if ($managementClusterStatus -eq "ready") {
+            $actions.Add("Review the plan-only workload rebootstrap steps. No command has been executed and user confirmation remains required before manual recreation.") | Out-Null
+        }
+        else {
+            $actions.Add("Restore or verify devdeploy-mgmt before relying on workload rebootstrap validation; the plan does not modify either cluster.") | Out-Null
         }
     }
 
@@ -4607,6 +4649,7 @@ function Test-ManagementClusterIntegrityRequired {
             $BuildManagementBackendImage -or
             $BuildManagementFrontendImage -or
             $ConfigureGitOpsRepository -or
+            $PlanWorkloadRebootstrap -or
             $GenerateKindConfigs
         ))
 }
@@ -4630,6 +4673,7 @@ function Test-WorkloadClusterIntegrityRequired {
             $BootstrapManagementArgoCD -or
             $VerifyManagementArgoCD -or
             $ConfigureGitOpsRepository -or
+            $PlanWorkloadRebootstrap -or
             $GenerateKindConfigs
         ))
 }
@@ -4790,6 +4834,110 @@ function New-ClusterRecoveryPlan {
         automatic_recovery_performed  = $false
         checked_at                    = [string](Get-Timestamp)
     }
+}
+
+function New-WorkloadRebootstrapPlan {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ManagementCluster,
+
+        [Parameter(Mandatory = $true)]
+        [object]$WorkloadCluster
+    )
+
+    $managementStatus = [string]$ManagementCluster["status"]
+    $managementIntegrity = [string]$ManagementCluster["integrity_status"]
+    $workloadStatus = [string]$WorkloadCluster["status"]
+    $workloadIntegrity = [string]$WorkloadCluster["integrity_status"]
+    $managementHealthy = [bool]($managementStatus -eq "ready" -and $managementIntegrity -eq "ok")
+    $diagnosis = "Workload cluster status is $workloadStatus with integrity status $workloadIntegrity."
+    if ($workloadStatus -eq "ready" -and $workloadIntegrity -eq "ok") {
+        $diagnosis = "devdeploy-workload is currently ready. This plan is available for review but rebootstrap is not indicated by current diagnostics."
+    }
+
+    $managementWarning = ""
+    if (-not $managementHealthy) {
+        $managementWarning = "devdeploy-mgmt is not healthy. Workload-only rebootstrap may not be sufficient; restore management access before relying on platform or Argo CD verification."
+    }
+
+    return [ordered]@{
+        available                       = $true
+        mode                            = "plan_only"
+        affected_cluster                = "devdeploy-workload"
+        management_preserved            = $true
+        platform_database_preserved     = $true
+        gitops_repository_preserved     = $true
+        destructive_commands_executed   = $false
+        kubernetes_mutation_executed    = $false
+        gitops_mutation_executed        = $false
+        requires_user_confirmation      = $true
+        diagnosis                       = $diagnosis
+        diagnosis_reason                = $workloadIntegrity
+        workload_status                 = $workloadStatus
+        management_status               = $managementStatus
+        management_healthy              = $managementHealthy
+        management_warning              = $managementWarning
+        impact                          = [string[]]@(
+            "devdeploy-mgmt is not touched by this plan.",
+            "PostgreSQL data and managed DeploymentRecords in devdeploy-mgmt are preserved.",
+            "Argo CD in devdeploy-mgmt and the GitOps repository are preserved.",
+            "Kubernetes runtime resources in devdeploy-workload may be lost if the user confirms manual recreation.",
+            "Managed apps can use Recover, Redeploy, or Reconcile after workload access is healthy."
+        )
+        non_destructive_steps            = [string[]]@(
+            "Run wsl --shutdown.",
+            "Fully quit Docker Desktop.",
+            "Restart Docker Desktop and wait for the engine to become ready.",
+            "Rerun .\scripts\launcher\devdeploy-launcher.ps1 and review workload integrity."
+        )
+        planned_rebootstrap_steps        = [string[]]@(
+            "USER CONFIRMATION REQUIRED: kind delete cluster --name devdeploy-workload",
+            "Run .\scripts\launcher\devdeploy-launcher.ps1 -CreateWorkloadCluster.",
+            "Run .\scripts\launcher\devdeploy-launcher.ps1 -DiscoverWorkloadClusterEndpoint.",
+            "Run .\scripts\launcher\devdeploy-launcher.ps1 -RegisterWorkloadClusterWithArgoCD.",
+            "Run .\scripts\launcher\devdeploy-launcher.ps1 -GrantWorkloadDeployPermissions to restore devdeploy-apps and namespace-scoped deploy access."
+        )
+        post_rebootstrap_validation      = [string[]]@(
+            "Verify docker port devdeploy-workload-control-plane 6443/tcp reports 127.0.0.1:58081.",
+            "Verify kubectl --context kind-devdeploy-workload get nodes reports a Ready node.",
+            "Run .\scripts\launcher\devdeploy-launcher.ps1 -VerifyWorkloadClusterRegistration.",
+            "Run .\scripts\launcher\devdeploy-launcher.ps1 -VerifyWorkloadDeployPermissions.",
+            "Run .\scripts\launcher\devdeploy-launcher.ps1 -VerifyGitOpsRootApplication.",
+            "Wait for Argo CD workloads to converge, then use Recover, Redeploy, or Reconcile where runtime resources remain missing."
+        )
+        checked_at                       = [string](Get-Timestamp)
+    }
+}
+
+function Write-WorkloadRebootstrapPlanConsole {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Plan
+    )
+
+    Write-Host "PLAN ONLY - no commands were executed."
+    Write-Host ("Diagnosis: {0}" -f [string]$Plan["diagnosis"])
+    if (-not [string]::IsNullOrWhiteSpace([string]$Plan["management_warning"])) {
+        Write-Host ("Management warning: {0}" -f [string]$Plan["management_warning"])
+    }
+
+    foreach ($section in @(
+            @{ label = "Impact"; field = "impact" },
+            @{ label = "Non-destructive first steps"; field = "non_destructive_steps" },
+            @{ label = "Planned rebootstrap steps"; field = "planned_rebootstrap_steps" },
+            @{ label = "Post-rebootstrap validation"; field = "post_rebootstrap_validation" }
+        )) {
+        Write-Host ("{0}:" -f [string]$section.label)
+        $fieldName = [string]$section.field
+        $stepNumber = 1
+        foreach ($item in @($Plan[$fieldName])) {
+            Write-Host ("  {0}. {1}" -f $stepNumber, [string]$item)
+            $stepNumber++
+        }
+    }
+
+    Write-Host "Management preservation: devdeploy-mgmt, PostgreSQL, Argo CD, and GitOps source are not changed by this plan."
+    Write-Host "Runtime impact: a user-confirmed workload cluster recreation may remove runtime resources in devdeploy-workload."
 }
 
 function Get-KindClusterIntegrity {
@@ -9779,7 +9927,10 @@ New-LocalDirectory -Path $StatusDir
 New-LocalDirectory -Path $LogsDir
 New-LocalDirectory -Path $KindDir
 
-if ($CreateManagementCluster) {
+if ($PlanWorkloadRebootstrap) {
+    Write-LauncherLog "Starting DevDeploy Launcher read-only workload rebootstrap planning mode."
+}
+elseif ($CreateManagementCluster) {
     Write-LauncherLog "Starting DevDeploy Launcher guarded management cluster create mode."
 }
 elseif ($CreateWorkloadCluster) {
@@ -10004,7 +10155,10 @@ else {
 }
 
 $launcherMode = "preflight"
-if ($CreateManagementCluster) {
+if ($PlanWorkloadRebootstrap) {
+    $launcherMode = "workload_rebootstrap_plan"
+}
+elseif ($CreateManagementCluster) {
     $launcherMode = "management_cluster_create"
 }
 elseif ($CreateWorkloadCluster) {
@@ -10320,6 +10474,19 @@ if ($null -eq $workloadCluster) {
 }
 $platformHelmAvailable = [bool]($helmAvailable -and -not $BuildManagementBackendImage -and -not $BuildManagementFrontendImage -and -not $LoadManagementFrontendImage -and -not $BootstrapManagementFrontend -and -not $VerifyManagementFrontend -and -not $VerifyGitOpsRootApplication -and -not $InitializeManagementBackendDatabase -and -not $LoadManagementBackendImage -and -not $EnsureManagementBackendSecret -and -not $VerifyManagementBackendSecret -and -not $BootstrapManagementBackend -and -not $VerifyManagementBackend)
 $platformBootstrap = New-PlatformBootstrapStatus -ManagementCluster $managementCluster -HelmAvailable $platformHelmAvailable -KubectlAvailable $kubectlAvailable -BackendImageStatus $backendImageStatus -BackendSecretStatus $backendSecretStatus -BackendStatus $backendStatus -BackendDatabaseStatus $backendDatabaseStatus -FrontendImageStatus $frontendImageStatus -FrontendStatus $frontendStatus -IngressStatusOverride $platformIngressOverride -PostgresStatusOverride $platformPostgresOverride -ArgoCDStatusOverride $platformArgoCDOverride -WorkloadEndpointStatusOverride $platformWorkloadEndpointOverride -ArgoCDWorkloadClusterStatusOverride $platformArgoCDWorkloadClusterOverride -WorkloadDeployPermissionsStatusOverride $platformWorkloadDeployPermissionsOverride -GitOpsRepositoryStatusOverride $platformGitOpsRepositoryOverride -GitOpsRootApplicationStatusOverride $platformGitOpsRootApplicationOverride
+$workloadRebootstrapPlan = $null
+if ($PlanWorkloadRebootstrap) {
+    $workloadRebootstrapPlan = New-WorkloadRebootstrapPlan -ManagementCluster $managementCluster -WorkloadCluster $workloadCluster
+    $planCheckStatus = if ([bool]$workloadRebootstrapPlan["management_healthy"]) { "ok" } else { "warning" }
+    Add-Check -Id "workload_rebootstrap_plan" -Label "Workload cluster rebootstrap plan" -Status $planCheckStatus -Message "Generated a plan-only workload cluster rebootstrap sequence. No commands were executed." -Details @{
+        required                      = $false
+        mode                          = "plan_only"
+        affected_cluster              = "devdeploy-workload"
+        management_preserved          = $true
+        destructive_commands_executed = $false
+        requires_user_confirmation    = $true
+    }
+}
 $stableChecks = @($Checks | ForEach-Object { $_ })
 $overallStatus = [string](Get-OverallStatus -StableChecks $stableChecks)
 $summary = New-LauncherSummary -StableChecks $stableChecks
@@ -10350,6 +10517,10 @@ $statusDocument = [ordered]@{
     next_actions     = [string[]]$nextActions
 }
 
+if ($PlanWorkloadRebootstrap) {
+    $statusDocument["workload_rebootstrap_plan"] = $workloadRebootstrapPlan
+}
+
 $statusDocument | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $StatusPath -Encoding UTF8
 Write-LauncherLog ("Wrote launcher status to {0}" -f $StatusPath)
 
@@ -10357,9 +10528,17 @@ if (-not $Quiet) {
     Write-Host ("DevDeploy Launcher preflight status: {0}" -f $overallStatus)
     Write-KindIntegrityConsole -Cluster $managementCluster -Required (Test-ManagementClusterIntegrityRequired)
     Write-KindIntegrityConsole -Cluster $workloadCluster -Required (Test-WorkloadClusterIntegrityRequired)
-    Write-ClusterRecoveryPlanConsole -RecoveryPlan $managementRecoveryPlan
-    Write-ClusterRecoveryPlanConsole -RecoveryPlan $workloadRecoveryPlan
-    if ($CreateManagementCluster) {
+    if ($PlanWorkloadRebootstrap) {
+        Write-WorkloadRebootstrapPlanConsole -Plan $workloadRebootstrapPlan
+    }
+    else {
+        Write-ClusterRecoveryPlanConsole -RecoveryPlan $managementRecoveryPlan
+        Write-ClusterRecoveryPlanConsole -RecoveryPlan $workloadRecoveryPlan
+    }
+    if ($PlanWorkloadRebootstrap) {
+        Write-Host "Workload rebootstrap plan was generated locally. Management and workload clusters were not changed."
+    }
+    elseif ($CreateManagementCluster) {
         Write-Host ("Management kind config: {0}" -f $MgmtKindConfigPath)
     }
     elseif ($CreateWorkloadCluster) {

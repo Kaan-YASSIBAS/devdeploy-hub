@@ -628,6 +628,28 @@ Launcher status always includes `management_recovery_plan` and `workload_recover
 
 These plans are guidance only. The launcher prints the steps but does not execute recovery commands, stop containers, delete or recreate clusters, mutate Kubernetes, or change GitOps state.
 
+### Plan Workload Cluster Rebootstrap
+
+To generate a workload-only rebootstrap plan from the current read-only diagnostics:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -PlanWorkloadRebootstrap
+```
+
+This mode is intentionally separate from all execution modes and cannot be combined with cluster creation, bootstrap, registration, permission, repository, or Application switches. It writes the normal sanitized status and log files, adds `workload_rebootstrap_plan` to `launcher-status.json`, and prints `PLAN ONLY - no commands were executed.`
+
+The structured plan includes:
+
+- Current workload status and integrity diagnosis.
+- Whether management is healthy and a warning when workload-only recovery may not be sufficient.
+- The management cluster, PostgreSQL, Argo CD, GitOps repository, and product records that the plan preserves.
+- Non-destructive Docker Desktop and WSL recovery steps.
+- A user-confirmation-required manual deletion command shown as text only.
+- Existing explicit launcher modes for workload creation, endpoint discovery, Argo CD registration, and namespace-scoped permissions.
+- Read-only post-rebootstrap validation and Recover, Redeploy, or Reconcile guidance.
+
+The plan does not invoke the displayed deletion command, run `-CreateWorkloadCluster`, start or stop Docker, modify kubeconfig, mutate Kubernetes, update GitOps manifests, or synchronize Argo CD. Manual recreation may remove runtime resources from `devdeploy-workload`; it does not require recreating `devdeploy-mgmt`, and management PostgreSQL data remains outside the affected cluster.
+
 #### Workload API Port Unpublished
 
 Typical symptoms are:
