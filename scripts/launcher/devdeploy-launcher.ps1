@@ -363,6 +363,14 @@ function New-NextActions {
     $managementClusterStatus = [string]$ManagementCluster["status"]
     $workloadClusterStatus = [string]$WorkloadCluster["status"]
 
+    foreach ($cluster in @($ManagementCluster, $WorkloadCluster)) {
+        $integrityStatus = [string]$cluster["integrity_status"]
+        $recommendedAction = [string]$cluster["recommended_action"]
+        if ($integrityStatus -notin @("ok", "cluster_missing", "unknown") -and -not [string]::IsNullOrWhiteSpace($recommendedAction) -and -not $actions.Contains($recommendedAction)) {
+            $actions.Add($recommendedAction) | Out-Null
+        }
+    }
+
     if ($managementClusterStatus -eq "missing") {
         $actions.Add("Run the launcher with -CreateManagementCluster to create devdeploy-mgmt when you are ready.") | Out-Null
     }
@@ -4594,6 +4602,344 @@ function Add-SkippedWorkloadClusterStages {
     }
 }
 
+function Test-ManagementClusterIntegrityRequired {
+    return [bool](-not (
+            $BuildManagementBackendImage -or
+            $BuildManagementFrontendImage -or
+            $ConfigureGitOpsRepository -or
+            $GenerateKindConfigs
+        ))
+}
+
+function Test-WorkloadClusterIntegrityRequired {
+    return [bool](-not (
+            $CreateManagementCluster -or
+            $BootstrapManagementIngress -or
+            $BootstrapManagementPostgres -or
+            $BuildManagementBackendImage -or
+            $LoadManagementBackendImage -or
+            $EnsureManagementBackendSecret -or
+            $VerifyManagementBackendSecret -or
+            $BootstrapManagementBackend -or
+            $VerifyManagementBackend -or
+            $InitializeManagementBackendDatabase -or
+            $BuildManagementFrontendImage -or
+            $LoadManagementFrontendImage -or
+            $BootstrapManagementFrontend -or
+            $VerifyManagementFrontend -or
+            $BootstrapManagementArgoCD -or
+            $VerifyManagementArgoCD -or
+            $ConfigureGitOpsRepository -or
+            $GenerateKindConfigs
+        ))
+}
+
+function Get-KindClusterIntegrity {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ClusterName,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Context,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ControlPlaneContainer,
+
+        [Parameter(Mandatory = $true)]
+        [int]$ExpectedApiPort,
+
+        [bool]$ClusterExists,
+
+        [bool]$KubectlAvailable,
+
+        [bool]$Required
+    )
+
+    $recommendedAction = "Run wsl --shutdown, fully quit Docker Desktop, restart Docker Desktop, then rerun preflight. If the port is still missing, recreate the affected kind cluster."
+    $result = [ordered]@{
+        cluster_name            = $ClusterName
+        context                 = $Context
+        control_plane_container = $ControlPlaneContainer
+        container_running       = $null
+        api_port_published      = $null
+        expected_api_port       = $ExpectedApiPort
+        actual_api_port         = $null
+        kubeconfig_reachable    = $null
+        integrity_status        = "unknown"
+        message                 = "kind cluster integrity could not be determined safely."
+        recommended_action      = "Review the sanitized launcher log and rerun preflight."
+        checked_at              = [string](Get-Timestamp)
+    }
+
+    if (-not $ClusterExists) {
+        $result["integrity_status"] = "cluster_missing"
+        $result["message"] = "kind cluster $ClusterName does not exist yet."
+        $result["recommended_action"] = "Create $ClusterName only through its explicit launcher create mode when ready."
+        Add-Check -Id ("kind_integrity_{0}" -f $ClusterName) -Label ("{0} kind integrity" -f $ClusterName) -Status "warning" -Message ([string]$result["message"]) -Details @{
+            required                = $false
+            cluster_name            = $ClusterName
+            integrity_status        = "cluster_missing"
+            control_plane_container = $ControlPlaneContainer
+            expected_api_port       = $ExpectedApiPort
+        }
+        return $result
+    }
+
+    if (-not $dockerAvailable) {
+        $result["integrity_status"] = "docker_unavailable"
+        $result["message"] = "Docker CLI is unavailable, so the kind control-plane container and API port mapping cannot be verified."
+        $result["recommended_action"] = "Install or restore Docker CLI access, then rerun preflight."
+        Add-Check -Id ("kind_integrity_{0}" -f $ClusterName) -Label ("{0} kind integrity" -f $ClusterName) -Status $(if ($Required) { "failed" } else { "warning" }) -Message ([string]$result["message"]) -Details @{
+            required                = $Required
+            cluster_name            = $ClusterName
+            integrity_status        = "docker_unavailable"
+            control_plane_container = $ControlPlaneContainer
+            expected_api_port       = $ExpectedApiPort
+        }
+        return $result
+    }
+
+    $dockerInfo = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @("info", "--format", "{{json .ServerVersion}}") -TimeoutSeconds 10
+    if ($dockerInfo.exit_code -ne 0 -or $dockerInfo.timed_out) {
+        $result["integrity_status"] = "docker_unavailable"
+        $result["message"] = "Docker daemon is unavailable, so kind cluster integrity cannot be verified."
+        $result["recommended_action"] = "Start or restart Docker Desktop, then rerun preflight."
+        Add-Check -Id ("kind_integrity_{0}" -f $ClusterName) -Label ("{0} kind integrity" -f $ClusterName) -Status $(if ($Required) { "failed" } else { "warning" }) -Message ([string]$result["message"]) -Details @{
+            required                = $Required
+            cluster_name            = $ClusterName
+            integrity_status        = "docker_unavailable"
+            control_plane_container = $ControlPlaneContainer
+            expected_api_port       = $ExpectedApiPort
+        }
+        return $result
+    }
+
+    $containerResult = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @("ps", "-a", "--filter", ("name=^/{0}$" -f $ControlPlaneContainer), "--format", "{{.Names}}") -TimeoutSeconds 10
+    $containerPresent = [bool]($containerResult.exit_code -eq 0 -and -not $containerResult.timed_out -and (([string]$containerResult.stdout).Trim() -eq $ControlPlaneContainer))
+    if (-not $containerPresent) {
+        $result["container_running"] = $false
+        $result["integrity_status"] = "container_missing"
+        $result["message"] = "The expected kind control-plane container $ControlPlaneContainer was not found."
+        $result["recommended_action"] = "Verify Docker Desktop state and kind cluster metadata before recreating the affected cluster."
+        Add-Check -Id ("kind_integrity_{0}" -f $ClusterName) -Label ("{0} kind integrity" -f $ClusterName) -Status $(if ($Required) { "failed" } else { "warning" }) -Message ([string]$result["message"]) -Details @{
+            required                = $Required
+            cluster_name            = $ClusterName
+            integrity_status        = "container_missing"
+            control_plane_container = $ControlPlaneContainer
+            expected_api_port       = $ExpectedApiPort
+        }
+        return $result
+    }
+
+    $runningResult = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @("inspect", "--format={{.State.Running}}", $ControlPlaneContainer) -TimeoutSeconds 10
+    $containerRunning = [bool]($runningResult.exit_code -eq 0 -and -not $runningResult.timed_out -and (([string]$runningResult.stdout).Trim().ToLowerInvariant() -eq "true"))
+    $result["container_running"] = $containerRunning
+    if (-not $containerRunning) {
+        $result["api_port_published"] = $false
+        $result["integrity_status"] = "container_stopped"
+        $result["message"] = "The kind control-plane container $ControlPlaneContainer exists but is not running."
+        $result["recommended_action"] = "Restart Docker Desktop and rerun preflight. Recreate the cluster only if the container remains unusable."
+        Add-Check -Id ("kind_integrity_{0}" -f $ClusterName) -Label ("{0} kind integrity" -f $ClusterName) -Status $(if ($Required) { "failed" } else { "warning" }) -Message ([string]$result["message"]) -Details @{
+            required                = $Required
+            cluster_name            = $ClusterName
+            integrity_status        = "container_stopped"
+            control_plane_container = $ControlPlaneContainer
+            container_running       = $false
+            expected_api_port       = $ExpectedApiPort
+        }
+        return $result
+    }
+
+    $portResult = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @("port", $ControlPlaneContainer, "6443/tcp") -TimeoutSeconds 10 -PreserveStandardOutput $true
+    $publishedPorts = @()
+    if ($portResult.exit_code -eq 0 -and -not $portResult.timed_out -and -not [string]::IsNullOrWhiteSpace($portResult.stdout)) {
+        $publishedPorts = @(
+            ([string]$portResult.stdout) -split "\r?\n" |
+                ForEach-Object {
+                    if ($_ -match ':(\d+)\s*$') { [int]$Matches[1] }
+                } |
+                Where-Object { $null -ne $_ } |
+                Select-Object -Unique
+        )
+    }
+    $result["api_port_published"] = [bool]($publishedPorts.Count -gt 0)
+    if ($publishedPorts.Count -gt 0) {
+        $result["actual_api_port"] = [int]$publishedPorts[0]
+    }
+    if ($publishedPorts.Count -eq 0) {
+        $result["integrity_status"] = "api_port_unpublished"
+        $result["message"] = "The kind control-plane container is running, but 6443/tcp is not published to the host. Docker Desktop/WSL port mapping may be corrupted."
+        $result["recommended_action"] = $recommendedAction
+        Add-Check -Id ("kind_integrity_{0}" -f $ClusterName) -Label ("{0} kind API port integrity" -f $ClusterName) -Status $(if ($Required) { "failed" } else { "warning" }) -Message ([string]$result["message"]) -Details @{
+            required                = $Required
+            cluster_name            = $ClusterName
+            integrity_status        = "api_port_unpublished"
+            control_plane_container = $ControlPlaneContainer
+            container_running       = $true
+            api_port_published      = $false
+            expected_api_port       = $ExpectedApiPort
+            actual_api_port         = $null
+            recommended_action      = $recommendedAction
+        }
+        return $result
+    }
+
+    if ($publishedPorts -notcontains $ExpectedApiPort) {
+        $result["integrity_status"] = "api_port_mismatch"
+        $result["message"] = "The kind control-plane API is published on an unexpected host port."
+        $result["recommended_action"] = $recommendedAction
+        Add-Check -Id ("kind_integrity_{0}" -f $ClusterName) -Label ("{0} kind API port integrity" -f $ClusterName) -Status $(if ($Required) { "failed" } else { "warning" }) -Message ([string]$result["message"]) -Details @{
+            required                = $Required
+            cluster_name            = $ClusterName
+            integrity_status        = "api_port_mismatch"
+            control_plane_container = $ControlPlaneContainer
+            container_running       = $true
+            api_port_published      = $true
+            expected_api_port       = $ExpectedApiPort
+            actual_api_port         = $result["actual_api_port"]
+            recommended_action      = $recommendedAction
+        }
+        return $result
+    }
+
+    if (-not $KubectlAvailable) {
+        $result["integrity_status"] = "kubeconfig_unreachable"
+        $result["message"] = "The expected kind API port is published, but kubectl is unavailable for kubeconfig and API verification."
+        $result["recommended_action"] = "Restore kubectl access and rerun preflight."
+        Add-Check -Id ("kind_integrity_{0}" -f $ClusterName) -Label ("{0} kubeconfig integrity" -f $ClusterName) -Status $(if ($Required) { "failed" } else { "warning" }) -Message ([string]$result["message"]) -Details @{
+            required                = $Required
+            cluster_name            = $ClusterName
+            integrity_status        = "kubeconfig_unreachable"
+            control_plane_container = $ControlPlaneContainer
+            container_running       = $true
+            api_port_published      = $true
+            expected_api_port       = $ExpectedApiPort
+            actual_api_port         = $result["actual_api_port"]
+        }
+        return $result
+    }
+
+    $serverResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", $Context, "config", "view", "--minify", "--output=jsonpath={.clusters[0].cluster.server}") -TimeoutSeconds 10 -PreserveStandardOutput $true
+    $kubeconfigPort = $null
+    if ($serverResult.exit_code -eq 0 -and -not $serverResult.timed_out -and -not [string]::IsNullOrWhiteSpace($serverResult.stdout)) {
+        try {
+            $serverUri = [Uri](([string]$serverResult.stdout).Trim())
+            $kubeconfigPort = [int]$serverUri.Port
+        }
+        catch {
+            $kubeconfigPort = $null
+        }
+    }
+    if ($null -eq $kubeconfigPort) {
+        $result["kubeconfig_reachable"] = $false
+        $result["integrity_status"] = "kubeconfig_unreachable"
+        $result["message"] = "The kubeconfig context could not be read safely for the expected kind cluster."
+        $result["recommended_action"] = "Verify the kubeconfig context, restart Docker Desktop if needed, and rerun preflight."
+        Add-Check -Id ("kind_integrity_{0}" -f $ClusterName) -Label ("{0} kubeconfig integrity" -f $ClusterName) -Status $(if ($Required) { "failed" } else { "warning" }) -Message ([string]$result["message"]) -Details @{
+            required                = $Required
+            cluster_name            = $ClusterName
+            integrity_status        = "kubeconfig_unreachable"
+            context                 = $Context
+            expected_api_port       = $ExpectedApiPort
+            actual_api_port         = $result["actual_api_port"]
+        }
+        return $result
+    }
+
+    if ($kubeconfigPort -ne $ExpectedApiPort) {
+        $result["kubeconfig_reachable"] = $false
+        $result["integrity_status"] = "api_port_mismatch"
+        $result["message"] = "The kubeconfig server port does not match the expected published kind API port."
+        $result["recommended_action"] = $recommendedAction
+        Add-Check -Id ("kind_integrity_{0}" -f $ClusterName) -Label ("{0} kubeconfig API port integrity" -f $ClusterName) -Status $(if ($Required) { "failed" } else { "warning" }) -Message ([string]$result["message"]) -Details @{
+            required                = $Required
+            cluster_name            = $ClusterName
+            integrity_status        = "api_port_mismatch"
+            context                 = $Context
+            expected_api_port       = $ExpectedApiPort
+            actual_api_port         = $result["actual_api_port"]
+            kubeconfig_api_port     = $kubeconfigPort
+            recommended_action      = $recommendedAction
+        }
+        return $result
+    }
+
+    $readyResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", $Context, "get", "--raw=/readyz") -TimeoutSeconds 15
+    if ($readyResult.exit_code -ne 0 -or $readyResult.timed_out) {
+        $result["kubeconfig_reachable"] = $false
+        $result["integrity_status"] = "kubeconfig_unreachable"
+        $result["message"] = "The kind API port and kubeconfig match, but the Kubernetes API is not reachable."
+        $result["recommended_action"] = $recommendedAction
+        Add-Check -Id ("kind_integrity_{0}" -f $ClusterName) -Label ("{0} Kubernetes API integrity" -f $ClusterName) -Status $(if ($Required) { "failed" } else { "warning" }) -Message ([string]$result["message"]) -Details @{
+            required                = $Required
+            cluster_name            = $ClusterName
+            integrity_status        = "kubeconfig_unreachable"
+            context                 = $Context
+            control_plane_container = $ControlPlaneContainer
+            container_running       = $true
+            api_port_published      = $true
+            expected_api_port       = $ExpectedApiPort
+            actual_api_port         = $result["actual_api_port"]
+            recommended_action      = $recommendedAction
+        }
+        return $result
+    }
+
+    $result["kubeconfig_reachable"] = $true
+    $result["integrity_status"] = "ok"
+    $result["message"] = "The kind control-plane container, published API port, kubeconfig context, and Kubernetes readiness endpoint are consistent."
+    $result["recommended_action"] = ""
+    Add-Check -Id ("kind_integrity_{0}" -f $ClusterName) -Label ("{0} kind integrity" -f $ClusterName) -Status "ok" -Message ([string]$result["message"]) -Details @{
+        required                = $Required
+        cluster_name            = $ClusterName
+        integrity_status        = "ok"
+        context                 = $Context
+        control_plane_container = $ControlPlaneContainer
+        container_running       = $true
+        api_port_published      = $true
+        expected_api_port       = $ExpectedApiPort
+        actual_api_port         = $result["actual_api_port"]
+        kubeconfig_reachable    = $true
+    }
+    return $result
+}
+
+function Set-KindIntegrityFields {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ClusterStatus,
+
+        [Parameter(Mandatory = $true)]
+        [object]$Integrity
+    )
+
+    foreach ($field in @("control_plane_container", "container_running", "api_port_published", "expected_api_port", "actual_api_port", "kubeconfig_reachable", "integrity_status", "recommended_action")) {
+        $ClusterStatus[$field] = $Integrity[$field]
+    }
+}
+
+function Write-KindIntegrityConsole {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Cluster,
+
+        [bool]$Required
+    )
+
+    $integrityStatus = [string]$Cluster["integrity_status"]
+    if ($integrityStatus -in @("ok", "cluster_missing", "unknown")) {
+        return
+    }
+
+    $level = if ($Required) { "ERROR" } else { "WARNING" }
+    Write-Host ("[{0}] {1} kind integrity: {2}" -f $level, [string]$Cluster["name"], [string]$Cluster["message"])
+    Write-Host ("        Container: {0}; running: {1}" -f [string]$Cluster["control_plane_container"], [string]$Cluster["container_running"])
+    Write-Host ("        Expected: 127.0.0.1:{0} -> 6443/tcp" -f [string]$Cluster["expected_api_port"])
+    $actual = if ($null -eq $Cluster["actual_api_port"]) { "no 6443/tcp published port found" } else { "host port {0}" -f [string]$Cluster["actual_api_port"] }
+    Write-Host ("        Actual: {0}." -f $actual)
+    Write-Host ("        Suggested fix: {0}" -f [string]$Cluster["recommended_action"])
+}
+
 function New-ManagementClusterStatus {
     param(
         [bool]$KindAvailable,
@@ -4603,16 +4949,24 @@ function New-ManagementClusterStatus {
 
     $checkedAt = [string](Get-Timestamp)
     $base = [ordered]@{
-        name          = "devdeploy-mgmt"
-        context       = "kind-devdeploy-mgmt"
-        exists        = $false
-        api_reachable = $null
-        node_ready    = $null
-        ready_nodes   = 0
-        total_nodes   = 0
-        status        = "unknown"
-        message       = "Management cluster status could not be determined safely."
-        checked_at    = $checkedAt
+        name                    = "devdeploy-mgmt"
+        context                 = "kind-devdeploy-mgmt"
+        exists                  = $false
+        api_reachable           = $null
+        node_ready              = $null
+        ready_nodes             = 0
+        total_nodes             = 0
+        control_plane_container = "devdeploy-mgmt-control-plane"
+        container_running       = $null
+        api_port_published      = $null
+        expected_api_port       = 58080
+        actual_api_port         = $null
+        kubeconfig_reachable    = $null
+        integrity_status        = "unknown"
+        recommended_action      = "Review the sanitized launcher log and rerun preflight."
+        status                  = "unknown"
+        message                 = "Management cluster status could not be determined safely."
+        checked_at              = $checkedAt
     }
 
     if (-not $KindAvailable) {
@@ -4638,6 +4992,8 @@ function New-ManagementClusterStatus {
     }
 
     $exists = @($clusterResult.clusters) -contains "devdeploy-mgmt"
+    $integrity = Get-KindClusterIntegrity -ClusterName "devdeploy-mgmt" -Context "kind-devdeploy-mgmt" -ControlPlaneContainer "devdeploy-mgmt-control-plane" -ExpectedApiPort 58080 -ClusterExists $exists -KubectlAvailable $KubectlAvailable -Required (Test-ManagementClusterIntegrityRequired)
+    Set-KindIntegrityFields -ClusterStatus $base -Integrity $integrity
     if (-not $exists) {
         $base["status"] = "missing"
         $base["message"] = "Management cluster devdeploy-mgmt does not exist yet."
@@ -4650,6 +5006,23 @@ function New-ManagementClusterStatus {
     }
 
     $base["exists"] = $true
+
+    if ([string]$base["integrity_status"] -ne "ok") {
+        $base["api_reachable"] = if ($base["kubeconfig_reachable"] -eq $true) { $true } else { $false }
+        $base["node_ready"] = $null
+        $base["status"] = "degraded"
+        $base["message"] = [string]$integrity["message"]
+        Add-Check -Id "management_cluster_status" -Label "Management cluster status" -Status "warning" -Message ([string]$base["message"]) -Details @{
+            required          = $false
+            cluster_name      = "devdeploy-mgmt"
+            context           = "kind-devdeploy-mgmt"
+            status            = "degraded"
+            integrity_status  = [string]$base["integrity_status"]
+            expected_api_port = 58080
+            actual_api_port   = $base["actual_api_port"]
+        }
+        return $base
+    }
 
     if (-not $KubectlAvailable) {
         $base["api_reachable"] = $false
@@ -4744,16 +5117,24 @@ function New-WorkloadClusterStatus {
 
     $checkedAt = [string](Get-Timestamp)
     $base = [ordered]@{
-        name          = "devdeploy-workload"
-        context       = "kind-devdeploy-workload"
-        exists        = $false
-        api_reachable = $null
-        node_ready    = $null
-        ready_nodes   = 0
-        total_nodes   = 0
-        status        = "unknown"
-        message       = "Workload cluster status could not be determined safely."
-        checked_at    = $checkedAt
+        name                    = "devdeploy-workload"
+        context                 = "kind-devdeploy-workload"
+        exists                  = $false
+        api_reachable           = $null
+        node_ready              = $null
+        ready_nodes             = 0
+        total_nodes             = 0
+        control_plane_container = "devdeploy-workload-control-plane"
+        container_running       = $null
+        api_port_published      = $null
+        expected_api_port       = 58081
+        actual_api_port         = $null
+        kubeconfig_reachable    = $null
+        integrity_status        = "unknown"
+        recommended_action      = "Review the sanitized launcher log and rerun preflight."
+        status                  = "unknown"
+        message                 = "Workload cluster status could not be determined safely."
+        checked_at              = $checkedAt
     }
 
     if (-not $KindAvailable) {
@@ -4779,6 +5160,8 @@ function New-WorkloadClusterStatus {
     }
 
     $exists = @($clusterResult.clusters) -contains "devdeploy-workload"
+    $integrity = Get-KindClusterIntegrity -ClusterName "devdeploy-workload" -Context "kind-devdeploy-workload" -ControlPlaneContainer "devdeploy-workload-control-plane" -ExpectedApiPort 58081 -ClusterExists $exists -KubectlAvailable $KubectlAvailable -Required (Test-WorkloadClusterIntegrityRequired)
+    Set-KindIntegrityFields -ClusterStatus $base -Integrity $integrity
     if (-not $exists) {
         $base["status"] = "missing"
         $base["message"] = "Workload cluster devdeploy-workload does not exist yet."
@@ -4791,6 +5174,23 @@ function New-WorkloadClusterStatus {
     }
 
     $base["exists"] = $true
+
+    if ([string]$base["integrity_status"] -ne "ok") {
+        $base["api_reachable"] = if ($base["kubeconfig_reachable"] -eq $true) { $true } else { $false }
+        $base["node_ready"] = $null
+        $base["status"] = "degraded"
+        $base["message"] = [string]$integrity["message"]
+        Add-Check -Id "workload_cluster_status" -Label "Workload cluster status" -Status "warning" -Message ([string]$base["message"]) -Details @{
+            required          = $false
+            cluster_name      = "devdeploy-workload"
+            context           = "kind-devdeploy-workload"
+            status            = "degraded"
+            integrity_status  = [string]$base["integrity_status"]
+            expected_api_port = 58081
+            actual_api_port   = $base["actual_api_port"]
+        }
+        return $base
+    }
 
     if (-not $KubectlAvailable) {
         $base["api_reachable"] = $false
@@ -9774,6 +10174,8 @@ Write-LauncherLog ("Wrote launcher status to {0}" -f $StatusPath)
 
 if (-not $Quiet) {
     Write-Host ("DevDeploy Launcher preflight status: {0}" -f $overallStatus)
+    Write-KindIntegrityConsole -Cluster $managementCluster -Required (Test-ManagementClusterIntegrityRequired)
+    Write-KindIntegrityConsole -Cluster $workloadCluster -Required (Test-WorkloadClusterIntegrityRequired)
     if ($CreateManagementCluster) {
         Write-Host ("Management kind config: {0}" -f $MgmtKindConfigPath)
     }

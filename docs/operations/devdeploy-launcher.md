@@ -581,6 +581,35 @@ After a DevDeploy cluster exists, its expected ports may already be occupied by 
 - `58080`, `8080`, and `8443` are expected when `devdeploy-mgmt` exists.
 - `58081`, `8081`, and `8444` are expected when `devdeploy-workload` exists.
 
+## Diagnose kind API Port Mapping Integrity
+
+Default preflight now verifies each existing DevDeploy kind cluster through read-only Docker, kubeconfig, and Kubernetes checks. It confirms that the expected control-plane container exists and is running, `6443/tcp` is published to the fixed host API port, the kubeconfig context points to that port, and `GET /readyz` succeeds.
+
+Cluster summaries include:
+
+- `control_plane_container`
+- `container_running`
+- `api_port_published`
+- `expected_api_port`
+- `actual_api_port`
+- `kubeconfig_reachable`
+- `integrity_status`
+- `recommended_action`
+
+Integrity statuses are `ok`, `cluster_missing`, `container_missing`, `container_stopped`, `api_port_unpublished`, `api_port_mismatch`, `kubeconfig_unreachable`, `docker_unavailable`, and `unknown`. A broken management mapping is blocking for management operations. A broken workload mapping is blocking for default preflight and workload operations, but remains a warning for management-only modes that do not require the workload API.
+
+A Docker Desktop or WSL integration failure may leave `devdeploy-mgmt-control-plane` or `devdeploy-workload-control-plane` running while `docker port <container> 6443/tcp` returns no host mapping. Symptoms include `kubectl` refusing connections to `127.0.0.1:58080` or `127.0.0.1:58081`, and `kind export kubeconfig` being unable to discover the published API server port.
+
+Recovery is intentionally manual:
+
+1. Run `wsl --shutdown`.
+2. Fully quit Docker Desktop.
+3. Restart Docker Desktop and wait until its engine is ready.
+4. Rerun the launcher preflight.
+5. Recreate only the affected kind cluster if `6443/tcp` is still unpublished.
+
+The launcher does not stop Docker Desktop, delete clusters, recreate clusters, export kubeconfig, or mutate Kubernetes as part of this diagnostic.
+
 Port check details include:
 
 - `port`
