@@ -58,6 +58,10 @@ class Settings(BaseSettings):
         default=None,
         alias="DEVDEPLOY_WORKLOAD_KUBECONFIG_CONTEXT",
     )
+    preview_cookie_secure: bool = Field(
+        default=False,
+        alias="DEVDEPLOY_PREVIEW_COOKIE_SECURE",
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",

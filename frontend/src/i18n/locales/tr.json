@@ -526,6 +526,8 @@
       "access": {
         "action": "Erişimi kontrol et",
         "error": "Uygulama erişimi kontrol edilemedi.",
+        "openAction": "Uygulamayı aç",
+        "openError": "Uygulama önizlemesi açılamadı. Açılır pencerelere izin verip erişimi yeniden kontrol edin.",
         "status": {
           "available": "Erişilebilir",
           "not_ready": "Hazır değil",
@@ -535,7 +537,7 @@
           "unknown": "Bilinmiyor"
         },
         "message": {
-          "available": "Uygulama erişilebilir görünüyor. Tarayıcıdan açma özelliği bir sonraki fazda etkinleştirilecek.",
+          "available": "Uygulama güvenli tarayıcı önizlemesi için hazır.",
           "not_ready": "Uygulama erişimi etkinleştirilmeden önce deployment ve podlar hazır olmalıdır.",
           "service_missing": "Yönetilen Kubernetes Service bulunamadı.",
           "runtime_unavailable": "Workload cluster erişilemiyor. Cluster health uyarısını inceleyip launcher preflight çalıştırın.",

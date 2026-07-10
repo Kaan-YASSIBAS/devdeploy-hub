@@ -252,7 +252,7 @@ export type DeploymentAccess = {
   status: DeploymentAccessStatus;
   app_name: string;
   message: string;
-  preview_url: null;
+  preview_url: string | null;
   service: DeploymentAccessService | null;
 };
 

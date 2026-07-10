@@ -526,6 +526,8 @@
       "access": {
         "action": "Check access",
         "error": "App access could not be checked.",
+        "openAction": "Open app",
+        "openError": "The app preview could not be opened. Allow pop-ups and check access again.",
         "status": {
           "available": "Available",
           "not_ready": "Not ready",
@@ -535,7 +537,7 @@
           "unknown": "Unknown"
         },
         "message": {
-          "available": "The app appears reachable. Browser preview will be enabled in a later phase.",
+          "available": "The app is ready for a secured browser preview.",
           "not_ready": "The deployment and pods must be ready before app access can be enabled.",
           "service_missing": "The managed Kubernetes Service was not found.",
           "runtime_unavailable": "Workload cluster access is unavailable. Review the cluster health warning and run launcher preflight.",

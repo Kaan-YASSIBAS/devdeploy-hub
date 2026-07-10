@@ -1,6 +1,6 @@
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -13,7 +13,9 @@ from app.core.deps import get_current_user, get_db
 from app.api.v1.runtime_status import (
     get_deployment_drift_service,
     get_product_runtime_status_service,
+    get_workload_service_proxy_client,
 )
+from app.core.config import settings
 from app.models.deployment_record import DeploymentRecord
 from app.models.user import User
 from app.schemas.archive import ArchiveFilter
@@ -28,12 +30,27 @@ from app.schemas.runtime_status import UntrackedDeploymentListResponse
 from app.services.deployment_record_service import DeploymentRecordService
 from app.services.deployment_access_service import DeploymentAccessService
 from app.services.deployment_drift import DeploymentDriftService
+from app.services.deployment_preview_service import (
+    DeploymentPreviewService,
+    PreviewPathError,
+    PreviewTimeoutError,
+    PreviewUnavailableError,
+    PreviewUpstreamError,
+    WorkloadServiceProxy,
+)
 from app.services.gitops.deploy_operation import (
     DeployWorkloadOperationRequest,
     DeployWorkloadOperationService,
 )
 from app.services.gitops.git_adapter import sanitize_git_output
+from app.services.preview_session import (
+    PREVIEW_SESSION_COOKIE,
+    PREVIEW_SESSION_TTL_SECONDS,
+    create_preview_session_token,
+    decode_preview_session_token,
+)
 from app.services.product_runtime_status import ProductRuntimeStatusService
+from app.repositories.user_repository import UserRepository
 
 
 router = APIRouter(prefix="/deployment-records", tags=["deployment-records"])
@@ -47,6 +64,19 @@ RECOVER_ERROR_STATUS_CODES = {
     "push_failed": status.HTTP_502_BAD_GATEWAY,
 }
 RegenerateAction = Literal["recover", "reconcile"]
+PREVIEW_SECURITY_HEADERS = {
+    "Cache-Control": "no-store",
+    "Content-Security-Policy": (
+        "sandbox allow-scripts; default-src 'self' data: blob:; "
+        "base-uri 'none'; connect-src 'self'; form-action 'none'; "
+        "frame-ancestors 'none'; img-src 'self' data: blob:; "
+        "style-src 'self' 'unsafe-inline'; font-src 'self' data:"
+    ),
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+}
 
 
 def _read_response(
@@ -112,6 +142,7 @@ def get_deployment_record(
 @router.get("/{deployment_id}/access", response_model=DeploymentAccessRead)
 def get_deployment_access(
     deployment_id: int,
+    response: Response,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     runtime_service: ProductRuntimeStatusService = Depends(get_product_runtime_status_service),
@@ -122,7 +153,113 @@ def get_deployment_access(
             status_code=status.HTTP_409_CONFLICT,
             detail="Archived deployment records are not available for app access.",
         )
-    return DeploymentAccessService(runtime_service).evaluate(deployment)
+    access = DeploymentAccessService(runtime_service).evaluate(deployment)
+    if access.available and access.preview_url:
+        response.set_cookie(
+            key=PREVIEW_SESSION_COOKIE,
+            value=create_preview_session_token(
+                user_id=current_user.id,
+                deployment_id=deployment.id,
+            ),
+            max_age=PREVIEW_SESSION_TTL_SECONDS,
+            httponly=True,
+            secure=settings.preview_cookie_secure,
+            samesite="strict",
+            path=access.preview_url,
+        )
+    return access
+
+
+def _get_preview_user(
+    deployment_id: int,
+    request: Request,
+    db: Session,
+) -> User:
+    token = request.cookies.get(PREVIEW_SESSION_COOKIE)
+    preview_session = decode_preview_session_token(token) if token else None
+    if preview_session is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="A valid app preview session is required.",
+        )
+    if preview_session.deployment_id != deployment_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The app preview session does not match this deployment.",
+        )
+    user = UserRepository(db).get_by_id(preview_session.user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="A valid app preview session is required.",
+        )
+    return user
+
+
+@router.get("/{deployment_id}/preview/")
+@router.get("/{deployment_id}/preview/{preview_path:path}")
+def get_deployment_preview(
+    deployment_id: int,
+    request: Request,
+    preview_path: str = "",
+    db: Session = Depends(get_db),
+    runtime_service: ProductRuntimeStatusService = Depends(get_product_runtime_status_service),
+    proxy: WorkloadServiceProxy | None = Depends(get_workload_service_proxy_client),
+) -> Response:
+    current_user = _get_preview_user(deployment_id, request, db)
+    deployment = DeploymentRecordService(db).get_owned(deployment_id, current_user)
+    if deployment.archived_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Archived deployment records are not available for app preview.",
+        )
+    if request.url.query:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Preview query parameters are not supported.",
+        )
+
+    preview_service = DeploymentPreviewService(
+        access_service=DeploymentAccessService(runtime_service),
+        proxy=proxy,
+    )
+    try:
+        result = preview_service.preview(deployment, preview_path)
+    except PreviewPathError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from None
+    except PreviewUnavailableError as error:
+        unavailable_status = (
+            status.HTTP_503_SERVICE_UNAVAILABLE
+            if error.access_status in {"runtime_unavailable", "unknown"}
+            else status.HTTP_409_CONFLICT
+        )
+        raise HTTPException(
+            status_code=unavailable_status,
+            detail=f"App preview is unavailable: {error.access_status}.",
+        ) from None
+    except PreviewTimeoutError:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="The app preview request timed out.",
+        ) from None
+    except PreviewUpstreamError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The app preview upstream is unavailable.",
+        ) from None
+
+    response_headers = {
+        **PREVIEW_SECURITY_HEADERS,
+        "Content-Type": result.content_type,
+    }
+    return Response(
+        content=result.body,
+        status_code=result.status_code,
+        headers=response_headers,
+    )
 
 
 @router.patch("/{deployment_id}", response_model=DeploymentRecordRead)

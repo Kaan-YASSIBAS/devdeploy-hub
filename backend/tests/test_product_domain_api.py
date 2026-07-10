@@ -8,7 +8,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.v1.endpoints import deployment_records, services
-from app.api.v1.runtime_status import get_product_runtime_status_service
+from app.api.v1.runtime_status import (
+    get_product_runtime_status_service,
+    get_workload_service_proxy_client,
+)
 from app.core.deps import get_current_user, get_db
 from app.db.database import Base
 from app.models.user import User
@@ -17,6 +20,15 @@ from app.services.gitops.status_reader import (
     NamedWorkloadSnapshot,
     ServicePortSnapshot,
     WorkloadSnapshot,
+)
+from app.services.deployment_preview_service import (
+    PreviewTimeoutError,
+    PreviewUpstreamError,
+    ServiceProxyResponse,
+)
+from app.services.preview_session import (
+    PREVIEW_SESSION_COOKIE,
+    create_preview_session_token,
 )
 from app.services.product_runtime_status import ProductRuntimeStatusService
 
@@ -60,6 +72,28 @@ class FakeRecoverOperationService:
         return self.result
 
 
+class FakeWorkloadServiceProxy:
+    def __init__(self):
+        self.calls = []
+        self.error: Exception | None = None
+        self.response = ServiceProxyResponse(
+            status_code=200,
+            body=b"<html><body>preview</body></html>",
+            headers={
+                "Content-Type": "text/html; charset=utf-8",
+                "Connection": "keep-alive",
+                "Server": "internal-app-server",
+                "Set-Cookie": "upstream_session=secret",
+            },
+        )
+
+    def get(self, **kwargs) -> ServiceProxyResponse:
+        self.calls.append(kwargs)
+        if self.error is not None:
+            raise self.error
+        return self.response
+
+
 class ProductDomainApiTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.engine = create_engine(
@@ -91,6 +125,7 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.current_user = self.user_a
         self.runtime_reader = FakeWorkloadRuntimeReader()
         self.recover_operation = FakeRecoverOperationService()
+        self.preview_proxy = FakeWorkloadServiceProxy()
 
         self.app = FastAPI()
         self.app.include_router(services.router, prefix="/api/v1")
@@ -105,6 +140,9 @@ class ProductDomainApiTestCase(unittest.TestCase):
             reader=self.runtime_reader,
             workload_namespace="devdeploy-apps",
         )
+        self.app.dependency_overrides[
+            get_workload_service_proxy_client
+        ] = lambda: self.preview_proxy
         self.app.dependency_overrides[
             deployment_records.get_gitops_deploy_repository_config
         ] = lambda: deployment_records.GitOpsDeployRepositoryConfig(
@@ -148,6 +186,30 @@ class ProductDomainApiTestCase(unittest.TestCase):
             "namespace": "devdeploy-apps",
             "desired_state": "draft",
         }
+
+    @staticmethod
+    def ready_workload_snapshot() -> WorkloadSnapshot:
+        return WorkloadSnapshot(
+            deployment_exists=True,
+            service_exists=True,
+            desired_replicas=2,
+            ready_replicas=2,
+            available_replicas=2,
+            updated_replicas=2,
+            pod_count=2,
+            running_pod_count=2,
+            ready_pod_count=2,
+            service_type="ClusterIP",
+            service_cluster_ip="10.96.0.99",
+            service_ports=(ServicePortSnapshot("http", 80, "http", "TCP"),),
+        )
+
+    def set_preview_cookie(self, *, user_id: int, deployment_id: int) -> None:
+        self.client.cookies.set(
+            PREVIEW_SESSION_COOKIE,
+            create_preview_session_token(user_id=user_id, deployment_id=deployment_id),
+            path=f"/api/v1/deployment-records/{deployment_id}/preview/",
+        )
 
     def create_service(self, name: str = "Payments API") -> dict:
         response = self.client.post("/api/v1/services", json=self.service_payload(name))
@@ -896,19 +958,8 @@ class ProductDomainApiTestCase(unittest.TestCase):
 
     def test_owner_can_check_ready_app_access_without_cluster_ip_exposure(self) -> None:
         deployment = self.create_deployment()
-        self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = WorkloadSnapshot(
-            deployment_exists=True,
-            service_exists=True,
-            desired_replicas=2,
-            ready_replicas=2,
-            available_replicas=2,
-            updated_replicas=2,
-            pod_count=2,
-            running_pod_count=2,
-            ready_pod_count=2,
-            service_type="ClusterIP",
-            service_cluster_ip="10.96.0.99",
-            service_ports=(ServicePortSnapshot("http", 80, "http", "TCP"),),
+        self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = (
+            self.ready_workload_snapshot()
         )
 
         response = self.client.get(f"/api/v1/deployment-records/{deployment['id']}/access")
@@ -917,11 +968,205 @@ class ProductDomainApiTestCase(unittest.TestCase):
         body = response.json()
         self.assertTrue(body["available"])
         self.assertEqual(body["status"], "available")
-        self.assertIsNone(body["preview_url"])
+        self.assertEqual(
+            body["preview_url"],
+            f"/api/v1/deployment-records/{deployment['id']}/preview/",
+        )
         self.assertEqual(body["service"]["port"], 80)
         self.assertEqual(body["service"]["service_type"], "ClusterIP")
         self.assertNotIn("cluster_ip", body["service"])
         self.assertNotIn("10.96.0.99", str(body))
+        self.assertNotIn("token", body["preview_url"].lower())
+        self.assertIn("HttpOnly", response.headers["set-cookie"])
+
+    def test_owner_can_preview_ready_app_without_forwarding_browser_headers(self) -> None:
+        deployment = self.create_deployment()
+        self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = (
+            self.ready_workload_snapshot()
+        )
+        access = self.client.get(f"/api/v1/deployment-records/{deployment['id']}/access")
+        self.client.cookies.set("browser_session", "browser-secret", path="/")
+
+        response = self.client.get(
+            access.json()["preview_url"],
+            headers={
+                "Authorization": "Bearer browser-secret",
+                "Host": "attacker.example",
+                "Proxy-Authorization": "Basic proxy-secret",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.text, "<html><body>preview</body></html>")
+        self.assertEqual(
+            self.preview_proxy.calls,
+            [
+                {
+                    "service_name": "payments-api",
+                    "namespace": "devdeploy-apps",
+                    "port": 80,
+                    "path": "",
+                }
+            ],
+        )
+        self.assertNotIn("set-cookie", response.headers)
+        self.assertNotIn("connection", response.headers)
+        self.assertNotIn("server", response.headers)
+        self.assertIn("sandbox", response.headers["content-security-policy"])
+        self.assertEqual(response.headers["x-content-type-options"], "nosniff")
+
+    def test_preview_requires_scoped_cookie_and_get_only_route(self) -> None:
+        deployment = self.create_deployment()
+        self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = (
+            self.ready_workload_snapshot()
+        )
+        preview_url = f"/api/v1/deployment-records/{deployment['id']}/preview/"
+
+        missing_cookie = self.client.get(preview_url)
+
+        self.client.cookies.set(
+            PREVIEW_SESSION_COOKIE,
+            create_preview_session_token(
+                user_id=self.user_a.id,
+                deployment_id=deployment["id"] + 1,
+            ),
+            path=preview_url,
+        )
+        wrong_deployment = self.client.get(preview_url)
+
+        self.set_preview_cookie(user_id=self.user_a.id, deployment_id=deployment["id"])
+        posted = self.client.post(preview_url)
+
+        self.assertEqual(missing_cookie.status_code, 401)
+        self.assertEqual(wrong_deployment.status_code, 403)
+        self.assertEqual(posted.status_code, 405)
+        self.assertEqual(self.preview_proxy.calls, [])
+
+    def test_preview_is_owner_scoped_and_blocks_missing_or_archived_records(self) -> None:
+        deployment = self.create_deployment()
+        self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = (
+            self.ready_workload_snapshot()
+        )
+
+        self.set_preview_cookie(user_id=self.user_b.id, deployment_id=deployment["id"])
+        denied = self.client.get(
+            f"/api/v1/deployment-records/{deployment['id']}/preview/"
+        )
+
+        self.set_preview_cookie(user_id=self.user_a.id, deployment_id=99999)
+        missing = self.client.get("/api/v1/deployment-records/99999/preview/")
+
+        archived = self.client.post(
+            f"/api/v1/deployment-records/{deployment['id']}/archive"
+        )
+        self.set_preview_cookie(user_id=self.user_a.id, deployment_id=deployment["id"])
+        blocked = self.client.get(
+            f"/api/v1/deployment-records/{deployment['id']}/preview/"
+        )
+
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(missing.status_code, 404)
+        self.assertEqual(archived.status_code, 200)
+        self.assertEqual(blocked.status_code, 409)
+
+    def test_preview_blocks_unready_missing_service_and_runtime_unavailable(self) -> None:
+        deployment = self.create_deployment()
+        key = ("devdeploy-apps", "payments-api")
+        self.set_preview_cookie(user_id=self.user_a.id, deployment_id=deployment["id"])
+        preview_url = f"/api/v1/deployment-records/{deployment['id']}/preview/"
+
+        self.runtime_reader.snapshots[key] = WorkloadSnapshot(
+            deployment_exists=True,
+            service_exists=True,
+            desired_replicas=2,
+            ready_replicas=1,
+            available_replicas=1,
+            pod_count=2,
+            ready_pod_count=1,
+            service_type="ClusterIP",
+            service_ports=(ServicePortSnapshot("http", 80, "http", "TCP"),),
+        )
+        not_ready = self.client.get(preview_url)
+
+        self.runtime_reader.snapshots[key] = WorkloadSnapshot(
+            deployment_exists=True,
+            service_exists=False,
+            desired_replicas=2,
+            ready_replicas=2,
+            available_replicas=2,
+            pod_count=2,
+            ready_pod_count=2,
+        )
+        missing_service = self.client.get(preview_url)
+
+        self.runtime_reader.error = RuntimeError(
+            "raw kubeconfig C:/private/workload.yaml token=secret"
+        )
+        unavailable = self.client.get(preview_url)
+
+        self.assertEqual(not_ready.status_code, 409)
+        self.assertEqual(missing_service.status_code, 409)
+        self.assertEqual(unavailable.status_code, 503)
+        self.assertEqual(self.preview_proxy.calls, [])
+        for forbidden in ("kubeconfig", "workload.yaml", "token=secret"):
+            self.assertNotIn(forbidden, unavailable.text.lower())
+
+    def test_preview_rejects_query_redirect_timeout_and_raw_upstream_errors(self) -> None:
+        deployment = self.create_deployment()
+        self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = (
+            self.ready_workload_snapshot()
+        )
+        self.set_preview_cookie(user_id=self.user_a.id, deployment_id=deployment["id"])
+        preview_url = f"/api/v1/deployment-records/{deployment['id']}/preview/"
+
+        query = self.client.get(
+            f"{preview_url}?target=https://attacker.example&host=attacker.example"
+            "&port=443&namespace=kube-system&service=kubernetes"
+        )
+
+        self.preview_proxy.response = ServiceProxyResponse(
+            status_code=302,
+            body=b"redirect",
+            headers={
+                "Content-Type": "text/plain",
+                "Location": "https://internal-service.example/secret",
+            },
+        )
+        redirect = self.client.get(preview_url)
+
+        self.preview_proxy.error = PreviewTimeoutError("raw timeout target detail")
+        timed_out = self.client.get(preview_url)
+
+        self.preview_proxy.error = PreviewUpstreamError(
+            "https://devdeploy-workload-control-plane:6443 raw certificate"
+        )
+        unavailable = self.client.get(preview_url)
+
+        self.assertEqual(query.status_code, 400)
+        self.assertEqual(redirect.status_code, 502)
+        self.assertNotIn("location", redirect.headers)
+        self.assertNotIn("internal-service", redirect.text)
+        self.assertEqual(timed_out.status_code, 504)
+        self.assertNotIn("raw timeout", timed_out.text)
+        self.assertEqual(unavailable.status_code, 502)
+        self.assertNotIn("control-plane", unavailable.text)
+        self.assertNotIn("certificate", unavailable.text)
+
+    def test_preview_rejects_records_outside_managed_workload_namespace(self) -> None:
+        payload = self.deployment_payload()
+        payload["namespace"] = "other-namespace"
+        deployment = self.client.post("/api/v1/deployment-records", json=payload).json()
+        self.runtime_reader.snapshots[("other-namespace", "payments-api")] = (
+            self.ready_workload_snapshot()
+        )
+        self.set_preview_cookie(user_id=self.user_a.id, deployment_id=deployment["id"])
+
+        response = self.client.get(
+            f"/api/v1/deployment-records/{deployment['id']}/preview/"
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.preview_proxy.calls, [])
 
     def test_app_access_is_owner_scoped_and_archived_records_are_blocked(self) -> None:
         deployment = self.create_deployment()

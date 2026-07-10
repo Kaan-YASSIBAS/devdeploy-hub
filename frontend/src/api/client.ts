@@ -67,6 +67,7 @@ const baseURL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api/
 
 export const apiClient = axios.create({
   baseURL,
+  withCredentials: true,
   headers: {
     "Content-Type": "application/json"
   }
@@ -243,6 +244,13 @@ export const deploymentRecordsApi = {
   async access(id: number) {
     const { data } = await apiClient.get<DeploymentAccess>(`/deployment-records/${id}/access`);
     return data;
+  },
+  previewUrl(path: string) {
+    if (!/^\/api\/v1\/deployment-records\/[1-9][0-9]*\/preview\/$/.test(path)) {
+      throw new Error("Invalid deployment preview URL.");
+    }
+    const apiOrigin = new URL(baseURL, window.location.origin).origin;
+    return new URL(path, apiOrigin).toString();
   },
   async listUntracked() {
     const { data } = await apiClient.get<UntrackedDeploymentListResponse>(

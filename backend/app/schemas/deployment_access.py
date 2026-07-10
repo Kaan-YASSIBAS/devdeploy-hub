@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 DeploymentAccessStatus = Literal[
@@ -25,5 +25,8 @@ class DeploymentAccessRead(BaseModel):
     status: DeploymentAccessStatus
     app_name: str
     message: str
-    preview_url: None = None
+    preview_url: str | None = Field(
+        default=None,
+        pattern=r"^/api/v1/deployment-records/[1-9][0-9]*/preview/$",
+    )
     service: DeploymentAccessServiceRead | None = None

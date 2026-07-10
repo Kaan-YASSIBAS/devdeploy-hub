@@ -19,6 +19,12 @@ class DeploymentAccessService:
 
     def evaluate(self, deployment: DeploymentRecord) -> DeploymentAccessRead:
         try:
+            if deployment.namespace != self.runtime_service.workload_namespace:
+                return self._response(
+                    deployment,
+                    status="unsupported",
+                    message="The deployment namespace is not managed for app preview.",
+                )
             snapshot = self.runtime_service.workload_snapshot(
                 deployment.app_name,
                 deployment.namespace,
@@ -63,9 +69,7 @@ class DeploymentAccessService:
                 deployment,
                 available=True,
                 status="available",
-                message=(
-                    "The app appears reachable. Browser preview will be enabled in a later phase."
-                ),
+                message="The app is ready for a secured browser preview.",
                 service=DeploymentAccessServiceRead(
                     name=deployment.app_name,
                     namespace=deployment.namespace,
@@ -139,5 +143,10 @@ class DeploymentAccessService:
             status=status,
             app_name=deployment.app_name,
             message=message,
+            preview_url=(
+                f"/api/v1/deployment-records/{deployment.id}/preview/"
+                if available
+                else None
+            ),
             service=service,
         )

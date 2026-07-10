@@ -230,6 +230,22 @@ export function DeploymentsPage() {
     onError: () => toast.error(t("deployments.records.access.error"))
   });
 
+  const openPreview = (access: DeploymentAccess) => {
+    if (!access.available || !access.preview_url) return;
+    try {
+      const previewWindow = window.open(
+        deploymentRecordsApi.previewUrl(access.preview_url),
+        "_blank",
+        "noopener,noreferrer"
+      );
+      if (!previewWindow) {
+        toast.error(t("deployments.records.access.openError"));
+      }
+    } catch {
+      toast.error(t("deployments.records.access.openError"));
+    }
+  };
+
   const gitOpsMutation = useMutation({
     mutationFn: (input: GitOpsAppDeployInput) => deployGitOpsApp(input),
     onSuccess: async (response) => {
@@ -551,6 +567,17 @@ export function DeploymentsPage() {
                 <p className="max-w-[260px] text-slate-400">
                   {t(`deployments.records.access.message.${access.status}`)}
                 </p>
+                {access.available && access.preview_url ? (
+                  <Button
+                    aria-label={t("deployments.records.access.openAction")}
+                    size="sm"
+                    variant="outline"
+                    onClick={() => openPreview(access)}
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    {t("deployments.records.access.openAction")}
+                  </Button>
+                ) : null}
                 {access.service ? (
                   <p className="font-mono text-slate-500">
                     {access.service.name} · {access.service.namespace} · {access.service.port ?? "-"}/{access.service.service_type ?? "-"}
