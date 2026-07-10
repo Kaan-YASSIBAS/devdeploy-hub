@@ -82,6 +82,11 @@ class DeploymentRecordService:
     ) -> DeploymentRecord:
         deployment = self.get(deployment_id, user)
         data = payload.model_dump(exclude_unset=True)
+        if data.get("desired_state") == "destroyed":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Use the destroy endpoint to mark deployment records as destroyed.",
+            )
         if "service_definition_id" in data:
             self._owned_service(
                 data["service_definition_id"],
@@ -117,6 +122,31 @@ class DeploymentRecordService:
             "gitops_manifest_path": build_manifest_path(source_path, deployment.app_name),
             "desired_state": "pending",
             "status_summary": PUBLISHED_STATUS_SUMMARY,
+        }
+        if commit_sha is not None:
+            data["commit_sha"] = commit_sha.lower()
+        updated = self.deployments.update(deployment, data)
+        self.db.commit()
+        self.db.refresh(updated)
+        return self.deployments.get_by_id(updated.id) or updated
+
+    def mark_destroyed(
+        self,
+        deployment: DeploymentRecord,
+        *,
+        source_path: str,
+        commit_sha: str | None,
+        runtime_cleanup_status: str,
+    ) -> DeploymentRecord:
+        data = {
+            "gitops_manifest_path": build_manifest_path(source_path, deployment.app_name),
+            "desired_state": "destroyed",
+            "status_summary": (
+                "GitOps manifests removed; runtime cleanup complete."
+                if runtime_cleanup_status in {"completed", "not_required"}
+                else "GitOps manifests removed; runtime cleanup requires follow-up."
+            ),
+            "archived_at": deployment.archived_at or utc_now(),
         }
         if commit_sha is not None:
             data["commit_sha"] = commit_sha.lower()

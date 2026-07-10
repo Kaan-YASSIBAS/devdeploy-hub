@@ -523,6 +523,18 @@
         "noChanges": "Deployment is already aligned.",
         "error": "Reconcile failed."
       },
+      "destroy": {
+        "action": "Destroy",
+        "title": "Destroy deployment",
+        "description": "Destroy {{name}} through the safe DevDeploy flow.",
+        "warning": "This removes the app manifest folder from GitOps and archives the Deployment record. Because Argo CD prune is disabled, DevDeploy also attempts narrowly scoped runtime cleanup for the exact owned Deployment and Service only.",
+        "confirmLabel": "Type {{name}} to confirm.",
+        "confirmAction": "Destroy deployment",
+        "submitting": "Destroying",
+        "success": "Destroy request completed.",
+        "pending": "GitOps removal completed. Runtime cleanup needs follow-up.",
+        "error": "Deployment could not be destroyed."
+      },
       "access": {
         "action": "Check access",
         "error": "App access could not be checked.",
@@ -568,7 +580,8 @@
       },
       "status": {
         "draft": "Draft",
-        "pending": "Pending"
+        "pending": "Pending",
+        "destroyed": "Destroyed"
       }
     },
     "filters": {

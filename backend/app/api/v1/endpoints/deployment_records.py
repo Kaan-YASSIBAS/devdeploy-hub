@@ -11,6 +11,7 @@ from app.api.v1.endpoints.gitops import (
 )
 from app.core.deps import get_current_user, get_db
 from app.api.v1.runtime_status import (
+    get_deployment_destroy_runtime_cleanup_service,
     get_deployment_drift_service,
     get_product_runtime_status_service,
     get_workload_service_proxy_client,
@@ -21,8 +22,10 @@ from app.models.user import User
 from app.schemas.archive import ArchiveFilter
 from app.schemas.deployment_record import (
     DeploymentRecordCreate,
+    DeploymentRecordDestroyResponse,
     DeploymentRecordRead,
     DeploymentRecordRecoverResponse,
+    DeploymentRuntimeCleanupRead,
     DeploymentRecordUpdate,
 )
 from app.schemas.deployment_access import DeploymentAccessRead
@@ -38,9 +41,15 @@ from app.services.deployment_preview_service import (
     PreviewUpstreamError,
     WorkloadServiceProxy,
 )
+from app.services.deployment_destroy_service import DeploymentDestroyRuntimeCleanupService
 from app.services.gitops.deploy_operation import (
     DeployWorkloadOperationRequest,
     DeployWorkloadOperationService,
+)
+from app.services.gitops.destroy_operation import (
+    DestroyWorkloadOperationRequest,
+    DestroyWorkloadOperationResult,
+    DestroyWorkloadOperationService,
 )
 from app.services.gitops.git_adapter import sanitize_git_output
 from app.services.preview_session import (
@@ -56,6 +65,7 @@ from app.repositories.user_repository import UserRepository
 router = APIRouter(prefix="/deployment-records", tags=["deployment-records"])
 RECOVER_INTERNAL_MESSAGE = "The deployment recovery operation failed unexpectedly."
 RECONCILE_INTERNAL_MESSAGE = "The deployment reconcile operation failed unexpectedly."
+DESTROY_INTERNAL_MESSAGE = "The deployment destroy operation failed unexpectedly."
 RECOVER_ERROR_STATUS_CODES = {
     "validation_failed": status.HTTP_400_BAD_REQUEST,
     "repo_write_failed": status.HTTP_409_CONFLICT,
@@ -63,6 +73,7 @@ RECOVER_ERROR_STATUS_CODES = {
     "commit_failed": status.HTTP_409_CONFLICT,
     "push_failed": status.HTTP_502_BAD_GATEWAY,
 }
+DESTROY_ERROR_STATUS_CODES = RECOVER_ERROR_STATUS_CODES
 RegenerateAction = Literal["recover", "reconcile"]
 PREVIEW_SECURITY_HEADERS = {
     "Cache-Control": "no-store",
@@ -90,6 +101,20 @@ def _read_response(
             "runtime_status": runtime_service.deployment_status(deployment),
             "drift_status": drift_service.evaluate(deployment),
         }
+    )
+
+
+def get_destroy_workload_operation_service() -> DestroyWorkloadOperationService:
+    return DestroyWorkloadOperationService()
+
+
+def _runtime_cleanup_read(runtime_cleanup) -> DeploymentRuntimeCleanupRead:
+    return DeploymentRuntimeCleanupRead(
+        status=runtime_cleanup.status,
+        deployment_deleted=runtime_cleanup.deployment_deleted,
+        service_deleted=runtime_cleanup.service_deleted,
+        message=runtime_cleanup.message,
+        checked_at=runtime_cleanup.checked_at,
     )
 
 
@@ -475,6 +500,141 @@ def _regenerate_deployment_record(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
         ),
         content=response.model_dump(),
+    )
+
+
+@router.post(
+    "/{deployment_id}/destroy",
+    response_model=DeploymentRecordDestroyResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def destroy_deployment_record(
+    deployment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    config: GitOpsDeployRepositoryConfig = Depends(get_gitops_deploy_repository_config),
+    operation_service: DestroyWorkloadOperationService = Depends(
+        get_destroy_workload_operation_service
+    ),
+    runtime_cleanup_service: DeploymentDestroyRuntimeCleanupService = Depends(
+        get_deployment_destroy_runtime_cleanup_service
+    ),
+) -> DeploymentRecordDestroyResponse | JSONResponse:
+    records = DeploymentRecordService(db)
+    deployment = records.get_owned(deployment_id, current_user)
+    if deployment.archived_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Archived deployment records cannot be destroyed.",
+        )
+
+    try:
+        result = operation_service.execute(
+            DestroyWorkloadOperationRequest(
+                repo_root=config.repo_root,
+                source_root_relative=config.source_root_relative,
+                expected_branch=config.expected_branch,
+                remote_name=config.remote_name,
+                remote_branch=config.remote_branch,
+                app_name=deployment.app_name,
+            )
+        )
+    except Exception:
+        response = DeploymentRecordDestroyResponse(
+            status="internal_error",
+            deployment_id=deployment.id,
+            app_name=deployment.app_name,
+            commit_sha=deployment.commit_sha,
+            manifest_path=deployment.gitops_manifest_path,
+            message=DESTROY_INTERNAL_MESSAGE,
+            error_code="internal_error",
+        )
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=response.model_dump(mode="json"),
+        )
+
+    if result.status in {"pushed_waiting_for_argocd", "no_changes"}:
+        return _finish_destroyed_deployment_record(
+            records=records,
+            deployment=deployment,
+            db=db,
+            result=result,
+            runtime_cleanup_service=runtime_cleanup_service,
+        )
+
+    response = DeploymentRecordDestroyResponse(
+        status=result.status,
+        deployment_id=deployment.id,
+        app_name=deployment.app_name,
+        commit_sha=result.commit_sha,
+        manifest_path=deployment.gitops_manifest_path,
+        message=sanitize_git_output(result.message),
+        error_code=result.error_code,
+    )
+    return JSONResponse(
+        status_code=DESTROY_ERROR_STATUS_CODES.get(
+            result.status,
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+        ),
+        content=response.model_dump(mode="json"),
+    )
+
+
+def _finish_destroyed_deployment_record(
+    *,
+    records: DeploymentRecordService,
+    deployment: DeploymentRecord,
+    db: Session,
+    result: DestroyWorkloadOperationResult,
+    runtime_cleanup_service: DeploymentDestroyRuntimeCleanupService,
+) -> DeploymentRecordDestroyResponse | JSONResponse:
+    runtime_cleanup = runtime_cleanup_service.cleanup(deployment)
+    try:
+        updated = records.mark_destroyed(
+            deployment,
+            source_path=result.source_path,
+            commit_sha=result.commit_sha,
+            runtime_cleanup_status=runtime_cleanup.status,
+        )
+    except Exception:
+        db.rollback()
+        response = DeploymentRecordDestroyResponse(
+            status="internal_error",
+            deployment_id=deployment.id,
+            app_name=deployment.app_name,
+            commit_sha=result.commit_sha or deployment.commit_sha,
+            manifest_path=deployment.gitops_manifest_path,
+            runtime_cleanup=_runtime_cleanup_read(runtime_cleanup),
+            message="The GitOps destroy operation succeeded, but the deployment record could not be updated.",
+            error_code="product_record_persistence_failed",
+        )
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=response.model_dump(mode="json"),
+        )
+
+    cleanup_read = _runtime_cleanup_read(runtime_cleanup)
+    cleanup_complete = runtime_cleanup.status in {"completed", "not_required"}
+    if not cleanup_complete:
+        response_status = "runtime_cleanup_pending"
+        message = (
+            "The GitOps workload manifests were removed, but runtime cleanup could not be completed safely."
+        )
+    elif result.status == "no_changes":
+        response_status = "no_changes"
+        message = "The GitOps workload manifests were already absent; the record was archived as destroyed."
+    else:
+        response_status = "destroyed"
+        message = "The GitOps workload manifests were removed and runtime cleanup completed."
+    return DeploymentRecordDestroyResponse(
+        status=response_status,
+        deployment_id=updated.id,
+        app_name=updated.app_name,
+        commit_sha=updated.commit_sha,
+        manifest_path=updated.gitops_manifest_path,
+        runtime_cleanup=cleanup_read,
+        message=message,
     )
 
 

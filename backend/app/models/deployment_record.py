@@ -24,7 +24,7 @@ class DeploymentRecord(Base):
         ),
         CheckConstraint("service_type IN ('ClusterIP')", name="ck_deployment_records_service_type"),
         CheckConstraint(
-            "desired_state IN ('draft', 'pending')",
+            "desired_state IN ('draft', 'pending', 'destroyed')",
             name="ck_deployment_records_desired_state",
         ),
     )

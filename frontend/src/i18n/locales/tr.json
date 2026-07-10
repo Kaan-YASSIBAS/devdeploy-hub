@@ -523,6 +523,18 @@
         "noChanges": "Deployment zaten uyumlu.",
         "error": "Uzlaştırma başarısız oldu."
       },
+      "destroy": {
+        "action": "Yok et",
+        "title": "Deployment'ı yok et",
+        "description": "{{name}} deployment'ını güvenli DevDeploy akışıyla yok et.",
+        "warning": "Bu işlem uygulama manifest klasörünü GitOps'tan kaldırır ve Deployment kaydını arşivler. Argo CD prune kapalı olduğu için DevDeploy yalnızca doğrulanmış, aynı ada sahip Deployment ve Service kaynakları için dar kapsamlı runtime temizliği dener.",
+        "confirmLabel": "Onaylamak için {{name}} yaz.",
+        "confirmAction": "Deployment'ı yok et",
+        "submitting": "Yok ediliyor",
+        "success": "Yok etme isteği tamamlandı.",
+        "pending": "GitOps kaldırma tamamlandı. Runtime temizliği için takip gerekiyor.",
+        "error": "Deployment yok edilemedi."
+      },
       "access": {
         "action": "Erişimi kontrol et",
         "error": "Uygulama erişimi kontrol edilemedi.",
@@ -568,7 +580,8 @@
       },
       "status": {
         "draft": "Taslak",
-        "pending": "Bekliyor"
+        "pending": "Bekliyor",
+        "destroyed": "Yok edildi"
       }
     },
     "filters": {

@@ -21,6 +21,15 @@ class WorkloadWriteResult:
     changed: bool
 
 
+@dataclass(frozen=True, slots=True)
+class WorkloadDestroyResult:
+    app_name: str
+    app_dir: Path
+    removed_files: tuple[Path, ...]
+    root_kustomization: Path
+    changed: bool
+
+
 class GitOpsWorkloadWriter:
     def __init__(
         self,
@@ -129,6 +138,71 @@ class GitOpsWorkloadWriter:
             app_name=request.app_name,
             app_dir=app_dir,
             written_files=written_files,
+            root_kustomization=self.paths.root_kustomization,
+            changed=True,
+        )
+
+    def destroy(self, app_name: str) -> WorkloadDestroyResult:
+        app_dir = self.paths.app_dir(app_name)
+        if app_dir.exists() and not app_dir.is_dir():
+            raise GitOpsWriterError("write_failed", "The GitOps workload path is not a directory.")
+
+        expected_files = tuple(app_dir / file_name for file_name in MANIFEST_FILE_ORDER)
+        if app_dir.exists():
+            unexpected_entries = [
+                entry.name
+                for entry in app_dir.iterdir()
+                if entry.name not in MANIFEST_FILE_ORDER or not entry.is_file()
+            ]
+            if unexpected_entries:
+                raise GitOpsWriterError(
+                    "unexpected_app_files",
+                    "The GitOps workload folder contains files outside the V1 manifest contract.",
+                )
+
+        try:
+            previous_root_content = self.paths.root_kustomization.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            raise GitOpsWriterError(
+                "invalid_root_kustomization",
+                "The root Kustomization could not be read safely.",
+            ) from None
+        root_content = RootKustomizationEditor(self.paths).remove_app(app_name)
+        existing_files = tuple(path for path in expected_files if path.exists())
+        app_changed = bool(existing_files)
+        root_changed = not self._matches_content(self.paths.root_kustomization, root_content)
+        changed = app_changed or root_changed
+        if not changed:
+            return WorkloadDestroyResult(
+                app_name=app_name,
+                app_dir=app_dir,
+                removed_files=existing_files,
+                root_kustomization=self.paths.root_kustomization,
+                changed=False,
+            )
+
+        try:
+            if root_changed:
+                self._atomic_write(self.paths.root_kustomization, root_content)
+            for path in existing_files:
+                path.unlink()
+            if app_dir.exists():
+                app_dir.rmdir()
+        except (OSError, UnicodeError):
+            if root_changed:
+                try:
+                    self._atomic_write(self.paths.root_kustomization, previous_root_content)
+                except (OSError, UnicodeError):
+                    pass
+            raise GitOpsWriterError(
+                "write_failed",
+                "The GitOps workload files could not be removed safely.",
+            ) from None
+
+        return WorkloadDestroyResult(
+            app_name=app_name,
+            app_dir=app_dir,
+            removed_files=existing_files,
             root_kustomization=self.paths.root_kustomization,
             changed=True,
         )

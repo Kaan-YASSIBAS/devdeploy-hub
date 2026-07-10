@@ -9,6 +9,10 @@ from app.services.gitops.deploy_operation import (
     DeployWorkloadOperationRequest,
     DeployWorkloadOperationService,
 )
+from app.services.gitops.destroy_operation import (
+    DestroyWorkloadOperationRequest,
+    DestroyWorkloadOperationService,
+)
 from app.services.gitops.errors import GitOpsWriterError
 from app.services.gitops.git_adapter import _GitCommandResult, GitAdapter
 
@@ -328,6 +332,88 @@ class DeployWorkloadOperationTestCase(unittest.TestCase):
         self.assertFalse((self.source_root / "apps" / "payment-api").exists())
         self.assertEqual(self._git(self.repo_root, "rev-parse", "HEAD").strip(), self.initial_sha)
         self.assertEqual(self.remote_refs(), "")
+
+    def test_destroy_operation_removes_commits_and_pushes_expected_files(self) -> None:
+        created = DeployWorkloadOperationService().execute(self.request())
+        self.assertEqual(created.status, "pushed_waiting_for_argocd")
+
+        result = DestroyWorkloadOperationService().execute(
+            DestroyWorkloadOperationRequest(
+                repo_root=self.repo_root,
+                app_name="payment-api",
+            )
+        )
+
+        expected_paths = {
+            "gitops/workloads/devdeploy-apps/kustomization.yaml",
+            "gitops/workloads/devdeploy-apps/apps/payment-api/kustomization.yaml",
+            "gitops/workloads/devdeploy-apps/apps/payment-api/deployment.yaml",
+            "gitops/workloads/devdeploy-apps/apps/payment-api/service.yaml",
+        }
+        self.assertEqual(result.status, "pushed_waiting_for_argocd", result.message)
+        self.assertTrue(result.committed)
+        self.assertTrue(result.pushed)
+        self.assertEqual(set(result.expected_paths), expected_paths)
+        self.assertFalse((self.source_root / "apps" / "payment-api").exists())
+        root = yaml.safe_load((self.source_root / "kustomization.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(root["resources"], [])
+        self.assertIn("resources: []", (self.source_root / "kustomization.yaml").read_text(encoding="utf-8"))
+        committed_paths = set(
+            self._git(
+                self.remote,
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                result.commit_sha or "",
+            ).splitlines()
+        )
+        self.assertEqual(committed_paths, expected_paths)
+        self.assertEqual(
+            self._git(self.repo_root, "show", "-s", "--format=%s", "HEAD").strip(),
+            "destroy: remove payment-api workload",
+        )
+
+    def test_destroy_operation_handles_absent_gitops_state_without_empty_commit(self) -> None:
+        result = DestroyWorkloadOperationService().execute(
+            DestroyWorkloadOperationRequest(
+                repo_root=self.repo_root,
+                app_name="payment-api",
+            )
+        )
+
+        self.assertEqual(result.status, "no_changes")
+        self.assertFalse(result.committed)
+        self.assertFalse(result.pushed)
+        self.assertEqual(result.commit_sha, self.initial_sha)
+        self.assertEqual(self._git(self.repo_root, "rev-parse", "HEAD").strip(), self.initial_sha)
+        self.assertEqual(self.remote_refs(), "")
+
+    def test_destroy_operation_rejects_unexpected_app_files_without_commit(self) -> None:
+        app_dir = self.source_root / "apps" / "payment-api"
+        app_dir.mkdir()
+        (app_dir / "secret.yaml").write_text("kind: Secret\n", encoding="utf-8")
+        root = yaml.safe_load((self.source_root / "kustomization.yaml").read_text(encoding="utf-8"))
+        root["resources"] = ["apps/payment-api"]
+        (self.source_root / "kustomization.yaml").write_text(
+            yaml.safe_dump(root, sort_keys=False),
+            encoding="utf-8",
+        )
+        self._git(self.repo_root, "add", "--", "gitops")
+        self._git(self.repo_root, "commit", "-m", "test: malformed app folder")
+        before = self._git(self.repo_root, "rev-parse", "HEAD").strip()
+
+        result = DestroyWorkloadOperationService().execute(
+            DestroyWorkloadOperationRequest(
+                repo_root=self.repo_root,
+                app_name="payment-api",
+            )
+        )
+
+        self.assertEqual(result.status, "repo_write_failed")
+        self.assertEqual(result.error_code, "unexpected_app_files")
+        self.assertEqual(self._git(self.repo_root, "rev-parse", "HEAD").strip(), before)
+        self.assertTrue((app_dir / "secret.yaml").exists())
 
 
 if __name__ == "__main__":

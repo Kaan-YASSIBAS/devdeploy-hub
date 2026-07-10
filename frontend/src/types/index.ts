@@ -174,7 +174,7 @@ export type ServiceDefinitionUpdateInput = Partial<{
   default_port: number | null;
 }>;
 
-export type DeploymentRecordDesiredState = "draft" | "pending";
+export type DeploymentRecordDesiredState = "draft" | "pending" | "destroyed";
 
 export type DeploymentRecord = {
   id: number;
@@ -228,6 +228,34 @@ export type DeploymentRecordRecoverResponse = {
   app_name: string;
   commit_sha: string | null;
   manifest_path: string | null;
+  message: string;
+  error_code: string | null;
+};
+
+export type DeploymentRuntimeCleanup = {
+  status: "completed" | "pending" | "not_required" | "unavailable";
+  deployment_deleted: boolean;
+  service_deleted: boolean;
+  message: string;
+  checked_at: string;
+};
+
+export type DeploymentRecordDestroyResponse = {
+  status:
+    | "destroyed"
+    | "destroy_started"
+    | "no_changes"
+    | "runtime_cleanup_pending"
+    | "validation_failed"
+    | "repo_write_failed"
+    | "commit_failed"
+    | "push_failed"
+    | "internal_error";
+  deployment_id: number;
+  app_name: string;
+  commit_sha: string | null;
+  manifest_path: string | null;
+  runtime_cleanup: DeploymentRuntimeCleanup | null;
   message: string;
   error_code: string | null;
 };

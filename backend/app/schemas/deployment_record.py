@@ -12,7 +12,7 @@ from app.schemas.deployment_drift import DeploymentDriftStatusRead
 APP_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 KUBERNETES_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 COMMIT_SHA_PATTERN = re.compile(r"^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$")
-DesiredState = Literal["draft", "pending"]
+DesiredState = Literal["draft", "pending", "destroyed"]
 
 
 def _clean_image(value: str) -> str:
@@ -177,5 +177,34 @@ class DeploymentRecordRecoverResponse(BaseModel):
     app_name: str
     commit_sha: str | None = None
     manifest_path: str | None = None
+    message: str
+    error_code: str | None = None
+
+
+class DeploymentRuntimeCleanupRead(BaseModel):
+    status: Literal["completed", "pending", "not_required", "unavailable"]
+    deployment_deleted: bool
+    service_deleted: bool
+    message: str
+    checked_at: datetime
+
+
+class DeploymentRecordDestroyResponse(BaseModel):
+    status: Literal[
+        "destroyed",
+        "destroy_started",
+        "no_changes",
+        "runtime_cleanup_pending",
+        "validation_failed",
+        "repo_write_failed",
+        "commit_failed",
+        "push_failed",
+        "internal_error",
+    ]
+    deployment_id: int
+    app_name: str
+    commit_sha: str | None = None
+    manifest_path: str | None = None
+    runtime_cleanup: DeploymentRuntimeCleanupRead | None = None
     message: str
     error_code: str | None = None

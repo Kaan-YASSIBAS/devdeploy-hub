@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.v1.endpoints import deployment_records, services
 from app.api.v1.runtime_status import (
+    get_deployment_destroy_runtime_cleanup_service,
     get_product_runtime_status_service,
     get_workload_service_proxy_client,
 )
@@ -16,6 +17,7 @@ from app.core.deps import get_current_user, get_db
 from app.db.database import Base
 from app.models.user import User
 from app.services.gitops.deploy_operation import DeployWorkloadOperationResult
+from app.services.gitops.destroy_operation import DestroyWorkloadOperationResult
 from app.services.gitops.status_reader import (
     NamedWorkloadSnapshot,
     ServicePortSnapshot,
@@ -26,6 +28,7 @@ from app.services.deployment_preview_service import (
     PreviewUpstreamError,
     ServiceProxyResponse,
 )
+from app.services.deployment_destroy_service import DeploymentRuntimeCleanupResult
 from app.services.preview_session import (
     PREVIEW_SESSION_COOKIE,
     create_preview_session_token,
@@ -69,6 +72,46 @@ class FakeRecoverOperationService:
 
     def execute(self, request):
         self.requests.append(request)
+        return self.result
+
+
+class FakeDestroyOperationService:
+    def __init__(self):
+        self.requests = []
+        self.result = DestroyWorkloadOperationResult(
+            status="pushed_waiting_for_argocd",
+            app_name="payments-api",
+            source_path="gitops/workloads/devdeploy-apps",
+            expected_paths=(),
+            committed=True,
+            pushed=True,
+            commit_sha="e" * 40,
+            message="Destroy commit pushed.",
+        )
+
+    def execute(self, request):
+        self.requests.append(request)
+        return self.result
+
+
+class FakeDestroyRuntimeCleanupService:
+    def __init__(self):
+        self.calls = []
+        self.result = DeploymentRuntimeCleanupResult(
+            status="completed",
+            deployment_deleted=True,
+            service_deleted=True,
+            message="Runtime cleanup completed.",
+            checked_at=ProductDomainApiTestCase.fixed_datetime(),
+        )
+
+    def cleanup(self, deployment):
+        self.calls.append(
+            {
+                "app_name": deployment.app_name,
+                "namespace": deployment.namespace,
+            }
+        )
         return self.result
 
 
@@ -125,6 +168,8 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.current_user = self.user_a
         self.runtime_reader = FakeWorkloadRuntimeReader()
         self.recover_operation = FakeRecoverOperationService()
+        self.destroy_operation = FakeDestroyOperationService()
+        self.destroy_cleanup = FakeDestroyRuntimeCleanupService()
         self.preview_proxy = FakeWorkloadServiceProxy()
 
         self.app = FastAPI()
@@ -155,6 +200,12 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.app.dependency_overrides[
             deployment_records.get_deploy_workload_operation_service
         ] = lambda: self.recover_operation
+        self.app.dependency_overrides[
+            deployment_records.get_destroy_workload_operation_service
+        ] = lambda: self.destroy_operation
+        self.app.dependency_overrides[
+            get_deployment_destroy_runtime_cleanup_service
+        ] = lambda: self.destroy_cleanup
         self.client = TestClient(self.app, raise_server_exceptions=False)
 
     def tearDown(self) -> None:
@@ -186,6 +237,12 @@ class ProductDomainApiTestCase(unittest.TestCase):
             "namespace": "devdeploy-apps",
             "desired_state": "draft",
         }
+
+    @staticmethod
+    def fixed_datetime():
+        from datetime import datetime, timezone
+
+        return datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)
 
     @staticmethod
     def ready_workload_snapshot() -> WorkloadSnapshot:
@@ -562,6 +619,161 @@ class ProductDomainApiTestCase(unittest.TestCase):
             len(self.client.get("/api/v1/deployment-records", params={"archive_filter": "all"}).json()),
             1,
         )
+
+    def test_owner_can_destroy_active_record_without_deleting_service_definition(self) -> None:
+        service = self.create_service("payments-api")
+        deployment = self.create_deployment(service["id"])
+        self.assertEqual(
+            self.client.patch(
+                f"/api/v1/deployment-records/{deployment['id']}",
+                json={
+                    "desired_state": "pending",
+                    "gitops_manifest_path": "gitops/workloads/devdeploy-apps/apps/payments-api",
+                    "commit_sha": "a" * 40,
+                },
+            ).status_code,
+            200,
+        )
+
+        response = self.client.post(
+            f"/api/v1/deployment-records/{deployment['id']}/destroy",
+            json={
+                "app_name": "../other-app",
+                "namespace": "kube-system",
+                "manifest_path": "../../outside",
+            },
+        )
+
+        self.assertEqual(response.status_code, 202, response.text)
+        body = response.json()
+        self.assertEqual(body["status"], "destroyed")
+        self.assertEqual(body["deployment_id"], deployment["id"])
+        self.assertEqual(body["commit_sha"], "e" * 40)
+        self.assertEqual(body["runtime_cleanup"]["status"], "completed")
+        self.assertEqual(
+            body["manifest_path"],
+            "gitops/workloads/devdeploy-apps/apps/payments-api",
+        )
+        updated = self.client.get(f"/api/v1/deployment-records/{deployment['id']}").json()
+        self.assertEqual(updated["desired_state"], "destroyed")
+        self.assertIsNotNone(updated["archived_at"])
+        self.assertEqual(self.client.get("/api/v1/deployment-records").json(), [])
+        self.assertEqual(
+            len(self.client.get("/api/v1/deployment-records", params={"archive_filter": "all"}).json()),
+            1,
+        )
+        self.assertEqual(
+            len(self.client.get("/api/v1/services", params={"archive_filter": "all"}).json()),
+            1,
+        )
+        self.assertEqual(
+            self.destroy_cleanup.calls,
+            [{"app_name": "payments-api", "namespace": "devdeploy-apps"}],
+        )
+        operation_request = self.destroy_operation.requests[0]
+        self.assertEqual(operation_request.app_name, "payments-api")
+        self.assertEqual(operation_request.source_root_relative, "gitops/workloads/devdeploy-apps")
+
+    def test_destroy_no_changes_archives_record_without_empty_commit(self) -> None:
+        deployment = self.create_deployment()
+        self.destroy_operation.result = DestroyWorkloadOperationResult(
+            status="no_changes",
+            app_name="payments-api",
+            source_path="gitops/workloads/devdeploy-apps",
+            expected_paths=(),
+            committed=False,
+            pushed=False,
+            commit_sha="f" * 40,
+            message="Already absent.",
+        )
+        self.destroy_cleanup.result = DeploymentRuntimeCleanupResult(
+            status="not_required",
+            deployment_deleted=False,
+            service_deleted=False,
+            message="No runtime resources.",
+            checked_at=self.fixed_datetime(),
+        )
+
+        response = self.client.post(
+            f"/api/v1/deployment-records/{deployment['id']}/destroy"
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["status"], "no_changes")
+        updated = self.client.get(f"/api/v1/deployment-records/{deployment['id']}").json()
+        self.assertEqual(updated["desired_state"], "destroyed")
+        self.assertEqual(updated["commit_sha"], "f" * 40)
+        self.assertIsNotNone(updated["archived_at"])
+
+    def test_destroy_reports_runtime_cleanup_pending_but_preserves_destroyed_record(self) -> None:
+        deployment = self.create_deployment()
+        self.destroy_cleanup.result = DeploymentRuntimeCleanupResult(
+            status="unavailable",
+            deployment_deleted=False,
+            service_deleted=False,
+            message="Runtime cleanup unavailable.",
+            checked_at=self.fixed_datetime(),
+        )
+
+        response = self.client.post(
+            f"/api/v1/deployment-records/{deployment['id']}/destroy"
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["status"], "runtime_cleanup_pending")
+        self.assertEqual(response.json()["runtime_cleanup"]["status"], "unavailable")
+        updated = self.client.get(f"/api/v1/deployment-records/{deployment['id']}").json()
+        self.assertEqual(updated["desired_state"], "destroyed")
+        self.assertIsNotNone(updated["archived_at"])
+
+    def test_destroy_failure_does_not_update_record_or_run_runtime_cleanup(self) -> None:
+        deployment = self.create_deployment()
+        self.destroy_operation.result = DestroyWorkloadOperationResult(
+            status="push_failed",
+            app_name="payments-api",
+            source_path="gitops/workloads/devdeploy-apps",
+            expected_paths=(),
+            committed=True,
+            pushed=False,
+            commit_sha="d" * 40,
+            message="fatal: https://user:super-secret@example.invalid/repository.git",
+            error_code="git_push_failed",
+        )
+
+        response = self.client.post(
+            f"/api/v1/deployment-records/{deployment['id']}/destroy"
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("<redacted>", response.json()["message"])
+        self.assertEqual(self.destroy_cleanup.calls, [])
+        updated = self.client.get(f"/api/v1/deployment-records/{deployment['id']}").json()
+        self.assertEqual(updated["desired_state"], "draft")
+        self.assertIsNone(updated["archived_at"])
+
+    def test_archived_cross_owner_and_missing_records_cannot_be_destroyed(self) -> None:
+        deployment = self.create_deployment()
+        self.assertEqual(
+            self.client.post(f"/api/v1/deployment-records/{deployment['id']}/archive").status_code,
+            200,
+        )
+        archived = self.client.post(
+            f"/api/v1/deployment-records/{deployment['id']}/destroy"
+        )
+        self.assertEqual(archived.status_code, 409)
+        self.assertEqual(self.destroy_operation.requests, [])
+
+        self.current_user = self.user_b
+        denied = self.client.post(
+            f"/api/v1/deployment-records/{deployment['id']}/destroy"
+        )
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(self.destroy_operation.requests, [])
+
+        self.current_user = self.user_a
+        missing = self.client.post("/api/v1/deployment-records/99999/destroy")
+        self.assertEqual(missing.status_code, 404)
+        self.assertEqual(self.destroy_operation.requests, [])
 
     def test_service_list_filters_active_archived_and_all_with_owner_isolation(self) -> None:
         archived_service = self.create_service("Archived Service")

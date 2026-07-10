@@ -14,6 +14,11 @@ from app.services.deployment_preview_service import (
     KubernetesServiceProxyClient,
     WorkloadServiceProxy,
 )
+from app.services.deployment_destroy_service import (
+    DeploymentDestroyRuntimeCleanupService,
+    KubernetesWorkloadRuntimeCleanupClient,
+    WorkloadRuntimeCleanupClient,
+)
 from app.services.gitops.kubernetes_status_reader import KubernetesGitOpsStatusReader
 from app.services.product_runtime_status import ProductRuntimeStatusService, WorkloadRuntimeReader
 
@@ -60,6 +65,32 @@ def get_workload_service_proxy_client() -> WorkloadServiceProxy | None:
             error.__class__.__name__,
         )
         return None
+
+
+@lru_cache(maxsize=1)
+def get_workload_runtime_cleanup_client() -> WorkloadRuntimeCleanupClient | None:
+    if settings.status_reader_mode != "kubernetes":
+        return None
+    try:
+        return KubernetesWorkloadRuntimeCleanupClient.from_server_config(
+            workload_kubeconfig=settings.workload_kubeconfig,
+            workload_kubeconfig_context=settings.workload_kubeconfig_context,
+        )
+    except Exception as error:
+        logger.warning(
+            "Workload runtime cleanup client construction failed: %s.",
+            error.__class__.__name__,
+        )
+        return None
+
+
+def get_deployment_destroy_runtime_cleanup_service(
+    client: WorkloadRuntimeCleanupClient | None = Depends(get_workload_runtime_cleanup_client),
+) -> DeploymentDestroyRuntimeCleanupService:
+    return DeploymentDestroyRuntimeCleanupService(
+        client=client,
+        managed_namespace=settings.workload_namespace,
+    )
 
 
 def get_deployment_drift_service(

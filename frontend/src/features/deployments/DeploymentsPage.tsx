@@ -18,7 +18,9 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Dialog, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Tabs } from "@/components/ui/tabs";
 import type {
   ArchiveFilter,
@@ -106,6 +108,11 @@ function canReconcile(record: DeploymentRecord) {
   return drift.status === "drifted" || drift.status === "gitops_missing";
 }
 
+function canDestroy(record: DeploymentRecord) {
+  if (record.archived_at || record.desired_state === "destroyed") return false;
+  return Boolean(record.gitops_manifest_path || record.commit_sha || hasPublishedGitOpsSummary(record.status_summary));
+}
+
 export function DeploymentsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -115,6 +122,8 @@ export function DeploymentsPage() {
   const [deployResponse, setDeployResponse] = useState<GitOpsAppDeployResponse | null>(null);
   const [pollTimedOut, setPollTimedOut] = useState(false);
   const [accessByDeployment, setAccessByDeployment] = useState<Record<number, DeploymentAccess>>({});
+  const [destroyTarget, setDestroyTarget] = useState<DeploymentRecord | null>(null);
+  const [destroyConfirmName, setDestroyConfirmName] = useState("");
   const recordsQuery = useQuery({
     queryKey: ["deployment-records", archiveFilter],
     queryFn: () => deploymentRecordsApi.list({ archiveFilter })
@@ -220,6 +229,39 @@ export function DeploymentsPage() {
     if (window.confirm(t("deployments.records.reconcile.confirm"))) {
       reconcileMutation.mutate(record.id);
     }
+  };
+
+  const destroyMutation = useMutation({
+    mutationFn: (id: number) => deploymentRecordsApi.destroy(id),
+    onSuccess: async (response) => {
+      toast.success(
+        t(
+          response.status === "runtime_cleanup_pending"
+            ? "deployments.records.destroy.pending"
+            : "deployments.records.destroy.success"
+        )
+      );
+      setDestroyTarget(null);
+      setDestroyConfirmName("");
+      await queryClient.invalidateQueries({ queryKey: ["deployment-records"] });
+      await queryClient.invalidateQueries({ queryKey: ["service-definitions"] });
+      await queryClient.invalidateQueries({ queryKey: ["untracked-deployments"] });
+      await queryClient.invalidateQueries({ queryKey: ["untracked-services"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      await queryClient.invalidateQueries({ queryKey: ["user-summary"] });
+    },
+    onError: () => toast.error(t("deployments.records.destroy.error"))
+  });
+
+  const openDestroyDialog = (record: DeploymentRecord) => {
+    setDestroyTarget(record);
+    setDestroyConfirmName("");
+  };
+
+  const closeDestroyDialog = () => {
+    if (destroyMutation.isPending) return;
+    setDestroyTarget(null);
+    setDestroyConfirmName("");
   };
 
   const accessMutation = useMutation({
@@ -508,6 +550,7 @@ export function DeploymentsPage() {
         }
         const recoverEligible = canRecover(record);
         const reconcileEligible = canReconcile(record);
+        const destroyEligible = canDestroy(record);
         const access = accessByDeployment[record.id];
         return (
           <div className="min-w-[220px] space-y-2">
@@ -544,6 +587,18 @@ export function DeploymentsPage() {
                 >
                   <RefreshCw className="h-4 w-4" />
                   {t("deployments.records.reconcile.action")}
+                </Button>
+              ) : null}
+              {destroyEligible ? (
+                <Button
+                  aria-label={t("deployments.records.destroy.action")}
+                  disabled={destroyMutation.isPending && destroyMutation.variables === record.id}
+                  size="sm"
+                  variant="danger"
+                  onClick={() => openDestroyDialog(record)}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  {t("deployments.records.destroy.action")}
                 </Button>
               ) : null}
               {recoverEligible && record.runtime_status?.display_status === "not_found" ? (
@@ -816,6 +871,61 @@ export function DeploymentsPage() {
         onDeploy={(input) => gitOpsMutation.mutateAsync(input)}
         onOpenChange={setGitOpsModalOpen}
       />
+
+      <Dialog
+        closeLabel={t("common.close")}
+        description={
+          destroyTarget
+            ? t("deployments.records.destroy.description", { name: destroyTarget.app_name })
+            : undefined
+        }
+        open={Boolean(destroyTarget)}
+        title={t("deployments.records.destroy.title")}
+        onOpenChange={(open) => {
+          if (!open) closeDestroyDialog();
+        }}
+      >
+        {destroyTarget ? (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-red-300/20 bg-red-500/10 px-4 py-3 text-sm leading-6 text-red-100">
+              {t("deployments.records.destroy.warning")}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="destroy-confirm-name">
+                {t("deployments.records.destroy.confirmLabel", { name: destroyTarget.app_name })}
+              </Label>
+              <Input
+                id="destroy-confirm-name"
+                autoComplete="off"
+                value={destroyConfirmName}
+                onChange={(event) => setDestroyConfirmName(event.target.value)}
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                disabled={destroyMutation.isPending}
+                variant="outline"
+                onClick={closeDestroyDialog}
+              >
+                {t("common.cancel")}
+              </Button>
+              <Button
+                disabled={
+                  destroyMutation.isPending ||
+                  destroyConfirmName.trim() !== destroyTarget.app_name
+                }
+                variant="danger"
+                onClick={() => destroyMutation.mutate(destroyTarget.id)}
+              >
+                <Trash2 className="h-4 w-4" />
+                {destroyMutation.isPending
+                  ? t("deployments.records.destroy.submitting")
+                  : t("deployments.records.destroy.confirmAction")}
+              </Button>
+            </DialogFooter>
+          </div>
+        ) : null}
+      </Dialog>
     </div>
   );
 }

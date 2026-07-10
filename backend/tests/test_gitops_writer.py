@@ -257,6 +257,42 @@ class GitOpsWriterTestCase(unittest.TestCase):
 
         self.assertFalse(result.changed)
 
+    def test_writer_destroy_removes_app_folder_and_root_entry_only(self) -> None:
+        writer = GitOpsWorkloadWriter(self.source_root)
+        request = WorkloadWriteRequest(app_name="nginx-demo", image="nginx:latest")
+        self.assertTrue(writer.recover(request).changed)
+        unrelated_dir = self.apps_root / "unrelated"
+        unrelated_dir.mkdir()
+        unrelated_file = unrelated_dir / "keep.txt"
+        unrelated_file.write_text("preserve me\n", encoding="utf-8")
+
+        result = writer.destroy("nginx-demo")
+
+        self.assertTrue(result.changed)
+        self.assertFalse((self.apps_root / "nginx-demo").exists())
+        self.assertEqual(unrelated_file.read_text(encoding="utf-8"), "preserve me\n")
+        root = yaml.safe_load((self.source_root / "kustomization.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(root["resources"], [])
+        self.assertIn("resources: []", (self.source_root / "kustomization.yaml").read_text(encoding="utf-8"))
+
+    def test_writer_destroy_is_noop_when_app_already_absent(self) -> None:
+        writer = GitOpsWorkloadWriter(self.source_root)
+
+        result = writer.destroy("nginx-demo")
+
+        self.assertFalse(result.changed)
+        self.assertEqual(result.removed_files, ())
+        self.assertEqual((self.source_root / "kustomization.yaml").read_text(encoding="utf-8"), ROOT_KUSTOMIZATION)
+
+    def test_writer_destroy_rejects_unexpected_app_folder_content(self) -> None:
+        app_dir = self.apps_root / "nginx-demo"
+        app_dir.mkdir()
+        (app_dir / "secret.yaml").write_text("apiVersion: v1\nkind: Secret\n", encoding="utf-8")
+        writer = GitOpsWorkloadWriter(self.source_root)
+
+        self.assert_error_code("unexpected_app_files", lambda: writer.destroy("nginx-demo"))
+        self.assertTrue((app_dir / "secret.yaml").exists())
+
     def test_writer_fails_when_app_folder_exists(self) -> None:
         (self.apps_root / "nginx-demo").mkdir()
         writer = GitOpsWorkloadWriter(self.source_root)

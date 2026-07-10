@@ -15,6 +15,7 @@ import type {
   DeploymentListItem,
   DeploymentRecord,
   DeploymentAccess,
+  DeploymentRecordDestroyResponse,
   DeploymentRecordRecoverResponse,
   DeploymentRecordUpdateInput,
   DeploymentStatusUpdateInput,
@@ -275,6 +276,12 @@ export const deploymentRecordsApi = {
   async reconcile(id: number) {
     const { data } = await apiClient.post<DeploymentRecordRecoverResponse>(
       `/deployment-records/${id}/reconcile`
+    );
+    return data;
+  },
+  async destroy(id: number) {
+    const { data } = await apiClient.post<DeploymentRecordDestroyResponse>(
+      `/deployment-records/${id}/destroy`
     );
     return data;
   },
