@@ -142,6 +142,63 @@ class GitOpsWorkloadWriter:
             changed=True,
         )
 
+    def restore_destroyed(self, request: WorkloadWriteRequest) -> WorkloadWriteResult:
+        app_dir = self.paths.app_dir(request.app_name)
+        if app_dir.exists() and not app_dir.is_dir():
+            raise GitOpsWriterError("write_failed", "The GitOps workload path is not a directory.")
+
+        generated = generate_workload_manifests(request)
+        self._validate_restore_app_dir(app_dir, generated.files)
+        root_content = self._restore_root_content(request.app_name)
+        self.render_validator.validate(
+            source_root=self.paths.source_root,
+            app_name=request.app_name,
+            generated_files=generated.files,
+            root_kustomization=root_content,
+        )
+
+        written_files = tuple(app_dir / file_name for file_name in MANIFEST_FILE_ORDER)
+        app_changed = any(
+            not self._matches_content(path, generated.files[path.name])
+            for path in written_files
+        )
+        root_changed = not self._matches_content(self.paths.root_kustomization, root_content)
+        changed = app_changed or root_changed
+        if not changed:
+            return WorkloadWriteResult(
+                app_name=request.app_name,
+                app_dir=app_dir,
+                written_files=written_files,
+                root_kustomization=self.paths.root_kustomization,
+                changed=False,
+            )
+
+        created_app_dir = not app_dir.exists()
+        try:
+            app_dir.mkdir(exist_ok=True)
+            if app_changed:
+                for file_name in MANIFEST_FILE_ORDER:
+                    target = app_dir / file_name
+                    if not self._matches_content(target, generated.files[file_name]):
+                        self._atomic_write(target, generated.files[file_name])
+            if root_changed:
+                self._atomic_write(self.paths.root_kustomization, root_content)
+        except (OSError, UnicodeError):
+            if created_app_dir:
+                shutil.rmtree(app_dir, ignore_errors=True)
+            raise GitOpsWriterError(
+                "write_failed",
+                "The destroyed GitOps workload files could not be restored safely.",
+            ) from None
+
+        return WorkloadWriteResult(
+            app_name=request.app_name,
+            app_dir=app_dir,
+            written_files=written_files,
+            root_kustomization=self.paths.root_kustomization,
+            changed=True,
+        )
+
     def destroy(self, app_name: str) -> WorkloadDestroyResult:
         app_dir = self.paths.app_dir(app_name)
         if app_dir.exists() and not app_dir.is_dir():
@@ -206,6 +263,47 @@ class GitOpsWorkloadWriter:
             root_kustomization=self.paths.root_kustomization,
             changed=True,
         )
+
+    def _validate_restore_app_dir(self, app_dir: Path, generated_files: dict[str, str]) -> None:
+        if not app_dir.exists():
+            return
+        unexpected_entries = [
+            entry.name
+            for entry in app_dir.iterdir()
+            if entry.name not in MANIFEST_FILE_ORDER or not entry.is_file()
+        ]
+        if unexpected_entries:
+            raise GitOpsWriterError(
+                "unexpected_app_files",
+                "The GitOps workload folder contains files outside the V1 manifest contract.",
+            )
+        for file_name in MANIFEST_FILE_ORDER:
+            path = app_dir / file_name
+            if path.exists() and not self._matches_content(path, generated_files[file_name]):
+                raise GitOpsWriterError(
+                    "app_manifest_conflict",
+                    "The existing GitOps workload manifest does not match the deterministic recovery output.",
+                )
+
+    def _restore_root_content(self, app_name: str) -> str:
+        root_editor = RootKustomizationEditor(self.paths)
+        document = root_editor._load_document(self.paths.root_kustomization)
+        app_entry = f"apps/{app_name}"
+        raw_resources = document.get("resources", [])
+        if raw_resources is None:
+            raw_resources = []
+        if not isinstance(raw_resources, list):
+            raise GitOpsWriterError(
+                "invalid_root_kustomization",
+                "The root Kustomization resources field must be a list.",
+            )
+        duplicate_count = sum(1 for resource in raw_resources if resource == app_entry)
+        if duplicate_count > 1:
+            raise GitOpsWriterError(
+                "invalid_root_kustomization",
+                "The root Kustomization contains duplicate entries for this app.",
+            )
+        return root_editor.add_app(app_name)
 
     @staticmethod
     def _matches_content(path: Path, expected: str) -> bool:

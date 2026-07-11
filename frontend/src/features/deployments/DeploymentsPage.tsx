@@ -113,6 +113,14 @@ function canDestroy(record: DeploymentRecord) {
   return Boolean(record.gitops_manifest_path || record.commit_sha || hasPublishedGitOpsSummary(record.status_summary));
 }
 
+function canRecoverDestroyed(record: DeploymentRecord) {
+  return Boolean(
+    record.archived_at &&
+      record.desired_state === "destroyed" &&
+      record.service_definition_id
+  );
+}
+
 export function DeploymentsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -125,7 +133,10 @@ export function DeploymentsPage() {
   const [destroyTarget, setDestroyTarget] = useState<DeploymentRecord | null>(null);
   const [destroyConfirmName, setDestroyConfirmName] = useState("");
   const [destroyInProgress, setDestroyInProgress] = useState<DeploymentRecord | null>(null);
+  const [recoverDestroyedTarget, setRecoverDestroyedTarget] = useState<DeploymentRecord | null>(null);
+  const [recoverInProgress, setRecoverInProgress] = useState<DeploymentRecord | null>(null);
   const destroyToastId = useRef<ReturnType<typeof toast.loading> | undefined>(undefined);
+  const recoverToastId = useRef<ReturnType<typeof toast.loading> | undefined>(undefined);
   const recordsQuery = useQuery({
     queryKey: ["deployment-records", archiveFilter],
     queryFn: () => deploymentRecordsApi.list({ archiveFilter })
@@ -188,9 +199,29 @@ export function DeploymentsPage() {
   };
 
   const recoverMutation = useMutation({
-    mutationFn: (id: number) => deploymentRecordsApi.recover(id),
-    onSuccess: async () => {
-      toast.success(t("deployments.records.recover.success"));
+    mutationFn: (record: DeploymentRecord) => deploymentRecordsApi.recover(record.id),
+    onMutate: (record) => {
+      if (record.archived_at && record.desired_state === "destroyed") {
+        setRecoverInProgress(record);
+        setRecoverDestroyedTarget(null);
+        recoverToastId.current = toast.loading(t("deployments.records.recover.destroyedProgress"));
+      }
+    },
+    onSuccess: async (response, record) => {
+      const isDestroyedRecovery = Boolean(record.archived_at && record.desired_state === "destroyed");
+      if (isDestroyedRecovery) {
+        if (response.status === "recovered") {
+          toast.success(t("deployments.records.recover.destroyedSuccess"), { id: recoverToastId.current });
+        } else if (response.status === "runtime_pending") {
+          toast.warning(t("deployments.records.recover.destroyedPending"), { id: recoverToastId.current });
+        } else {
+          toast.error(t("deployments.records.recover.destroyedError"), { id: recoverToastId.current });
+        }
+        setRecoverInProgress(null);
+        recoverToastId.current = undefined;
+      } else {
+        toast.success(t("deployments.records.recover.success"));
+      }
       await queryClient.invalidateQueries({ queryKey: ["deployment-records"] });
       await queryClient.invalidateQueries({ queryKey: ["service-definitions"] });
       await queryClient.invalidateQueries({ queryKey: ["untracked-deployments"] });
@@ -198,13 +229,30 @@ export function DeploymentsPage() {
       await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
       await queryClient.invalidateQueries({ queryKey: ["user-summary"] });
     },
-    onError: () => toast.error(t("deployments.records.recover.error"))
+    onError: (_error, record) => {
+      if (record.archived_at && record.desired_state === "destroyed") {
+        toast.error(t("deployments.records.recover.destroyedError"), { id: recoverToastId.current });
+        setRecoverInProgress(null);
+        recoverToastId.current = undefined;
+      } else {
+        toast.error(t("deployments.records.recover.error"));
+      }
+    }
   });
 
   const recoverRecord = (record: DeploymentRecord) => {
     if (window.confirm(t("deployments.records.recover.confirm"))) {
-      recoverMutation.mutate(record.id);
+      recoverMutation.mutate(record);
     }
+  };
+
+  const openRecoverDestroyedDialog = (record: DeploymentRecord) => {
+    setRecoverDestroyedTarget(record);
+  };
+
+  const closeRecoverDestroyedDialog = () => {
+    if (recoverMutation.isPending) return;
+    setRecoverDestroyedTarget(null);
   };
 
   const reconcileMutation = useMutation({
@@ -549,17 +597,32 @@ export function DeploymentsPage() {
       header: t("common.actions"),
       render: (record) => {
         if (record.archived_at) {
+          const recoverDestroyedEligible = canRecoverDestroyed(record);
           return (
-            <Button
-              aria-label={t("deployments.records.delete.action")}
-              disabled={deleteMutation.isPending && deleteMutation.variables === record.id}
-              size="sm"
-              variant="danger"
-              onClick={() => deleteRecord(record)}
-            >
-              <Trash2 className="h-4 w-4" />
-              {t("deployments.records.delete.action")}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              {recoverDestroyedEligible ? (
+                <Button
+                  aria-label={t("deployments.records.recover.destroyedAction")}
+                  disabled={recoverMutation.isPending}
+                  size="sm"
+                  variant="outline"
+                  onClick={() => openRecoverDestroyedDialog(record)}
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  {t("deployments.records.recover.destroyedAction")}
+                </Button>
+              ) : null}
+              <Button
+                aria-label={t("deployments.records.delete.action")}
+                disabled={deleteMutation.isPending && deleteMutation.variables === record.id}
+                size="sm"
+                variant="danger"
+                onClick={() => deleteRecord(record)}
+              >
+                <Trash2 className="h-4 w-4" />
+                {t("deployments.records.delete.action")}
+              </Button>
+            </div>
           );
         }
         const recoverEligible = canRecover(record);
@@ -582,7 +645,7 @@ export function DeploymentsPage() {
               {recoverEligible ? (
                 <Button
                   aria-label={t("deployments.records.recover.action")}
-                  disabled={recoverMutation.isPending && recoverMutation.variables === record.id}
+                  disabled={recoverMutation.isPending && recoverMutation.variables?.id === record.id}
                   size="sm"
                   variant="outline"
                   onClick={() => recoverRecord(record)}
@@ -811,6 +874,16 @@ export function DeploymentsPage() {
         </div>
       ) : null}
 
+      {recoverInProgress ? (
+        <div className="mb-5 flex items-start gap-3 rounded-lg border border-sky-300/20 bg-sky-400/[0.08] px-4 py-3 text-sm text-sky-50">
+          <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-sky-200" />
+          <div>
+            <p className="font-medium text-white">{t("deployments.records.recover.destroyedProgressTitle")}</p>
+            <p className="text-sky-100/90">{t("deployments.records.recover.destroyedProgress")}</p>
+          </div>
+        </div>
+      ) : null}
+
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <Tabs
           tabs={[
@@ -895,6 +968,47 @@ export function DeploymentsPage() {
         onDeploy={(input) => gitOpsMutation.mutateAsync(input)}
         onOpenChange={setGitOpsModalOpen}
       />
+
+      <Dialog
+        closeLabel={t("common.close")}
+        description={
+          recoverDestroyedTarget
+            ? t("deployments.records.recover.destroyedDescription", { name: recoverDestroyedTarget.app_name })
+            : undefined
+        }
+        open={Boolean(recoverDestroyedTarget)}
+        title={t("deployments.records.recover.destroyedTitle")}
+        onOpenChange={(open) => {
+          if (!open) closeRecoverDestroyedDialog();
+        }}
+      >
+        {recoverDestroyedTarget ? (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-sky-300/20 bg-sky-500/10 px-4 py-3 text-sm leading-6 text-sky-100">
+              {t("deployments.records.recover.destroyedWarning")}
+            </div>
+            <DialogFooter>
+              <Button
+                disabled={recoverMutation.isPending}
+                variant="outline"
+                onClick={closeRecoverDestroyedDialog}
+              >
+                {t("common.cancel")}
+              </Button>
+              <Button
+                disabled={recoverMutation.isPending}
+                variant="primary"
+                onClick={() => recoverMutation.mutate(recoverDestroyedTarget)}
+              >
+                <RotateCcw className="h-4 w-4" />
+                {recoverMutation.isPending
+                  ? t("deployments.records.recover.destroyedSubmitting")
+                  : t("deployments.records.recover.destroyedConfirmAction")}
+              </Button>
+            </DialogFooter>
+          </div>
+        ) : null}
+      </Dialog>
 
       <Dialog
         closeLabel={t("common.close")}

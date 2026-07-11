@@ -13,6 +13,7 @@ from app.core.deps import get_current_user, get_db
 from app.api.v1.runtime_status import (
     get_deployment_destroy_runtime_cleanup_service,
     get_deployment_drift_service,
+    get_deployment_recovery_verification_service,
     get_product_runtime_status_service,
     get_workload_service_proxy_client,
 )
@@ -42,6 +43,10 @@ from app.services.deployment_preview_service import (
     WorkloadServiceProxy,
 )
 from app.services.deployment_destroy_service import DeploymentDestroyRuntimeCleanupService
+from app.services.deployment_recovery_service import (
+    DeploymentRecoveryVerificationResult,
+    DeploymentRecoveryVerificationService,
+)
 from app.services.gitops.deploy_operation import (
     DeployWorkloadOperationRequest,
     DeployWorkloadOperationService,
@@ -319,10 +324,22 @@ def recover_deployment_record(
     operation_service: DeployWorkloadOperationService = Depends(
         get_deploy_workload_operation_service
     ),
+    recovery_verification_service: DeploymentRecoveryVerificationService = Depends(
+        get_deployment_recovery_verification_service
+    ),
 ) -> DeploymentRecordRecoverResponse | JSONResponse:
     records = DeploymentRecordService(db)
     deployment = records.get_owned(deployment_id, current_user)
     if deployment.archived_at is not None:
+        if deployment.desired_state == "destroyed":
+            return _recover_destroyed_deployment_record(
+                records=records,
+                deployment=deployment,
+                db=db,
+                config=config,
+                operation_service=operation_service,
+                recovery_verification_service=recovery_verification_service,
+            )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Archived deployment records cannot be recovered.",
@@ -368,6 +385,209 @@ def reconcile_deployment_record(
         config=config,
         operation_service=operation_service,
     )
+
+
+def _recover_destroyed_deployment_record(
+    *,
+    records: DeploymentRecordService,
+    deployment: DeploymentRecord,
+    db: Session,
+    config: GitOpsDeployRepositoryConfig,
+    operation_service: DeployWorkloadOperationService,
+    recovery_verification_service: DeploymentRecoveryVerificationService,
+) -> DeploymentRecordRecoverResponse | JSONResponse:
+    if deployment.service_definition_id is None or deployment.service_definition is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Destroyed deployment records require an owned service definition before recovery.",
+        )
+    if deployment.service_definition.owner_id != deployment.owner_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Destroyed deployment record ownership is inconsistent with its service definition.",
+        )
+
+    try:
+        result = operation_service.execute(
+            DeployWorkloadOperationRequest(
+                repo_root=config.repo_root,
+                source_root_relative=config.source_root_relative,
+                expected_branch=config.expected_branch,
+                remote_name=config.remote_name,
+                remote_branch=config.remote_branch,
+                app_name=deployment.app_name,
+                image=deployment.image,
+                replicas=deployment.replicas,
+                container_port=deployment.container_port,
+                service_port=deployment.service_port,
+                service_type=deployment.service_type,
+                namespace=deployment.namespace,
+                write_mode="restore_destroyed",
+            )
+        )
+    except Exception:
+        response = DeploymentRecordRecoverResponse(
+            status="internal_error",
+            deployment_id=deployment.id,
+            app_name=deployment.app_name,
+            commit_sha=deployment.commit_sha,
+            manifest_path=deployment.gitops_manifest_path,
+            message=RECOVER_INTERNAL_MESSAGE,
+            error_code="internal_error",
+        )
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=response.model_dump(),
+        )
+
+    if result.status in {"pushed_waiting_for_argocd", "no_changes"}:
+        if result.status == "pushed_waiting_for_argocd" and not result.commit_sha:
+            response = DeploymentRecordRecoverResponse(
+                status="internal_error",
+                deployment_id=deployment.id,
+                app_name=deployment.app_name,
+                commit_sha=deployment.commit_sha,
+                manifest_path=deployment.gitops_manifest_path,
+                message=RECOVER_INTERNAL_MESSAGE,
+                error_code="internal_error",
+            )
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content=response.model_dump(),
+            )
+
+        if result.status == "pushed_waiting_for_argocd":
+            recovery_commit_sha = result.commit_sha
+            try:
+                deployment = records.mark_recovery_pending(
+                    deployment,
+                    source_path=result.source_path,
+                    commit_sha=recovery_commit_sha,
+                )
+            except Exception:
+                db.rollback()
+                response = DeploymentRecordRecoverResponse(
+                    status="internal_error",
+                    deployment_id=deployment.id,
+                    app_name=deployment.app_name,
+                    commit_sha=recovery_commit_sha,
+                    manifest_path=deployment.gitops_manifest_path,
+                    message=(
+                        "The destroyed deployment recovery commit was pushed, but the deployment "
+                        "record could not store the recovery revision."
+                    ),
+                    error_code="product_record_persistence_failed",
+                )
+                return JSONResponse(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    content=response.model_dump(),
+                )
+        else:
+            recovery_commit_sha = deployment.commit_sha
+            if not recovery_commit_sha:
+                verification = DeploymentRecoveryVerificationResult(
+                    status="failed",
+                    message=(
+                        "Recovery manifests already exist, but no recorded recovery revision "
+                        "is available for safe verification."
+                    ),
+                    checked_at=deployment.updated_at,
+                )
+                return _destroyed_recovery_not_ready_response(
+                    deployment=deployment,
+                    verification=verification,
+                    commit_sha=None,
+                )
+        verification = recovery_verification_service.verify_recovered(
+            deployment,
+            recovery_commit_sha=recovery_commit_sha,
+        )
+        if verification.status != "ready":
+            return _destroyed_recovery_not_ready_response(
+                deployment=deployment,
+                verification=verification,
+                commit_sha=recovery_commit_sha,
+            )
+
+        try:
+            updated = records.mark_recovered(
+                deployment,
+                source_path=result.source_path,
+                commit_sha=recovery_commit_sha,
+            )
+        except Exception:
+            db.rollback()
+            response = DeploymentRecordRecoverResponse(
+                status="internal_error",
+                deployment_id=deployment.id,
+                app_name=deployment.app_name,
+                commit_sha=recovery_commit_sha,
+                manifest_path=deployment.gitops_manifest_path,
+                message=(
+                    "The destroyed deployment was recovered in GitOps and runtime readiness was verified, "
+                    "but the deployment record could not be reactivated."
+                ),
+                error_code="product_record_persistence_failed",
+            )
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content=response.model_dump(),
+            )
+
+        return DeploymentRecordRecoverResponse(
+            status="recovered",
+            deployment_id=updated.id,
+            app_name=updated.app_name,
+            commit_sha=updated.commit_sha,
+            manifest_path=updated.gitops_manifest_path,
+            message="Destroyed deployment recovery completed and runtime readiness was verified.",
+        )
+
+    response = DeploymentRecordRecoverResponse(
+        status=result.status,
+        deployment_id=deployment.id,
+        app_name=deployment.app_name,
+        commit_sha=result.commit_sha,
+        manifest_path=deployment.gitops_manifest_path,
+        message=sanitize_git_output(result.message),
+        error_code=result.error_code,
+    )
+    return JSONResponse(
+        status_code=RECOVER_ERROR_STATUS_CODES.get(
+            result.status,
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+        ),
+        content=response.model_dump(),
+    )
+
+
+def _destroyed_recovery_not_ready_response(
+    *,
+    deployment: DeploymentRecord,
+    verification: DeploymentRecoveryVerificationResult,
+    commit_sha: str | None,
+) -> JSONResponse:
+    response_status = {
+        "pending": "runtime_pending",
+        "conflict": "runtime_conflict",
+        "unavailable": "runtime_unavailable",
+        "failed": "recovery_failed",
+    }.get(verification.status, "runtime_pending")
+    http_status = {
+        "runtime_conflict": status.HTTP_409_CONFLICT,
+        "runtime_unavailable": status.HTTP_503_SERVICE_UNAVAILABLE,
+        "recovery_failed": status.HTTP_409_CONFLICT,
+    }.get(response_status, status.HTTP_202_ACCEPTED)
+    response = DeploymentRecordRecoverResponse(
+        status=response_status,
+        deployment_id=deployment.id,
+        app_name=deployment.app_name,
+        commit_sha=commit_sha,
+        manifest_path=deployment.gitops_manifest_path,
+        message=verification.message,
+        error_code=verification.status,
+    )
+    return JSONResponse(status_code=http_status, content=response.model_dump())
 
 
 def _regenerate_deployment_record(

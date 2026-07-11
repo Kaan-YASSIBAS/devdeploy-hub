@@ -514,7 +514,18 @@
         "action": "Redeploy",
         "confirm": "This regenerates GitOps manifests from the existing DevDeploy record and lets Argo CD deploy it again. It does not create a new record.",
         "success": "Recovery started.",
-        "error": "Recovery failed."
+        "error": "Recovery failed.",
+        "destroyedAction": "Recover",
+        "destroyedTitle": "Recover destroyed deployment",
+        "destroyedDescription": "Recover {{name}} through the safe DevDeploy GitOps flow.",
+        "destroyedWarning": "DevDeploy will recreate the GitOps manifests from this owned record, push the change, wait for Argo CD to process the recovery revision, verify the Deployment and Service, then reactivate the same record.",
+        "destroyedConfirmAction": "Recover deployment",
+        "destroyedSubmitting": "Recovering",
+        "destroyedProgressTitle": "Recovery in progress",
+        "destroyedProgress": "Recreating deployment. DevDeploy is preparing GitOps manifests, pushing the change, waiting for Argo CD synchronization, and verifying workload readiness.",
+        "destroyedSuccess": "Deployment recovered and runtime readiness was verified.",
+        "destroyedPending": "Recovery is waiting for Argo CD or workload readiness. The destroyed record remains archived and can be retried.",
+        "destroyedError": "Deployment recovery could not be completed."
       },
       "reconcile": {
         "action": "Reconcile",

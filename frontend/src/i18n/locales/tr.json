@@ -514,7 +514,18 @@
         "action": "Yeniden deploy et",
         "confirm": "Bu işlem mevcut DevDeploy kaydından GitOps manifestlerini yeniden üretir ve Argo CD'nin tekrar deploy etmesini sağlar. Yeni kayıt oluşturmaz.",
         "success": "Kurtarma başlatıldı.",
-        "error": "Kurtarma başarısız oldu."
+        "error": "Kurtarma başarısız oldu.",
+        "destroyedAction": "Yeniden oluştur",
+        "destroyedTitle": "Yok edilen deployment'ı yeniden oluştur",
+        "destroyedDescription": "{{name}} deployment'ını güvenli DevDeploy GitOps akışıyla yeniden oluştur.",
+        "destroyedWarning": "DevDeploy GitOps manifestlerini bu sahipli kayıttan yeniden üretir, değişikliği gönderir, Argo CD'nin recovery revizyonunu işlemesini bekler, Deployment ve Service kaynaklarını doğrular ve ardından aynı kaydı yeniden aktif hale getirir.",
+        "destroyedConfirmAction": "Deployment'ı yeniden oluştur",
+        "destroyedSubmitting": "Yeniden oluşturuluyor",
+        "destroyedProgressTitle": "Yeniden oluşturma sürüyor",
+        "destroyedProgress": "Deployment yeniden oluşturuluyor. DevDeploy GitOps manifestlerini hazırlıyor, değişikliği gönderiyor, Argo CD senkronizasyonunu bekliyor ve workload kaynaklarının hazır olmasını doğruluyor.",
+        "destroyedSuccess": "Deployment yeniden oluşturuldu ve runtime hazır durumu doğrulandı.",
+        "destroyedPending": "Yeniden oluşturma Argo CD veya workload hazır durumunu bekliyor. Yok edilmiş kayıt arşivde kalır ve işlem yeniden denenebilir.",
+        "destroyedError": "Deployment yeniden oluşturma tamamlanamadı."
       },
       "reconcile": {
         "action": "GitOps ile düzelt",

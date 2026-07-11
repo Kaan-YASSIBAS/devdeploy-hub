@@ -21,6 +21,11 @@ from app.services.deployment_destroy_service import (
     RootApplicationObservationReader,
     WorkloadRuntimeCleanupClient,
 )
+from app.services.deployment_recovery_service import (
+    DeploymentRecoveryVerificationService,
+    KubernetesRecoveredWorkloadReadinessClient,
+    RecoveredWorkloadReadinessClient,
+)
 from app.services.gitops.kubernetes_status_reader import KubernetesGitOpsStatusReader
 from app.services.product_runtime_status import ProductRuntimeStatusService, WorkloadRuntimeReader
 
@@ -87,6 +92,23 @@ def get_workload_runtime_cleanup_client() -> WorkloadRuntimeCleanupClient | None
 
 
 @lru_cache(maxsize=1)
+def get_recovered_workload_readiness_client() -> RecoveredWorkloadReadinessClient | None:
+    if settings.status_reader_mode != "kubernetes":
+        return None
+    try:
+        return KubernetesRecoveredWorkloadReadinessClient.from_server_config(
+            workload_kubeconfig=settings.workload_kubeconfig,
+            workload_kubeconfig_context=settings.workload_kubeconfig_context,
+        )
+    except Exception as error:
+        logger.warning(
+            "Recovered workload readiness client construction failed: %s.",
+            error.__class__.__name__,
+        )
+        return None
+
+
+@lru_cache(maxsize=1)
 def get_management_root_application_reader() -> RootApplicationObservationReader | None:
     if settings.status_reader_mode != "kubernetes":
         return None
@@ -112,6 +134,19 @@ def get_deployment_destroy_runtime_cleanup_service(
         client=client,
         managed_namespace=settings.workload_namespace,
         root_reader=root_reader,
+        root_application_name=settings.argocd_root_application_name,
+        root_application_namespace=settings.argocd_namespace,
+    )
+
+
+def get_deployment_recovery_verification_service(
+    readiness_client: RecoveredWorkloadReadinessClient | None = Depends(get_recovered_workload_readiness_client),
+    root_reader: RootApplicationObservationReader | None = Depends(get_management_root_application_reader),
+) -> DeploymentRecoveryVerificationService:
+    return DeploymentRecoveryVerificationService(
+        readiness_client=readiness_client,
+        root_reader=root_reader,
+        managed_namespace=settings.workload_namespace,
         root_application_name=settings.argocd_root_application_name,
         root_application_namespace=settings.argocd_namespace,
     )

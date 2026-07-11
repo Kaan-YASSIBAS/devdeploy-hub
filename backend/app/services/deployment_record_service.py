@@ -130,6 +130,49 @@ class DeploymentRecordService:
         self.db.refresh(updated)
         return self.deployments.get_by_id(updated.id) or updated
 
+    def mark_recovered(
+        self,
+        deployment: DeploymentRecord,
+        *,
+        source_path: str,
+        commit_sha: str | None,
+    ) -> DeploymentRecord:
+        data = {
+            "gitops_manifest_path": build_manifest_path(source_path, deployment.app_name),
+            "desired_state": "pending",
+            "status_summary": (
+                "GitOps manifests published; this deployment was previously destroyed "
+                "and later recovered after runtime readiness was verified."
+            ),
+            "archived_at": None,
+        }
+        if commit_sha is not None:
+            data["commit_sha"] = commit_sha.lower()
+        updated = self.deployments.update(deployment, data)
+        self.db.commit()
+        self.db.refresh(updated)
+        return self.deployments.get_by_id(updated.id) or updated
+
+    def mark_recovery_pending(
+        self,
+        deployment: DeploymentRecord,
+        *,
+        source_path: str,
+        commit_sha: str,
+    ) -> DeploymentRecord:
+        data = {
+            "gitops_manifest_path": build_manifest_path(source_path, deployment.app_name),
+            "commit_sha": commit_sha.lower(),
+            "status_summary": (
+                "GitOps recovery manifests published; recovery is waiting for Argo CD "
+                "and runtime readiness before reactivation."
+            ),
+        }
+        updated = self.deployments.update(deployment, data)
+        self.db.commit()
+        self.db.refresh(updated)
+        return self.deployments.get_by_id(updated.id) or updated
+
     def mark_destroyed(
         self,
         deployment: DeploymentRecord,

@@ -217,6 +217,51 @@ class DeployWorkloadOperationTestCase(unittest.TestCase):
         self.assertEqual(second.commit_sha, first_head)
         self.assertEqual(self._git(self.repo_root, "rev-parse", "HEAD").strip(), first_head)
 
+    def test_restore_destroyed_operation_reactivates_with_scoped_commit(self) -> None:
+        result = DeployWorkloadOperationService().execute(self.request(write_mode="restore_destroyed"))
+
+        self.assertEqual(result.status, "pushed_waiting_for_argocd")
+        self.assertTrue(result.committed)
+        self.assertTrue(result.pushed)
+        self.assertEqual(
+            self._git(self.repo_root, "show", "-s", "--format=%s", "HEAD").strip(),
+            "recover: reactivate payment-api workload",
+        )
+        root = yaml.safe_load((self.source_root / "kustomization.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(root["resources"], ["apps/payment-api"])
+
+    def test_restore_destroyed_operation_reuses_matching_state_without_duplicate_commit(self) -> None:
+        first = DeployWorkloadOperationService().execute(self.request(write_mode="restore_destroyed"))
+        first_head = self._git(self.repo_root, "rev-parse", "HEAD").strip()
+
+        second = DeployWorkloadOperationService().execute(self.request(write_mode="restore_destroyed"))
+
+        self.assertEqual(first.status, "pushed_waiting_for_argocd")
+        self.assertEqual(second.status, "no_changes")
+        self.assertFalse(second.committed)
+        self.assertFalse(second.pushed)
+        self.assertEqual(second.commit_sha, first_head)
+        self.assertEqual(self._git(self.repo_root, "rev-parse", "HEAD").strip(), first_head)
+
+    def test_restore_destroyed_operation_rejects_existing_manifest_conflict(self) -> None:
+        initial = DeployWorkloadOperationService().execute(self.request(write_mode="restore_destroyed"))
+        deployment_path = self.source_root / "apps" / "payment-api" / "deployment.yaml"
+        deployment = yaml.safe_load(deployment_path.read_text(encoding="utf-8"))
+        deployment["spec"]["replicas"] = 1
+        deployment_path.write_text(yaml.safe_dump(deployment, sort_keys=False), encoding="utf-8")
+        self._git(self.repo_root, "add", "--", deployment_path.relative_to(self.repo_root).as_posix())
+        self._git(self.repo_root, "commit", "-m", "test: simulate manual restore drift")
+        before = self._git(self.repo_root, "rev-parse", "HEAD").strip()
+
+        result = DeployWorkloadOperationService().execute(self.request(write_mode="restore_destroyed"))
+
+        self.assertEqual(initial.status, "pushed_waiting_for_argocd")
+        self.assertEqual(result.status, "repo_write_failed")
+        self.assertEqual(result.error_code, "app_manifest_conflict")
+        self.assertFalse(result.committed)
+        self.assertFalse(result.pushed)
+        self.assertEqual(self._git(self.repo_root, "rev-parse", "HEAD").strip(), before)
+
     def test_reconcile_rewrites_drifted_manifest_and_uses_scoped_commit(self) -> None:
         initial = DeployWorkloadOperationService().execute(self.request(write_mode="recover"))
         deployment_path = self.source_root / "apps" / "payment-api" / "deployment.yaml"

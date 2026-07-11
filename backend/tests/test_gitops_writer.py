@@ -257,6 +257,52 @@ class GitOpsWriterTestCase(unittest.TestCase):
 
         self.assertFalse(result.changed)
 
+    def test_writer_restore_destroyed_restores_from_empty_root(self) -> None:
+        writer = GitOpsWorkloadWriter(self.source_root)
+        request = WorkloadWriteRequest(app_name="nginx-demo", image="nginx:latest")
+
+        result = writer.restore_destroyed(request)
+
+        self.assertTrue(result.changed)
+        self.assertTrue(all(path.is_file() for path in result.written_files))
+        root = yaml.safe_load((self.source_root / "kustomization.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(root["resources"], ["apps/nginx-demo"])
+
+    def test_writer_restore_destroyed_is_idempotent_when_manifests_match(self) -> None:
+        writer = GitOpsWorkloadWriter(self.source_root)
+        request = WorkloadWriteRequest(app_name="nginx-demo", image="nginx:latest")
+        self.assertTrue(writer.restore_destroyed(request).changed)
+
+        result = writer.restore_destroyed(request)
+
+        self.assertFalse(result.changed)
+        root = yaml.safe_load((self.source_root / "kustomization.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(root["resources"], ["apps/nginx-demo"])
+
+    def test_writer_restore_destroyed_rejects_mismatched_existing_manifest(self) -> None:
+        writer = GitOpsWorkloadWriter(self.source_root)
+        request = WorkloadWriteRequest(app_name="nginx-demo", image="nginx:latest")
+        self.assertTrue(writer.restore_destroyed(request).changed)
+        (self.apps_root / "nginx-demo" / "deployment.yaml").write_text(
+            "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: other\n",
+            encoding="utf-8",
+        )
+
+        self.assert_error_code("app_manifest_conflict", lambda: writer.restore_destroyed(request))
+
+    def test_writer_restore_destroyed_rejects_duplicate_root_entry(self) -> None:
+        (self.source_root / "kustomization.yaml").write_text(
+            ROOT_KUSTOMIZATION.replace(
+                "resources: []",
+                "resources:\n  - apps/nginx-demo\n  - apps/nginx-demo",
+            ),
+            encoding="utf-8",
+        )
+        writer = GitOpsWorkloadWriter(self.source_root)
+        request = WorkloadWriteRequest(app_name="nginx-demo", image="nginx:latest")
+
+        self.assert_error_code("invalid_root_kustomization", lambda: writer.restore_destroyed(request))
+
     def test_writer_destroy_removes_app_folder_and_root_entry_only(self) -> None:
         writer = GitOpsWorkloadWriter(self.source_root)
         request = WorkloadWriteRequest(app_name="nginx-demo", image="nginx:latest")

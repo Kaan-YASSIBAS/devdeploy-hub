@@ -163,6 +163,11 @@ class DeploymentRecordRead(BaseModel):
 
 class DeploymentRecordRecoverResponse(BaseModel):
     status: Literal[
+        "recovered",
+        "runtime_pending",
+        "runtime_conflict",
+        "runtime_unavailable",
+        "recovery_failed",
         "pushed_waiting_for_argocd",
         "no_changes_waiting_for_argocd",
         "no_changes",

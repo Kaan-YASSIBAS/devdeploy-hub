@@ -18,7 +18,7 @@ DeployOperationStatus = Literal[
     "no_changes",
     "pushed_waiting_for_argocd",
 ]
-DeployWriteMode = Literal["create", "recover", "reconcile"]
+DeployWriteMode = Literal["create", "recover", "reconcile", "restore_destroyed"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +58,7 @@ class DeployWorkloadOperationService:
     def execute(self, request: DeployWorkloadOperationRequest) -> DeployWorkloadOperationResult:
         app_name = request.app_name if isinstance(request.app_name, str) else ""
         try:
-            if request.write_mode not in ("create", "recover", "reconcile"):
+            if request.write_mode not in ("create", "recover", "reconcile", "restore_destroyed"):
                 raise GitOpsWriterError("invalid_write_mode", "The GitOps write mode is invalid.")
             workload_request = WorkloadWriteRequest(
                 app_name=request.app_name,
@@ -104,11 +104,12 @@ class DeployWorkloadOperationService:
 
         try:
             writer = GitOpsWorkloadWriter(source_root)
-            write_result = (
-                writer.recover(workload_request)
-                if request.write_mode in ("recover", "reconcile")
-                else writer.create(workload_request)
-            )
+            if request.write_mode == "restore_destroyed":
+                write_result = writer.restore_destroyed(workload_request)
+            elif request.write_mode in ("recover", "reconcile"):
+                write_result = writer.recover(workload_request)
+            else:
+                write_result = writer.create(workload_request)
             self._verify_write_result(repo_root, write_result, expected_paths)
         except GitOpsWriterError as error:
             return self._failure(
@@ -217,6 +218,8 @@ class DeployWorkloadOperationService:
     def _commit_message(write_mode: DeployWriteMode, app_name: str) -> str:
         if write_mode == "recover":
             return f"recover: restore {app_name} workload"
+        if write_mode == "restore_destroyed":
+            return f"recover: reactivate {app_name} workload"
         if write_mode == "reconcile":
             return f"reconcile: align {app_name} workload"
         return f"deploy: add {app_name} workload"
