@@ -141,11 +141,7 @@ class DeploymentRecordService:
         data = {
             "gitops_manifest_path": build_manifest_path(source_path, deployment.app_name),
             "desired_state": "destroyed",
-            "status_summary": (
-                "GitOps manifests removed; runtime cleanup complete."
-                if runtime_cleanup_status in {"completed", "not_required"}
-                else "GitOps manifests removed; runtime cleanup requires follow-up."
-            ),
+            "status_summary": self._destroyed_status_summary(runtime_cleanup_status),
             "archived_at": deployment.archived_at or utc_now(),
         }
         if commit_sha is not None:
@@ -154,3 +150,15 @@ class DeploymentRecordService:
         self.db.commit()
         self.db.refresh(updated)
         return self.deployments.get_by_id(updated.id) or updated
+
+    @staticmethod
+    def _destroyed_status_summary(runtime_cleanup_status: str) -> str:
+        if runtime_cleanup_status == "completed":
+            return "GitOps manifests removed; runtime cleanup complete and stable absence verified."
+        if runtime_cleanup_status == "not_required":
+            return "GitOps manifests removed; no matching runtime Deployment or Service was present."
+        if runtime_cleanup_status == "failed":
+            return "GitOps manifests removed; runtime resources reappeared or remained after cleanup."
+        if runtime_cleanup_status == "unavailable":
+            return "GitOps manifests removed; runtime cleanup could not be verified."
+        return "GitOps manifests removed; runtime cleanup is pending Argo CD observation or follow-up."

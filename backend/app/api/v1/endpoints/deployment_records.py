@@ -523,6 +523,14 @@ def destroy_deployment_record(
     records = DeploymentRecordService(db)
     deployment = records.get_owned(deployment_id, current_user)
     if deployment.archived_at is not None:
+        if deployment.desired_state == "destroyed":
+            return _retry_destroy_runtime_cleanup(
+                records=records,
+                deployment=deployment,
+                db=db,
+                config=config,
+                runtime_cleanup_service=runtime_cleanup_service,
+            )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Archived deployment records cannot be destroyed.",
@@ -589,7 +597,10 @@ def _finish_destroyed_deployment_record(
     result: DestroyWorkloadOperationResult,
     runtime_cleanup_service: DeploymentDestroyRuntimeCleanupService,
 ) -> DeploymentRecordDestroyResponse | JSONResponse:
-    runtime_cleanup = runtime_cleanup_service.cleanup(deployment)
+    runtime_cleanup = runtime_cleanup_service.cleanup(
+        deployment,
+        destroy_commit_sha=result.commit_sha or deployment.commit_sha,
+    )
     try:
         updated = records.mark_destroyed(
             deployment,
@@ -619,14 +630,14 @@ def _finish_destroyed_deployment_record(
     if not cleanup_complete:
         response_status = "runtime_cleanup_pending"
         message = (
-            "The GitOps workload manifests were removed, but runtime cleanup could not be completed safely."
+            "The GitOps workload manifests were removed, but runtime cleanup is waiting for safe completion."
         )
     elif result.status == "no_changes":
         response_status = "no_changes"
         message = "The GitOps workload manifests were already absent; the record was archived as destroyed."
     else:
         response_status = "destroyed"
-        message = "The GitOps workload manifests were removed and runtime cleanup completed."
+        message = "The GitOps workload manifests were removed and runtime cleanup stable absence was verified."
     return DeploymentRecordDestroyResponse(
         status=response_status,
         deployment_id=updated.id,
@@ -635,6 +646,58 @@ def _finish_destroyed_deployment_record(
         manifest_path=updated.gitops_manifest_path,
         runtime_cleanup=cleanup_read,
         message=message,
+    )
+
+
+def _retry_destroy_runtime_cleanup(
+    *,
+    records: DeploymentRecordService,
+    deployment: DeploymentRecord,
+    db: Session,
+    config: GitOpsDeployRepositoryConfig,
+    runtime_cleanup_service: DeploymentDestroyRuntimeCleanupService,
+) -> DeploymentRecordDestroyResponse | JSONResponse:
+    runtime_cleanup = runtime_cleanup_service.cleanup(
+        deployment,
+        destroy_commit_sha=deployment.commit_sha,
+    )
+    try:
+        updated = records.mark_destroyed(
+            deployment,
+            source_path=config.source_root_relative,
+            commit_sha=deployment.commit_sha,
+            runtime_cleanup_status=runtime_cleanup.status,
+        )
+    except Exception:
+        db.rollback()
+        response = DeploymentRecordDestroyResponse(
+            status="internal_error",
+            deployment_id=deployment.id,
+            app_name=deployment.app_name,
+            commit_sha=deployment.commit_sha,
+            manifest_path=deployment.gitops_manifest_path,
+            runtime_cleanup=_runtime_cleanup_read(runtime_cleanup),
+            message="The runtime cleanup retry completed, but the deployment record could not be updated.",
+            error_code="product_record_persistence_failed",
+        )
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=response.model_dump(mode="json"),
+        )
+
+    cleanup_complete = runtime_cleanup.status in {"completed", "not_required"}
+    return DeploymentRecordDestroyResponse(
+        status="destroyed" if cleanup_complete else "runtime_cleanup_pending",
+        deployment_id=updated.id,
+        app_name=updated.app_name,
+        commit_sha=updated.commit_sha,
+        manifest_path=updated.gitops_manifest_path,
+        runtime_cleanup=_runtime_cleanup_read(runtime_cleanup),
+        message=(
+            "Runtime cleanup retry completed and stable absence was verified."
+            if cleanup_complete
+            else "Runtime cleanup retry is still waiting for safe completion."
+        ),
     )
 
 

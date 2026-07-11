@@ -527,12 +527,12 @@
         "action": "Yok et",
         "title": "Deployment'ı yok et",
         "description": "{{name}} deployment'ını güvenli DevDeploy akışıyla yok et.",
-        "warning": "Bu işlem uygulama manifest klasörünü GitOps'tan kaldırır ve Deployment kaydını arşivler. Argo CD prune kapalı olduğu için DevDeploy yalnızca doğrulanmış, aynı ada sahip Deployment ve Service kaynakları için dar kapsamlı runtime temizliği dener.",
+        "warning": "Bu işlem uygulama manifest klasörünü GitOps'tan kaldırır ve Deployment kaydını arşivler. Argo CD prune kapalı olduğu için DevDeploy, dar kapsamlı runtime temizliğini yalnızca Argo CD destroy revizyonunu gördükten sonra aynı ada sahip doğrulanmış Deployment ve Service kaynakları için dener.",
         "confirmLabel": "Onaylamak için {{name}} yaz.",
         "confirmAction": "Deployment'ı yok et",
         "submitting": "Yok ediliyor",
-        "success": "Yok etme isteği tamamlandı.",
-        "pending": "GitOps kaldırma tamamlandı. Runtime temizliği için takip gerekiyor.",
+        "success": "Yok etme isteği tamamlandı ve runtime kaynaklarının yokluğu doğrulandı.",
+        "pending": "GitOps kaldırma tamamlandı. Runtime temizliği Argo CD gözlemi veya ek doğrulama bekliyor.",
         "error": "Deployment yok edilemedi."
       },
       "access": {

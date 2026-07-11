@@ -527,12 +527,12 @@
         "action": "Destroy",
         "title": "Destroy deployment",
         "description": "Destroy {{name}} through the safe DevDeploy flow.",
-        "warning": "This removes the app manifest folder from GitOps and archives the Deployment record. Because Argo CD prune is disabled, DevDeploy also attempts narrowly scoped runtime cleanup for the exact owned Deployment and Service only.",
+        "warning": "This removes the app manifest folder from GitOps and archives the Deployment record. Because Argo CD prune is disabled, DevDeploy waits for Argo CD to observe the destroy revision before attempting narrowly scoped runtime cleanup for the exact owned Deployment and Service only.",
         "confirmLabel": "Type {{name}} to confirm.",
         "confirmAction": "Destroy deployment",
         "submitting": "Destroying",
-        "success": "Destroy request completed.",
-        "pending": "GitOps removal completed. Runtime cleanup needs follow-up.",
+        "success": "Destroy request completed and runtime absence was verified.",
+        "pending": "GitOps removal completed. Runtime cleanup is waiting for Argo CD observation or follow-up verification.",
         "error": "Deployment could not be destroyed."
       },
       "access": {

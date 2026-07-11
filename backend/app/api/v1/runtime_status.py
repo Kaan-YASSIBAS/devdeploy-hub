@@ -17,6 +17,7 @@ from app.services.deployment_preview_service import (
 from app.services.deployment_destroy_service import (
     DeploymentDestroyRuntimeCleanupService,
     KubernetesWorkloadRuntimeCleanupClient,
+    RootApplicationObservationReader,
     WorkloadRuntimeCleanupClient,
 )
 from app.services.gitops.kubernetes_status_reader import KubernetesGitOpsStatusReader
@@ -84,12 +85,34 @@ def get_workload_runtime_cleanup_client() -> WorkloadRuntimeCleanupClient | None
         return None
 
 
+@lru_cache(maxsize=1)
+def get_management_root_application_reader() -> RootApplicationObservationReader | None:
+    if settings.status_reader_mode != "kubernetes":
+        return None
+    try:
+        return KubernetesGitOpsStatusReader.from_management_server_config(
+            management_kubeconfig=settings.management_kubeconfig,
+            management_kubeconfig_context=settings.management_kubeconfig_context,
+            use_in_cluster_management=settings.kubernetes_in_cluster,
+        )
+    except Exception as error:
+        logger.warning(
+            "Management root Application reader construction failed: %s.",
+            error.__class__.__name__,
+        )
+        return None
+
+
 def get_deployment_destroy_runtime_cleanup_service(
     client: WorkloadRuntimeCleanupClient | None = Depends(get_workload_runtime_cleanup_client),
+    root_reader: RootApplicationObservationReader | None = Depends(get_management_root_application_reader),
 ) -> DeploymentDestroyRuntimeCleanupService:
     return DeploymentDestroyRuntimeCleanupService(
         client=client,
         managed_namespace=settings.workload_namespace,
+        root_reader=root_reader,
+        root_application_name=settings.argocd_root_application_name,
+        root_application_namespace=settings.argocd_namespace,
     )
 
 

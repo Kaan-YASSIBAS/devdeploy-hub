@@ -233,7 +233,7 @@ export type DeploymentRecordRecoverResponse = {
 };
 
 export type DeploymentRuntimeCleanup = {
-  status: "completed" | "pending" | "not_required" | "unavailable";
+  status: "completed" | "pending" | "not_required" | "unavailable" | "failed";
   deployment_deleted: boolean;
   service_deleted: boolean;
   message: string;

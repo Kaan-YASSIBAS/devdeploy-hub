@@ -182,7 +182,7 @@ class DeploymentRecordRecoverResponse(BaseModel):
 
 
 class DeploymentRuntimeCleanupRead(BaseModel):
-    status: Literal["completed", "pending", "not_required", "unavailable"]
+    status: Literal["completed", "pending", "not_required", "unavailable", "failed"]
     deployment_deleted: bool
     service_deleted: bool
     message: str

@@ -105,11 +105,12 @@ class FakeDestroyRuntimeCleanupService:
             checked_at=ProductDomainApiTestCase.fixed_datetime(),
         )
 
-    def cleanup(self, deployment):
+    def cleanup(self, deployment, *, destroy_commit_sha=None):
         self.calls.append(
             {
                 "app_name": deployment.app_name,
                 "namespace": deployment.namespace,
+                "destroy_commit_sha": destroy_commit_sha,
             }
         )
         return self.result
@@ -668,7 +669,7 @@ class ProductDomainApiTestCase(unittest.TestCase):
         )
         self.assertEqual(
             self.destroy_cleanup.calls,
-            [{"app_name": "payments-api", "namespace": "devdeploy-apps"}],
+            [{"app_name": "payments-api", "namespace": "devdeploy-apps", "destroy_commit_sha": "e" * 40}],
         )
         operation_request = self.destroy_operation.requests[0]
         self.assertEqual(operation_request.app_name, "payments-api")
@@ -704,6 +705,10 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(updated["desired_state"], "destroyed")
         self.assertEqual(updated["commit_sha"], "f" * 40)
         self.assertIsNotNone(updated["archived_at"])
+        self.assertEqual(
+            self.destroy_cleanup.calls,
+            [{"app_name": "payments-api", "namespace": "devdeploy-apps", "destroy_commit_sha": "f" * 40}],
+        )
 
     def test_destroy_reports_runtime_cleanup_pending_but_preserves_destroyed_record(self) -> None:
         deployment = self.create_deployment()
@@ -725,6 +730,30 @@ class ProductDomainApiTestCase(unittest.TestCase):
         updated = self.client.get(f"/api/v1/deployment-records/{deployment['id']}").json()
         self.assertEqual(updated["desired_state"], "destroyed")
         self.assertIsNotNone(updated["archived_at"])
+
+    def test_destroyed_archived_record_can_retry_pending_runtime_cleanup(self) -> None:
+        deployment = self.create_deployment()
+        response = self.client.post(f"/api/v1/deployment-records/{deployment['id']}/destroy")
+        self.assertEqual(response.status_code, 202)
+        self.destroy_operation.requests.clear()
+        self.destroy_cleanup.calls.clear()
+        self.destroy_cleanup.result = DeploymentRuntimeCleanupResult(
+            status="completed",
+            deployment_deleted=True,
+            service_deleted=True,
+            message="Runtime cleanup completed.",
+            checked_at=self.fixed_datetime(),
+        )
+
+        retry = self.client.post(f"/api/v1/deployment-records/{deployment['id']}/destroy")
+
+        self.assertEqual(retry.status_code, 202)
+        self.assertEqual(retry.json()["status"], "destroyed")
+        self.assertEqual(self.destroy_operation.requests, [])
+        self.assertEqual(
+            self.destroy_cleanup.calls,
+            [{"app_name": "payments-api", "namespace": "devdeploy-apps", "destroy_commit_sha": "e" * 40}],
+        )
 
     def test_destroy_failure_does_not_update_record_or_run_runtime_cleanup(self) -> None:
         deployment = self.create_deployment()

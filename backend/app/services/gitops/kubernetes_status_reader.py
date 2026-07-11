@@ -102,8 +102,27 @@ class KubernetesGitOpsStatusReader:
             workload_core_api=client.CoreV1Api(workload_client),
         )
 
+    @classmethod
+    def from_management_server_config(
+        cls,
+        *,
+        management_kubeconfig: str | None,
+        management_kubeconfig_context: str | None,
+        use_in_cluster_management: bool,
+    ) -> "KubernetesGitOpsStatusReader":
+        management_client = cls._build_api_client(
+            kubeconfig_path=management_kubeconfig,
+            kubeconfig_context=management_kubeconfig_context,
+            allow_in_cluster=use_in_cluster_management,
+        )
+        return cls(
+            management_custom_api=client.CustomObjectsApi(management_client),
+            workload_apps_api=None,
+            workload_core_api=None,
+        )
+
     def read(self, request: GitOpsStatusRequest) -> GitOpsStatusSnapshot:
-        root_application = self._read_root_application(request)
+        root_application = self.read_root_application(request)
         if not root_application.exists:
             return GitOpsStatusSnapshot(
                 root_application=root_application,
@@ -115,6 +134,9 @@ class KubernetesGitOpsStatusReader:
             root_application=root_application,
             workload=workload,
         )
+
+    def read_root_application(self, request: GitOpsStatusRequest) -> RootApplicationSnapshot:
+        return self._read_root_application(request)
 
     def read_workload(self, app_name: str, namespace: str) -> WorkloadSnapshot:
         try:
