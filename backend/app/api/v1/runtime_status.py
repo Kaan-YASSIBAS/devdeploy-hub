@@ -16,6 +16,7 @@ from app.services.deployment_preview_service import (
 )
 from app.services.deployment_destroy_service import (
     DeploymentDestroyRuntimeCleanupService,
+    KubernetesRootApplicationReconciler,
     KubernetesWorkloadRuntimeCleanupClient,
     RootApplicationObservationReader,
     WorkloadRuntimeCleanupClient,
@@ -90,7 +91,7 @@ def get_management_root_application_reader() -> RootApplicationObservationReader
     if settings.status_reader_mode != "kubernetes":
         return None
     try:
-        return KubernetesGitOpsStatusReader.from_management_server_config(
+        return KubernetesRootApplicationReconciler.from_server_config(
             management_kubeconfig=settings.management_kubeconfig,
             management_kubeconfig_context=settings.management_kubeconfig_context,
             use_in_cluster_management=settings.kubernetes_in_cluster,

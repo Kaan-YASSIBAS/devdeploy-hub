@@ -9,7 +9,12 @@ from kubernetes import client
 from kubernetes.client.exceptions import ApiException
 
 from app.models.deployment_record import DeploymentRecord
-from app.services.gitops.kubernetes_status_reader import KubernetesGitOpsStatusReader
+from app.services.gitops.kubernetes_status_reader import (
+    ARGOCD_APPLICATION_GROUP,
+    ARGOCD_APPLICATION_PLURAL,
+    ARGOCD_APPLICATION_VERSION,
+    KubernetesGitOpsStatusReader,
+)
 from app.services.gitops.models import validate_app_name, validate_namespace
 from app.services.gitops.status_reader import (
     DEFAULT_ROOT_APPLICATION_NAME,
@@ -24,6 +29,7 @@ logger = logging.getLogger(__name__)
 DESTROY_REQUEST_TIMEOUT = (3, 10)
 ARGO_OBSERVATION_TIMEOUT_SECONDS = 25.0
 ARGO_OBSERVATION_INTERVAL_SECONDS = 1.0
+POST_CLEANUP_SYNC_TIMEOUT_SECONDS = 5.0
 STABILIZATION_RECHECKS = 2
 STABILIZATION_INTERVAL_SECONDS = 1.0
 MIN_SHORT_SHA_LENGTH = 7
@@ -51,6 +57,91 @@ class WorkloadRuntimeCleanupClient(Protocol):
 
 class RootApplicationObservationReader(Protocol):
     def read_root_application(self, request: GitOpsStatusRequest) -> RootApplicationSnapshot: ...
+
+    def request_reconciliation(self, request: GitOpsStatusRequest, revision: str) -> None: ...
+
+
+class KubernetesRootApplicationReconciler:
+    def __init__(
+        self,
+        *,
+        custom_api: Any,
+        request_timeout: tuple[int, int] = DESTROY_REQUEST_TIMEOUT,
+    ):
+        self.custom_api = custom_api
+        self.request_timeout = request_timeout
+        self.reader = KubernetesGitOpsStatusReader(
+            management_custom_api=custom_api,
+            workload_apps_api=None,
+            workload_core_api=None,
+            request_timeout=request_timeout,
+        )
+
+    @classmethod
+    def from_server_config(
+        cls,
+        *,
+        management_kubeconfig: str | None,
+        management_kubeconfig_context: str | None,
+        use_in_cluster_management: bool,
+    ) -> "KubernetesRootApplicationReconciler":
+        api_client = KubernetesGitOpsStatusReader._build_api_client(
+            kubeconfig_path=management_kubeconfig,
+            kubeconfig_context=management_kubeconfig_context,
+            allow_in_cluster=use_in_cluster_management,
+        )
+        return cls(custom_api=client.CustomObjectsApi(api_client))
+
+    def read_root_application(self, request: GitOpsStatusRequest) -> RootApplicationSnapshot:
+        return self.reader.read_root_application(request)
+
+    def request_reconciliation(self, request: GitOpsStatusRequest, revision: str) -> None:
+        self._patch_application(
+            request,
+            {
+                "metadata": {
+                    "annotations": {
+                        "argocd.argoproj.io/refresh": "normal",
+                    }
+                }
+            },
+        )
+        self._patch_application(
+            request,
+            {
+                "operation": {
+                    "sync": {
+                        "revision": revision.lower(),
+                        "prune": False,
+                    }
+                }
+            },
+        )
+
+    def _patch_application(self, request: GitOpsStatusRequest, body: dict[str, Any]) -> None:
+        try:
+            self.custom_api.patch_namespaced_custom_object(
+                group=ARGOCD_APPLICATION_GROUP,
+                version=ARGOCD_APPLICATION_VERSION,
+                namespace=request.root_application_namespace,
+                plural=ARGOCD_APPLICATION_PLURAL,
+                name=request.root_application_name,
+                body=body,
+                _content_type="application/merge-patch+json",
+                _request_timeout=self.request_timeout,
+            )
+        except ApiException as error:
+            logger.warning("Argo root Application patch failed with Kubernetes status %s.", error.status)
+            raise GitOpsStatusError(
+                "status_reader_unavailable",
+                "Deployment status is temporarily unavailable.",
+            ) from None
+        except Exception as error:
+            logger.warning("Argo root Application patch failed: %s.", error.__class__.__name__)
+            raise GitOpsStatusError(
+                "status_reader_unavailable",
+                "Deployment status is temporarily unavailable.",
+            ) from None
 
 
 class KubernetesWorkloadRuntimeCleanupClient:
@@ -294,6 +385,7 @@ class DeploymentDestroyRuntimeCleanupService:
         root_application_namespace: str = DEFAULT_ROOT_APPLICATION_NAMESPACE,
         argo_observation_timeout_seconds: float = ARGO_OBSERVATION_TIMEOUT_SECONDS,
         argo_observation_interval_seconds: float = ARGO_OBSERVATION_INTERVAL_SECONDS,
+        post_cleanup_sync_timeout_seconds: float = POST_CLEANUP_SYNC_TIMEOUT_SECONDS,
         sleeper=time.sleep,
     ):
         self.client = client
@@ -303,6 +395,7 @@ class DeploymentDestroyRuntimeCleanupService:
         self.root_application_namespace = root_application_namespace
         self.argo_observation_timeout_seconds = max(argo_observation_timeout_seconds, 0.0)
         self.argo_observation_interval_seconds = max(argo_observation_interval_seconds, 0.0)
+        self.post_cleanup_sync_timeout_seconds = max(post_cleanup_sync_timeout_seconds, 0.0)
         self.sleeper = sleeper
 
     def cleanup(
@@ -332,10 +425,17 @@ class DeploymentDestroyRuntimeCleanupService:
         if barrier is not None:
             return barrier
         try:
-            return self.client.cleanup_workload(
+            cleanup = self.client.cleanup_workload(
                 app_name=deployment.app_name,
                 namespace=deployment.namespace,
             )
+            if cleanup.status in {"completed", "not_required"}:
+                return self._with_post_cleanup_reconciliation_note(
+                    cleanup,
+                    deployment=deployment,
+                    destroy_commit_sha=destroy_commit_sha,
+                )
+            return cleanup
         except Exception as error:
             logger.warning("Deployment runtime cleanup failed: %s.", error.__class__.__name__)
             return DeploymentRuntimeCleanupResult(
@@ -375,6 +475,26 @@ class DeploymentDestroyRuntimeCleanupService:
             return self._pending_result(
                 "Runtime cleanup is waiting because the destroy revision could not be validated."
             )
+        try:
+            self.root_reader.request_reconciliation(request, destroy_commit_sha)
+        except GitOpsStatusError as error:
+            logger.warning("Argo destroy reconciliation request failed: %s.", error.code)
+            return DeploymentRuntimeCleanupResult(
+                status="unavailable",
+                deployment_deleted=False,
+                service_deleted=False,
+                message="Runtime cleanup is unavailable because Argo CD reconciliation could not be requested safely.",
+                checked_at=datetime.now(timezone.utc),
+            )
+        except Exception as error:
+            logger.warning("Argo destroy reconciliation request failed: %s.", error.__class__.__name__)
+            return DeploymentRuntimeCleanupResult(
+                status="unavailable",
+                deployment_deleted=False,
+                service_deleted=False,
+                message="Runtime cleanup is unavailable because Argo CD reconciliation could not be requested safely.",
+                checked_at=datetime.now(timezone.utc),
+            )
 
         deadline = time.monotonic() + self.argo_observation_timeout_seconds
         while True:
@@ -412,11 +532,88 @@ class DeploymentDestroyRuntimeCleanupService:
     def _root_observed_destroy_revision(root: RootApplicationSnapshot, expected_revision: str) -> bool:
         if not root.exists or root.failure_detected:
             return False
+        if root.operation_phase in {"Error", "Failed"}:
+            return False
+        if root.operation_phase != "Succeeded":
+            return False
+        if not DeploymentDestroyRuntimeCleanupService._revisions_match(
+            expected_revision,
+            root.observed_revision,
+        ):
+            return False
+        if root.operation_revision is not None and not DeploymentDestroyRuntimeCleanupService._revisions_match(
+            expected_revision,
+            root.operation_revision,
+        ):
+            return False
+        return True
+
+    def _with_post_cleanup_reconciliation_note(
+        self,
+        cleanup: DeploymentRuntimeCleanupResult,
+        *,
+        deployment: DeploymentRecord,
+        destroy_commit_sha: str | None,
+    ) -> DeploymentRuntimeCleanupResult:
+        if self.root_reader is None or not destroy_commit_sha:
+            return cleanup
+        try:
+            request = GitOpsStatusRequest(
+                app_name=deployment.app_name,
+                commit_sha=destroy_commit_sha,
+                namespace=self.managed_namespace,
+                root_application_name=self.root_application_name,
+                root_application_namespace=self.root_application_namespace,
+            )
+        except GitOpsStatusError:
+            return cleanup
+        deadline = time.monotonic() + self.post_cleanup_sync_timeout_seconds
+        while True:
+            try:
+                root = self.root_reader.read_root_application(request)
+            except Exception:
+                return self._copy_result(
+                    cleanup,
+                    message=f"{cleanup.message} Argo CD final sync status could not be verified yet.",
+                )
+            if (
+                self._root_synced_after_cleanup(root, destroy_commit_sha)
+                or time.monotonic() >= deadline
+            ):
+                if self._root_synced_after_cleanup(root, destroy_commit_sha):
+                    return cleanup
+                return self._copy_result(
+                    cleanup,
+                    message=f"{cleanup.message} Argo CD final sync status is still refreshing.",
+                )
+            if self.argo_observation_interval_seconds:
+                self.sleeper(self.argo_observation_interval_seconds)
+
+    @staticmethod
+    def _root_synced_after_cleanup(root: RootApplicationSnapshot, expected_revision: str) -> bool:
+        if not root.exists or root.failure_detected:
+            return False
+        if root.operation_phase in {"Error", "Failed"}:
+            return False
         if root.sync_status != "Synced":
             return False
         return DeploymentDestroyRuntimeCleanupService._revisions_match(
             expected_revision,
             root.observed_revision,
+        )
+
+    @staticmethod
+    def _copy_result(
+        cleanup: DeploymentRuntimeCleanupResult,
+        *,
+        message: str,
+    ) -> DeploymentRuntimeCleanupResult:
+        return DeploymentRuntimeCleanupResult(
+            status=cleanup.status,
+            deployment_deleted=cleanup.deployment_deleted,
+            service_deleted=cleanup.service_deleted,
+            message=message,
+            checked_at=cleanup.checked_at,
         )
 
     @staticmethod

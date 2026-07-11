@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Archive, Database, ExternalLink, Plus, RefreshCw, Rocket, RotateCcw, Search, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -124,6 +124,8 @@ export function DeploymentsPage() {
   const [accessByDeployment, setAccessByDeployment] = useState<Record<number, DeploymentAccess>>({});
   const [destroyTarget, setDestroyTarget] = useState<DeploymentRecord | null>(null);
   const [destroyConfirmName, setDestroyConfirmName] = useState("");
+  const [destroyInProgress, setDestroyInProgress] = useState<DeploymentRecord | null>(null);
+  const destroyToastId = useRef<ReturnType<typeof toast.loading> | undefined>(undefined);
   const recordsQuery = useQuery({
     queryKey: ["deployment-records", archiveFilter],
     queryFn: () => deploymentRecordsApi.list({ archiveFilter })
@@ -232,17 +234,25 @@ export function DeploymentsPage() {
   };
 
   const destroyMutation = useMutation({
-    mutationFn: (id: number) => deploymentRecordsApi.destroy(id),
-    onSuccess: async (response) => {
-      toast.success(
-        t(
-          response.status === "runtime_cleanup_pending"
-            ? "deployments.records.destroy.pending"
-            : "deployments.records.destroy.success"
-        )
-      );
+    mutationFn: (record: DeploymentRecord) => deploymentRecordsApi.destroy(record.id),
+    onMutate: (record) => {
+      setDestroyInProgress(record);
       setDestroyTarget(null);
       setDestroyConfirmName("");
+      destroyToastId.current = toast.loading(t("deployments.records.destroy.progress"));
+    },
+    onSuccess: async (response) => {
+      const messageKey =
+        response.status === "runtime_cleanup_pending"
+          ? "deployments.records.destroy.pending"
+          : "deployments.records.destroy.success";
+      if (response.status === "runtime_cleanup_pending") {
+        toast.warning(t(messageKey), { id: destroyToastId.current });
+      } else {
+        toast.success(t(messageKey), { id: destroyToastId.current });
+      }
+      setDestroyInProgress(null);
+      destroyToastId.current = undefined;
       await queryClient.invalidateQueries({ queryKey: ["deployment-records"] });
       await queryClient.invalidateQueries({ queryKey: ["service-definitions"] });
       await queryClient.invalidateQueries({ queryKey: ["untracked-deployments"] });
@@ -250,7 +260,11 @@ export function DeploymentsPage() {
       await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
       await queryClient.invalidateQueries({ queryKey: ["user-summary"] });
     },
-    onError: () => toast.error(t("deployments.records.destroy.error"))
+    onError: () => {
+      toast.error(t("deployments.records.destroy.error"), { id: destroyToastId.current });
+      setDestroyInProgress(null);
+      destroyToastId.current = undefined;
+    }
   });
 
   const openDestroyDialog = (record: DeploymentRecord) => {
@@ -592,7 +606,7 @@ export function DeploymentsPage() {
               {destroyEligible ? (
                 <Button
                   aria-label={t("deployments.records.destroy.action")}
-                  disabled={destroyMutation.isPending && destroyMutation.variables === record.id}
+                  disabled={destroyMutation.isPending}
                   size="sm"
                   variant="danger"
                   onClick={() => openDestroyDialog(record)}
@@ -787,6 +801,16 @@ export function DeploymentsPage() {
         />
       ) : null}
 
+      {destroyInProgress ? (
+        <div className="mb-5 flex items-start gap-3 rounded-lg border border-amber-300/20 bg-amber-400/[0.08] px-4 py-3 text-sm text-amber-50">
+          <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-amber-200" />
+          <div>
+            <p className="font-medium text-white">{t("deployments.records.destroy.progressTitle")}</p>
+            <p className="text-amber-100/90">{t("deployments.records.destroy.progress")}</p>
+          </div>
+        </div>
+      ) : null}
+
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <Tabs
           tabs={[
@@ -915,7 +939,7 @@ export function DeploymentsPage() {
                   destroyConfirmName.trim() !== destroyTarget.app_name
                 }
                 variant="danger"
-                onClick={() => destroyMutation.mutate(destroyTarget.id)}
+                onClick={() => destroyMutation.mutate(destroyTarget)}
               >
                 <Trash2 className="h-4 w-4" />
                 {destroyMutation.isPending

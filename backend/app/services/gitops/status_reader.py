@@ -65,6 +65,8 @@ class RootApplicationSnapshot:
     sync_status: str | None = None
     health_status: str | None = None
     failure_detected: bool = False
+    operation_phase: str | None = None
+    operation_revision: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

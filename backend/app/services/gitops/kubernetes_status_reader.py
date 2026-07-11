@@ -232,6 +232,14 @@ class KubernetesGitOpsStatusReader:
         status = status if isinstance(status, dict) else {}
         sync = status.get("sync") if isinstance(status.get("sync"), dict) else {}
         health = status.get("health") if isinstance(status.get("health"), dict) else {}
+        operation_state = status.get("operationState") if isinstance(status.get("operationState"), dict) else {}
+        operation_sync_result = (
+            operation_state.get("syncResult")
+            if isinstance(operation_state.get("syncResult"), dict)
+            else {}
+        )
+        operation = operation_state.get("operation") if isinstance(operation_state.get("operation"), dict) else {}
+        operation_sync = operation.get("sync") if isinstance(operation.get("sync"), dict) else {}
         conditions = status.get("conditions") if isinstance(status.get("conditions"), list) else []
         failure_detected = any(
             isinstance(condition, dict) and condition.get("type") in ARGOCD_FAILURE_CONDITIONS
@@ -243,6 +251,11 @@ class KubernetesGitOpsStatusReader:
             sync_status=self._string_or_none(sync.get("status")),
             health_status=self._string_or_none(health.get("status")),
             failure_detected=failure_detected,
+            operation_phase=self._string_or_none(operation_state.get("phase")),
+            operation_revision=(
+                self._string_or_none(operation_sync_result.get("revision"))
+                or self._string_or_none(operation_sync.get("revision"))
+            ),
         )
 
     @staticmethod

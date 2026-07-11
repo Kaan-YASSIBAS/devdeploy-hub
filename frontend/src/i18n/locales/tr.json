@@ -531,8 +531,10 @@
         "confirmLabel": "Onaylamak için {{name}} yaz.",
         "confirmAction": "Deployment'ı yok et",
         "submitting": "Yok ediliyor",
+        "progressTitle": "Kaldırma işlemi sürüyor",
+        "progress": "Deployment kaldırılıyor. DevDeploy GitOps değişikliğini gönderiyor, Argo CD senkronizasyonunu bekliyor ve ardından workload kaynaklarını temizliyor. Bu işlem birkaç saniye sürebilir.",
         "success": "Yok etme isteği tamamlandı ve runtime kaynaklarının yokluğu doğrulandı.",
-        "pending": "GitOps kaldırma tamamlandı. Runtime temizliği Argo CD gözlemi veya ek doğrulama bekliyor.",
+        "pending": "GitOps kaldırma tamamlandı. DevDeploy Argo CD senkronizasyonunu bekliyor; runtime temizliği otomatik olarak yeniden denenebilir.",
         "error": "Deployment yok edilemedi."
       },
       "access": {

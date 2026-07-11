@@ -5,6 +5,7 @@ from kubernetes.client.exceptions import ApiException
 
 from app.services.deployment_destroy_service import (
     DeploymentDestroyRuntimeCleanupService,
+    KubernetesRootApplicationReconciler,
     KubernetesWorkloadRuntimeCleanupClient,
 )
 from app.services.gitops.status_reader import RootApplicationSnapshot
@@ -66,12 +67,34 @@ class FakeRootReader:
     def __init__(self, roots):
         self.roots = list(roots)
         self.calls = []
+        self.reconcile_calls = []
 
     def read_root_application(self, request):
         self.calls.append(request)
         if len(self.roots) > 1:
             return self.roots.pop(0)
         return self.roots[0]
+
+    def request_reconciliation(self, request, revision):
+        self.reconcile_calls.append({"request": request, "revision": revision})
+
+
+class FakeCustomObjectsApi:
+    def __init__(self):
+        self.patch_calls = []
+        self.root = {
+            "status": {
+                "sync": {"revision": "a" * 40, "status": "Synced"},
+                "health": {"status": "Healthy"},
+            }
+        }
+
+    def patch_namespaced_custom_object(self, **kwargs):
+        self.patch_calls.append(kwargs)
+        return {}
+
+    def get_namespaced_custom_object(self, **kwargs):
+        return self.root
 
 
 class FakeCleanupClient:
@@ -177,6 +200,8 @@ class KubernetesWorkloadRuntimeCleanupClientTestCase(unittest.TestCase):
                     observed_revision="a" * 40,
                     sync_status="Synced",
                     health_status="Healthy",
+                    operation_phase="Succeeded",
+                    operation_revision="a" * 40,
                 )
             ]
         )
@@ -192,6 +217,7 @@ class KubernetesWorkloadRuntimeCleanupClientTestCase(unittest.TestCase):
 
         self.assertEqual(result.status, "pending")
         self.assertEqual(cleanup_client.calls, [])
+        self.assertEqual(root_reader.reconcile_calls[0]["revision"], "b" * 40)
 
     def test_destroy_service_matches_short_and_full_destroy_revisions(self) -> None:
         cleanup_client = FakeCleanupClient()
@@ -200,8 +226,10 @@ class KubernetesWorkloadRuntimeCleanupClientTestCase(unittest.TestCase):
                 RootApplicationSnapshot(
                     exists=True,
                     observed_revision=("b" * 40)[:12],
-                    sync_status="Synced",
+                    sync_status="OutOfSync",
                     health_status="Healthy",
+                    operation_phase="Succeeded",
+                    operation_revision="b" * 40,
                 )
             ]
         )
@@ -211,14 +239,16 @@ class KubernetesWorkloadRuntimeCleanupClientTestCase(unittest.TestCase):
             root_reader=root_reader,
             argo_observation_timeout_seconds=0,
             argo_observation_interval_seconds=0,
+            post_cleanup_sync_timeout_seconds=0,
         )
 
         result = service.cleanup(deployment_record(), destroy_commit_sha="b" * 40)
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(cleanup_client.calls, [{"app_name": "smoke-nginx", "namespace": "devdeploy-apps"}])
+        self.assertEqual(root_reader.reconcile_calls[0]["revision"], "b" * 40)
 
-    def test_destroy_service_waits_until_argo_reconciliation_is_synced(self) -> None:
+    def test_destroy_service_waits_until_argo_processed_destroy_revision(self) -> None:
         cleanup_client = FakeCleanupClient()
         root_reader = FakeRootReader(
             [
@@ -227,12 +257,16 @@ class KubernetesWorkloadRuntimeCleanupClientTestCase(unittest.TestCase):
                     observed_revision="c" * 40,
                     sync_status="OutOfSync",
                     health_status="Progressing",
+                    operation_phase="Running",
+                    operation_revision="c" * 40,
                 ),
                 RootApplicationSnapshot(
                     exists=True,
                     observed_revision="c" * 40,
-                    sync_status="Synced",
+                    sync_status="OutOfSync",
                     health_status="Healthy",
+                    operation_phase="Succeeded",
+                    operation_revision="c" * 40,
                 ),
             ]
         )
@@ -242,12 +276,14 @@ class KubernetesWorkloadRuntimeCleanupClientTestCase(unittest.TestCase):
             root_reader=root_reader,
             argo_observation_timeout_seconds=1,
             argo_observation_interval_seconds=0,
+            post_cleanup_sync_timeout_seconds=0,
         )
 
         result = service.cleanup(deployment_record(), destroy_commit_sha="c" * 40)
 
         self.assertEqual(result.status, "completed")
-        self.assertEqual(len(root_reader.calls), 2)
+        self.assertGreaterEqual(len(root_reader.calls), 2)
+        self.assertEqual(len(root_reader.reconcile_calls), 1)
 
     def test_destroy_service_reports_pending_on_argo_observation_timeout(self) -> None:
         cleanup_client = FakeCleanupClient()
@@ -258,6 +294,8 @@ class KubernetesWorkloadRuntimeCleanupClientTestCase(unittest.TestCase):
                     observed_revision="d" * 40,
                     sync_status="Synced",
                     health_status="Healthy",
+                    operation_phase="Succeeded",
+                    operation_revision="d" * 40,
                 )
             ]
         )
@@ -273,6 +311,126 @@ class KubernetesWorkloadRuntimeCleanupClientTestCase(unittest.TestCase):
 
         self.assertEqual(result.status, "pending")
         self.assertEqual(cleanup_client.calls, [])
+        self.assertEqual(len(root_reader.reconcile_calls), 1)
+
+    def test_destroy_service_reports_pending_when_argo_operation_failed(self) -> None:
+        cleanup_client = FakeCleanupClient()
+        root_reader = FakeRootReader(
+            [
+                RootApplicationSnapshot(
+                    exists=True,
+                    observed_revision="e" * 40,
+                    sync_status="Synced",
+                    health_status="Healthy",
+                    operation_phase="Failed",
+                    operation_revision="e" * 40,
+                )
+            ]
+        )
+        service = DeploymentDestroyRuntimeCleanupService(
+            client=cleanup_client,
+            managed_namespace="devdeploy-apps",
+            root_reader=root_reader,
+            argo_observation_timeout_seconds=0,
+            argo_observation_interval_seconds=0,
+        )
+
+        result = service.cleanup(deployment_record(), destroy_commit_sha="e" * 40)
+
+        self.assertEqual(result.status, "pending")
+        self.assertEqual(cleanup_client.calls, [])
+
+    def test_destroy_service_rejects_succeeded_operation_for_different_revision(self) -> None:
+        cleanup_client = FakeCleanupClient()
+        root_reader = FakeRootReader(
+            [
+                RootApplicationSnapshot(
+                    exists=True,
+                    observed_revision="f" * 40,
+                    sync_status="OutOfSync",
+                    health_status="Healthy",
+                    operation_phase="Succeeded",
+                    operation_revision="a" * 40,
+                )
+            ]
+        )
+        service = DeploymentDestroyRuntimeCleanupService(
+            client=cleanup_client,
+            managed_namespace="devdeploy-apps",
+            root_reader=root_reader,
+            argo_observation_timeout_seconds=0,
+            argo_observation_interval_seconds=0,
+        )
+
+        result = service.cleanup(deployment_record(), destroy_commit_sha="f" * 40)
+
+        self.assertEqual(result.status, "pending")
+        self.assertEqual(cleanup_client.calls, [])
+
+    def test_destroy_service_handles_post_cleanup_synced_status(self) -> None:
+        cleanup_client = FakeCleanupClient()
+        root_reader = FakeRootReader(
+            [
+                RootApplicationSnapshot(
+                    exists=True,
+                    observed_revision="1" * 40,
+                    sync_status="OutOfSync",
+                    health_status="Healthy",
+                    operation_phase="Succeeded",
+                    operation_revision="1" * 40,
+                ),
+                RootApplicationSnapshot(
+                    exists=True,
+                    observed_revision="1" * 40,
+                    sync_status="Synced",
+                    health_status="Healthy",
+                    operation_phase="Succeeded",
+                    operation_revision="1" * 40,
+                ),
+            ]
+        )
+        service = DeploymentDestroyRuntimeCleanupService(
+            client=cleanup_client,
+            managed_namespace="devdeploy-apps",
+            root_reader=root_reader,
+            argo_observation_timeout_seconds=0,
+            argo_observation_interval_seconds=0,
+            post_cleanup_sync_timeout_seconds=1,
+        )
+
+        result = service.cleanup(deployment_record(), destroy_commit_sha="1" * 40)
+
+        self.assertEqual(result.status, "completed")
+        self.assertNotIn("refreshing", result.message)
+
+    def test_root_application_reconciler_requests_refresh_and_normal_sync(self) -> None:
+        custom_api = FakeCustomObjectsApi()
+        reconciler = KubernetesRootApplicationReconciler(custom_api=custom_api)
+        request = SimpleNamespace(
+            root_application_namespace="argocd",
+            root_application_name="devdeploy-workloads-root",
+        )
+
+        reconciler.request_reconciliation(request, "F" * 40)
+
+        self.assertEqual(len(custom_api.patch_calls), 2)
+        self.assertEqual(
+            {call["name"] for call in custom_api.patch_calls},
+            {"devdeploy-workloads-root"},
+        )
+        self.assertEqual(
+            {call["namespace"] for call in custom_api.patch_calls},
+            {"argocd"},
+        )
+        self.assertEqual(
+            custom_api.patch_calls[0]["body"],
+            {"metadata": {"annotations": {"argocd.argoproj.io/refresh": "normal"}}},
+        )
+        sync_body = custom_api.patch_calls[1]["body"]["operation"]["sync"]
+        self.assertEqual(sync_body["revision"], "f" * 40)
+        self.assertFalse(sync_body["prune"])
+        self.assertNotIn("force", sync_body)
+        self.assertNotIn("syncOptions", sync_body)
 
 
 if __name__ == "__main__":

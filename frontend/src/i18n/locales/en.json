@@ -531,8 +531,10 @@
         "confirmLabel": "Type {{name}} to confirm.",
         "confirmAction": "Destroy deployment",
         "submitting": "Destroying",
+        "progressTitle": "Destroy in progress",
+        "progress": "Removing deployment. DevDeploy is pushing the GitOps change, waiting for Argo CD synchronization, and then cleaning up workload resources. This may take a few seconds.",
         "success": "Destroy request completed and runtime absence was verified.",
-        "pending": "GitOps removal completed. Runtime cleanup is waiting for Argo CD observation or follow-up verification.",
+        "pending": "GitOps removal completed. DevDeploy is waiting for Argo CD synchronization; runtime cleanup can be retried automatically.",
         "error": "Deployment could not be destroyed."
       },
       "access": {
