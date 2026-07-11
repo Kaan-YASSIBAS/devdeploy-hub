@@ -4,7 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
-IntegrationStatus = Literal["connected", "not_configured", "error"]
+IntegrationStatus = Literal["connected", "not_configured", "error", "optional"]
 
 
 class ProfileSettingsResponse(BaseModel):
@@ -53,7 +53,7 @@ class ApiTokenCreateResponse(BaseModel):
 
 
 class IntegrationStatusResponse(BaseModel):
-    key: Literal["github", "argocd", "kubernetes", "grafana"]
+    key: Literal["github", "argocd", "kubernetes", "prometheus", "loki", "grafana"]
     name: str
     status: IntegrationStatus
     detail: str | None = None

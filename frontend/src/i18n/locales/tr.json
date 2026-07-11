@@ -394,7 +394,7 @@
         "confirm": "Bu işlem yalnızca DevDeploy servis kaydını kalıcı olarak siler. Kubernetes Service veya GitOps manifestlerini silmez.",
         "success": "Servis kaydı kalıcı olarak silindi.",
         "error": "Servis kaydı silinemedi.",
-        "inUse": "Bu servis hâlâ deployment kayıtları tarafından kullanılıyor."
+        "inUse": "Bu servis hala deployment kayıtları tarafından kullanılıyor."
       }
     },
     "table": {
@@ -834,7 +834,40 @@
     "notReachable": "Erişilemiyor",
     "kubernetes": "Kubernetes",
     "prometheus": "Prometheus",
-    "loki": "Loki"
+    "loki": "Loki",
+    "status": {
+      "connected": "Bağlı",
+      "not_configured": "Yapılandırılmadı",
+      "degraded": "Kısıtlı",
+      "unavailable": "Kullanılamıyor",
+      "optional": "Opsiyonel"
+    },
+    "messages": {
+      "kubernetes": {
+        "connected": "Read-only Kubernetes API erişimi mevcut.",
+        "not_configured": "Kubernetes client yapılandırması mevcut değil.",
+        "unavailable": "Kubernetes API erişilebilir değil.",
+        "degraded": "Kubernetes health yanıtı okunamadı."
+      },
+      "prometheus": {
+        "connected": "Prometheus backend üzerinden erişilebilir.",
+        "not_configured": "Prometheus backend erişimi yapılandırılmadı.",
+        "unavailable": "Prometheus yapılandırılmış ancak erişilemiyor.",
+        "degraded": "Prometheus okunabilir bir health yanıtı döndürmedi."
+      },
+      "loki": {
+        "connected": "Loki backend üzerinden erişilebilir.",
+        "not_configured": "Loki backend erişimi yapılandırılmadı.",
+        "unavailable": "Loki yapılandırılmış ancak erişilemiyor.",
+        "degraded": "Loki okunabilir bir health yanıtı döndürmedi."
+      },
+      "grafana": {
+        "connected": "Grafana health endpoint erişilebilir.",
+        "optional": "Grafana opsiyoneldir ve yapılandırılmadı.",
+        "unavailable": "Grafana yapılandırılmış ancak erişilemiyor.",
+        "degraded": "Grafana okunabilir bir health yanıtı döndürmedi."
+      }
+    }
   },
   "logs": {
     "title": "Loglar",
@@ -1169,7 +1202,8 @@
       "status": {
         "connected": "Bağlı",
         "not_configured": "Yapılandırılmadı",
-        "error": "Hata"
+        "error": "Hata",
+        "optional": "Opsiyonel"
       },
       "details": {
         "github": {
@@ -1187,10 +1221,23 @@
           "not_configured": "Kubernetes client yapılandırması mevcut değil.",
           "error": "Kubernetes API isteği başarısız."
         },
+        "prometheus": {
+          "connected": "Prometheus backend üzerinden erişilebilir.",
+          "not_configured": "Prometheus backend erişimi yapılandırılmadı.",
+          "error": "Prometheus yapılandırılmış ancak kullanılamıyor.",
+          "optional": "Prometheus ürün kayıtları için opsiyoneldir; metrik grafikleri için gereklidir."
+        },
+        "loki": {
+          "connected": "Loki backend üzerinden erişilebilir.",
+          "not_configured": "Loki backend erişimi yapılandırılmadı.",
+          "error": "Loki yapılandırılmış ancak kullanılamıyor.",
+          "optional": "Loki ürün kayıtları için opsiyoneldir; runtime logları için gereklidir."
+        },
         "grafana": {
           "connected": "Grafana health endpoint erişilebilir.",
           "not_configured": "Grafana URL yapılandırılmadı.",
-          "error": "Grafana health kontrolü başarısız."
+          "error": "Grafana health kontrolü başarısız.",
+          "optional": "Grafana opsiyoneldir; DevDeploy Monitoring ve Loglar backend API'lerini kullanır."
         }
       }
     }

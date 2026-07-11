@@ -12,7 +12,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { EmptyState } from "@/components/shared/EmptyState";
 import type { LogEntry } from "@/types";
 
-const DEFAULT_NAMESPACE = "devdeploy";
+const DEFAULT_NAMESPACE = "devdeploy-apps";
 const limits = [50, 100, 200, 500];
 
 function formatLogTimestamp(value: string) {
@@ -62,11 +62,16 @@ export function LogsPage() {
   const [autoScroll, setAutoScroll] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const healthQuery = useQuery({ queryKey: ["observability", "health"], queryFn: observabilityApi.health });
+  const lokiHealth = healthQuery.data?.loki;
+  const lokiReady = Boolean(lokiHealth?.available);
+  const lokiUnavailable = Boolean(lokiHealth && !lokiHealth.available) || healthQuery.isError;
   const namespacesQuery = useQuery({ queryKey: ["observability", "namespaces"], queryFn: observabilityApi.namespaces });
   const podsQuery = useQuery({ queryKey: ["observability", "pods", namespace], queryFn: () => observabilityApi.pods(namespace) });
   const logsQuery = useQuery({
     queryKey: ["observability", "logs", namespace, pod, limit],
-    queryFn: () => observabilityApi.logs({ namespace, pod: pod === "all" ? undefined : pod, limit })
+    queryFn: () => observabilityApi.logs({ namespace, pod: pod === "all" ? undefined : pod, limit }),
+    enabled: lokiReady
   });
 
   const namespaceOptions = namespacesQuery.data?.map((item) => ({ value: item.name, label: item.name })) ?? [{ value: namespace, label: namespace }];
@@ -105,12 +110,21 @@ export function LogsPage() {
   };
 
   const refresh = () => {
+    void healthQuery.refetch();
     void namespacesQuery.refetch();
     void podsQuery.refetch();
-    void logsQuery.refetch();
+    if (lokiReady) {
+      void logsQuery.refetch();
+    }
   };
 
-  const errorDescription = logsQuery.error ? t(getErrorKey(getApiErrorStatus(logsQuery.error))) : t("logs.emptyDescription");
+  const errorDescription = lokiUnavailable
+    ? healthQuery.isError
+      ? t(getErrorKey(getApiErrorStatus(healthQuery.error)))
+      : t(`observability.messages.${lokiHealth?.message_code ?? "loki.unavailable"}`)
+    : logsQuery.error
+      ? t(getErrorKey(getApiErrorStatus(logsQuery.error)))
+      : t("logs.emptyDescription");
 
   return (
     <div>
@@ -165,10 +179,16 @@ export function LogsPage() {
           <CardTitle>{t("logs.terminalTitle")}</CardTitle>
         </CardHeader>
         <CardContent>
-          {logsQuery.isLoading || logsQuery.isError || !filteredLogs.length ? (
+          {healthQuery.isLoading || lokiUnavailable || logsQuery.isLoading || logsQuery.isError || !filteredLogs.length ? (
             <EmptyState
-              description={logsQuery.isLoading ? t("logs.loadingDescription") : errorDescription}
-              title={logsQuery.isLoading ? t("common.loading") : logsQuery.isError ? t("logs.unavailableTitle") : t("logs.emptyTitle")}
+              description={healthQuery.isLoading || logsQuery.isLoading ? t("logs.loadingDescription") : errorDescription}
+              title={
+                healthQuery.isLoading || logsQuery.isLoading
+                  ? t("common.loading")
+                  : lokiUnavailable || logsQuery.isError
+                    ? t("logs.unavailableTitle")
+                    : t("logs.emptyTitle")
+              }
             />
           ) : (
             <div ref={containerRef} className="scrollbar-soft max-h-[620px] overflow-auto rounded-2xl border border-white/10 bg-slate-950/80 font-mono text-xs shadow-inner">

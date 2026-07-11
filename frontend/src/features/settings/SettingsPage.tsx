@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  Activity,
   CheckCircle2,
   Copy,
   Github,
@@ -9,6 +10,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  ScrollText,
   ShieldCheck,
   Trash2,
   UserRound,
@@ -36,6 +38,8 @@ const integrationIcons = {
   github: Github,
   argocd: Workflow,
   kubernetes: ShieldCheck,
+  prometheus: Activity,
+  loki: ScrollText,
   grafana: MonitorCog
 } satisfies Record<IntegrationStatusItem["key"], typeof Github>;
 
@@ -59,6 +63,10 @@ function integrationVariant(status: IntegrationStatus) {
 
   if (status === "error") {
     return "danger";
+  }
+
+  if (status === "optional") {
+    return "warning";
   }
 
   return "muted";

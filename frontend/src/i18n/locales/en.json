@@ -834,7 +834,40 @@
     "notReachable": "Not reachable",
     "kubernetes": "Kubernetes",
     "prometheus": "Prometheus",
-    "loki": "Loki"
+    "loki": "Loki",
+    "status": {
+      "connected": "Connected",
+      "not_configured": "Not configured",
+      "degraded": "Degraded",
+      "unavailable": "Unavailable",
+      "optional": "Optional"
+    },
+    "messages": {
+      "kubernetes": {
+        "connected": "Read-only Kubernetes API access is available.",
+        "not_configured": "Kubernetes client configuration is not available.",
+        "unavailable": "Kubernetes API is not reachable.",
+        "degraded": "Kubernetes health response could not be read."
+      },
+      "prometheus": {
+        "connected": "Prometheus is reachable through the backend.",
+        "not_configured": "Prometheus backend access is not configured.",
+        "unavailable": "Prometheus is configured but not reachable.",
+        "degraded": "Prometheus returned an unreadable health response."
+      },
+      "loki": {
+        "connected": "Loki is reachable through the backend.",
+        "not_configured": "Loki backend access is not configured.",
+        "unavailable": "Loki is configured but not reachable.",
+        "degraded": "Loki returned an unreadable health response."
+      },
+      "grafana": {
+        "connected": "Grafana health endpoint is reachable.",
+        "optional": "Grafana is optional and is not configured.",
+        "unavailable": "Grafana is configured but not reachable.",
+        "degraded": "Grafana returned an unreadable health response."
+      }
+    }
   },
   "logs": {
     "title": "Logs",
@@ -1169,7 +1202,8 @@
       "status": {
         "connected": "Connected",
         "not_configured": "Not configured",
-        "error": "Error"
+        "error": "Error",
+        "optional": "Optional"
       },
       "details": {
         "github": {
@@ -1187,10 +1221,23 @@
           "not_configured": "Kubernetes client configuration is not available.",
           "error": "Kubernetes API request failed."
         },
+        "prometheus": {
+          "connected": "Prometheus is reachable through the backend.",
+          "not_configured": "Prometheus backend access is not configured.",
+          "error": "Prometheus is configured but unavailable.",
+          "optional": "Prometheus is optional for product records, but required for metric charts."
+        },
+        "loki": {
+          "connected": "Loki is reachable through the backend.",
+          "not_configured": "Loki backend access is not configured.",
+          "error": "Loki is configured but unavailable.",
+          "optional": "Loki is optional for product records, but required for runtime logs."
+        },
         "grafana": {
           "connected": "Grafana health endpoint is reachable.",
           "not_configured": "Grafana URL is not configured.",
-          "error": "Grafana health check failed."
+          "error": "Grafana health check failed.",
+          "optional": "Grafana is optional; DevDeploy Monitoring and Logs use backend APIs."
         }
       }
     }

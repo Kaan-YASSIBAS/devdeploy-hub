@@ -32,6 +32,7 @@ import type {
   LogEntry,
   MetricsTimeSeries,
   ObservabilityHealth,
+  ObservabilityStatus,
   PlatformClusterHealthResponse,
   IntegrationStatusItem,
   ProfileSettings,
@@ -341,6 +342,10 @@ export async function getGitOpsAppStatus(appName: string, commitSha: string) {
 export const observabilityApi = {
   async health() {
     const { data } = await apiClient.get<ObservabilityHealth>("/observability/health");
+    return data;
+  },
+  async status() {
+    const { data } = await apiClient.get<ObservabilityStatus>("/observability/status");
     return data;
   },
   async clusterSummary() {

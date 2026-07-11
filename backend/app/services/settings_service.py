@@ -18,6 +18,7 @@ from app.schemas.settings import (
 )
 from app.services.kubernetes_service import KubernetesService
 from app.services.observability_errors import ObservabilityUnavailableError
+from app.services.observability_status_service import ObservabilityStatusService
 
 
 DEFAULT_WORKSPACE_NAME = "DevDeploy Hub Workspace"
@@ -111,12 +112,14 @@ class SettingsService:
             SettingsService._safe_integration_status("github", "GitHub", SettingsService._github_status),
             SettingsService._safe_integration_status("argocd", "Argo CD", SettingsService._argocd_status),
             SettingsService._safe_integration_status("kubernetes", "Kubernetes", SettingsService._kubernetes_status),
+            SettingsService._safe_integration_status("prometheus", "Prometheus", SettingsService._prometheus_status),
+            SettingsService._safe_integration_status("loki", "Loki", SettingsService._loki_status),
             SettingsService._safe_integration_status("grafana", "Grafana", SettingsService._grafana_status),
         ]
 
     @staticmethod
     def _safe_integration_status(
-        key: Literal["github", "argocd", "kubernetes", "grafana"],
+        key: Literal["github", "argocd", "kubernetes", "prometheus", "loki", "grafana"],
         name: str,
         check: Callable[[], IntegrationStatusResponse],
     ) -> IntegrationStatusResponse:
@@ -252,28 +255,37 @@ class SettingsService:
 
     @staticmethod
     def _grafana_status() -> IntegrationStatusResponse:
-        if not settings.grafana_base_url:
-            return IntegrationStatusResponse(
-                key="grafana",
-                name="Grafana",
-                status="not_configured",
-                detail="GRAFANA_BASE_URL is not configured.",
-            )
+        component = ObservabilityStatusService().get_status().grafana
+        return SettingsService._observability_integration("grafana", "Grafana", component)
 
-        base_url = settings.grafana_base_url.rstrip("/")
-        try:
-            response = httpx.get(f"{base_url}/api/health", timeout=8.0)
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            return IntegrationStatusResponse(
-                key="grafana",
-                name="Grafana",
-                status="error",
-                detail=f"Grafana health check failed: {exc.__class__.__name__}",
-            )
+    @staticmethod
+    def _prometheus_status() -> IntegrationStatusResponse:
+        component = ObservabilityStatusService().get_status().prometheus
+        return SettingsService._observability_integration("prometheus", "Prometheus", component)
+
+    @staticmethod
+    def _loki_status() -> IntegrationStatusResponse:
+        component = ObservabilityStatusService().get_status().loki
+        return SettingsService._observability_integration("loki", "Loki", component)
+
+    @staticmethod
+    def _observability_integration(
+        key: Literal["prometheus", "loki", "grafana"],
+        name: str,
+        component,
+    ) -> IntegrationStatusResponse:
+        status: Literal["connected", "not_configured", "error", "optional"]
+        if component.status == "connected":
+            status = "connected"
+        elif component.status == "not_configured":
+            status = "not_configured"
+        elif component.status == "optional":
+            status = "optional"
+        else:
+            status = "error"
         return IntegrationStatusResponse(
-            key="grafana",
-            name="Grafana",
-            status="connected",
-            detail="Grafana health endpoint is reachable.",
+            key=key,
+            name=name,
+            status=status,
+            detail=component.detail,
         )

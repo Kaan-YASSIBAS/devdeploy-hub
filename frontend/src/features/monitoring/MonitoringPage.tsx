@@ -13,7 +13,7 @@ import { MetricChart } from "@/components/shared/MetricChart";
 import { StatCard } from "@/components/shared/StatCard";
 import type { MetricSeries, ObservabilityComponentHealth } from "@/types";
 
-const DEFAULT_NAMESPACE = "devdeploy";
+const DEFAULT_NAMESPACE = "devdeploy-apps";
 const DEFAULT_RANGE = "15m";
 const DEFAULT_AUTO_REFRESH = "5s";
 
@@ -139,7 +139,9 @@ function seriesEmptyDescriptionKey(series: MetricSeries | undefined) {
 function HealthCard({ isLoading, label, health }: { isLoading: boolean; label: string; health?: ObservabilityComponentHealth }) {
   const { t } = useTranslation();
   const available = Boolean(health?.available);
-  const statusLabel = isLoading ? t("common.loading") : available ? t("observability.available") : t("common.unavailable");
+  const status = health?.status ?? (available ? "connected" : "unavailable");
+  const statusLabel = isLoading ? t("common.loading") : t(`observability.status.${status}`);
+  const badgeVariant = isLoading ? "muted" : available ? "success" : status === "unavailable" || status === "degraded" ? "warning" : "muted";
 
   return (
     <Card className="p-5">
@@ -153,10 +155,15 @@ function HealthCard({ isLoading, label, health }: { isLoading: boolean; label: s
         </div>
       </div>
       <div className="mt-5">
-        <Badge variant={isLoading ? "muted" : available ? "success" : "warning"}>
-          {isLoading ? t("common.loading") : available ? t("observability.connected") : t("observability.notReachable")}
+        <Badge variant={badgeVariant}>
+          {isLoading ? t("common.loading") : t(`observability.status.${status}`)}
         </Badge>
       </div>
+      {!isLoading && health?.message_code ? (
+        <p className="mt-3 text-xs leading-5 text-slate-400">
+          {t(`observability.messages.${health.message_code}`)}
+        </p>
+      ) : null}
     </Card>
   );
 }
@@ -213,14 +220,21 @@ export function MonitoringPage() {
   const [autoRefresh, setAutoRefresh] = useState(DEFAULT_AUTO_REFRESH);
   const [namespace, setNamespace] = useState(DEFAULT_NAMESPACE);
   const healthQuery = useQuery({ queryKey: ["observability", "health"], queryFn: observabilityApi.health });
-  const clusterMetricsQuery = useQuery({ queryKey: ["observability", "metrics", "cluster"], queryFn: observabilityApi.clusterMetrics });
+  const prometheusReady = Boolean(healthQuery.data?.prometheus.available);
+  const clusterMetricsQuery = useQuery({
+    queryKey: ["observability", "metrics", "cluster"],
+    queryFn: observabilityApi.clusterMetrics,
+    enabled: prometheusReady
+  });
   const namespaceMetricsQuery = useQuery({
     queryKey: ["observability", "metrics", "namespace", namespace],
-    queryFn: () => observabilityApi.namespaceMetrics(namespace)
+    queryFn: () => observabilityApi.namespaceMetrics(namespace),
+    enabled: prometheusReady
   });
   const timeSeriesQuery = useQuery({
     queryKey: ["observability", "metrics", "timeseries", namespace, range],
-    queryFn: () => observabilityApi.metricsTimeseries({ namespace, range })
+    queryFn: () => observabilityApi.metricsTimeseries({ namespace, range }),
+    enabled: prometheusReady
   });
   const namespacesQuery = useQuery({ queryKey: ["observability", "namespaces"], queryFn: observabilityApi.namespaces });
   const namespaceOptions = namespacesQuery.data?.map((item) => ({ value: item.name, label: item.name })) ?? [{ value: namespace, label: namespace }];
@@ -231,7 +245,7 @@ export function MonitoringPage() {
   const clusterMetrics = clusterMetricsQuery.data;
   const namespaceMetrics = namespaceMetricsQuery.data;
   const seriesByKey = new Map((timeSeriesQuery.data?.series ?? []).map((item) => [item.key, item]));
-  const prometheusUnavailable = getApiErrorStatus(timeSeriesQuery.error) === 503;
+  const prometheusUnavailable = Boolean(healthQuery.data?.prometheus && !healthQuery.data.prometheus.available) || getApiErrorStatus(timeSeriesQuery.error) === 503;
   const autoRefreshDelay = refreshIntervalMs(autoRefresh);
   const autoRefreshLabel = t(refreshIntervalOptions.find((item) => item.value === autoRefresh)?.labelKey ?? "monitoring.refreshIntervals.off");
   const lastRefreshedAt = Math.max(
@@ -254,11 +268,13 @@ export function MonitoringPage() {
       return;
     }
     void healthQuery.refetch();
-    void clusterMetricsQuery.refetch();
-    void namespaceMetricsQuery.refetch();
-    void timeSeriesQuery.refetch();
+    if (prometheusReady) {
+      void clusterMetricsQuery.refetch();
+      void namespaceMetricsQuery.refetch();
+      void timeSeriesQuery.refetch();
+    }
     void namespacesQuery.refetch();
-  }, [clusterMetricsQuery, healthQuery, isFetching, namespaceMetricsQuery, namespacesQuery, timeSeriesQuery]);
+  }, [clusterMetricsQuery, healthQuery, isFetching, namespaceMetricsQuery, namespacesQuery, prometheusReady, timeSeriesQuery]);
 
   useEffect(() => {
     if (!autoRefreshDelay) {

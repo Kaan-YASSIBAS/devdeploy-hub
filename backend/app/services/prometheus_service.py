@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.services.observability_http import QUERY_TIMEOUT, RANGE_QUERY_TIMEOUT, get_bounded_json
 from app.services.observability_errors import ObservabilityUnavailableError
 from app.services.observability_query import (
     escape_label_value,
@@ -32,21 +33,26 @@ class PrometheusService:
     def query(self, promql: str) -> dict[str, Any]:
         url = f"{self.base_url}/api/v1/query"
         try:
-            response = httpx.get(url, params={"query": promql}, timeout=5.0)
-            response.raise_for_status()
+            payload = get_bounded_json(
+                url,
+                params={"query": promql},
+                timeout=QUERY_TIMEOUT,
+                service_name="Prometheus",
+            )
+        except httpx.TimeoutException as exc:
+            raise ObservabilityUnavailableError("Prometheus request timed out.") from exc
+        except httpx.HTTPStatusError as exc:
+            raise ObservabilityUnavailableError("Prometheus returned an unsuccessful response.") from exc
         except httpx.HTTPError as exc:
-            raise ObservabilityUnavailableError(f"Prometheus unavailable: {exc}") from exc
-
-        payload = response.json()
+            raise ObservabilityUnavailableError("Prometheus is unreachable.") from exc
         if payload.get("status") != "success":
-            error = payload.get("error") or "query failed"
-            raise ObservabilityUnavailableError(f"Prometheus query failed: {error}")
+            raise ObservabilityUnavailableError("Prometheus query failed.")
         return payload
 
     def query_range(self, promql: str, start: datetime, end: datetime, step: str) -> dict[str, Any]:
         url = f"{self.base_url}/api/v1/query_range"
         try:
-            response = httpx.get(
+            payload = get_bounded_json(
                 url,
                 params={
                     "query": promql,
@@ -54,16 +60,17 @@ class PrometheusService:
                     "end": end.timestamp(),
                     "step": step,
                 },
-                timeout=8.0,
+                timeout=RANGE_QUERY_TIMEOUT,
+                service_name="Prometheus",
             )
-            response.raise_for_status()
+        except httpx.TimeoutException as exc:
+            raise ObservabilityUnavailableError("Prometheus request timed out.") from exc
+        except httpx.HTTPStatusError as exc:
+            raise ObservabilityUnavailableError("Prometheus returned an unsuccessful response.") from exc
         except httpx.HTTPError as exc:
-            raise ObservabilityUnavailableError(f"Prometheus unavailable: {exc}") from exc
-
-        payload = response.json()
+            raise ObservabilityUnavailableError("Prometheus is unreachable.") from exc
         if payload.get("status") != "success":
-            error = payload.get("error") or "query failed"
-            raise PrometheusQueryError(str(error))
+            raise PrometheusQueryError("Prometheus range query failed.")
         return payload
 
     def get_cluster_metrics_summary(self) -> dict[str, float]:

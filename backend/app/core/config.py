@@ -14,15 +14,19 @@ class Settings(BaseSettings):
     environment: str = Field(default="development", alias="ENVIRONMENT")
     kubernetes_in_cluster: bool = Field(default=False, alias="KUBERNETES_IN_CLUSTER")
     kubeconfig_path: str | None = Field(default=None, alias="KUBECONFIG_PATH")
-    prometheus_base_url: str = Field(
-        default="http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090",
-        alias="PROMETHEUS_BASE_URL",
-    )
-    loki_base_url: str = Field(
-        default="http://loki-gateway.monitoring.svc.cluster.local",
-        alias="LOKI_BASE_URL",
-    )
+    prometheus_base_url: str = Field(default="", alias="PROMETHEUS_BASE_URL")
+    loki_base_url: str = Field(default="", alias="LOKI_BASE_URL")
     grafana_base_url: str | None = Field(default=None, alias="GRAFANA_BASE_URL")
+    observability_health_cache_seconds: int = Field(
+        default=10,
+        alias="OBSERVABILITY_HEALTH_CACHE_SECONDS",
+        ge=0,
+    )
+    observability_max_response_bytes: int = Field(
+        default=2 * 1024 * 1024,
+        alias="OBSERVABILITY_MAX_RESPONSE_BYTES",
+        ge=1024,
+    )
     gitops_enabled: bool = Field(default=False, alias="GITOPS_ENABLED")
     github_owner: str = Field(default="Kaan-YASSIBAS", alias="GITHUB_OWNER")
     github_repo: str = Field(default="devdeploy-hub", alias="GITHUB_REPO")

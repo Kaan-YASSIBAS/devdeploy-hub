@@ -534,12 +534,21 @@ export type MockLogEntry = {
 export type ObservabilityComponentHealth = {
   available: boolean;
   detail?: string | null;
+  status?: "connected" | "not_configured" | "degraded" | "unavailable" | "optional";
+  checked_at?: string | null;
+  message_code?: string | null;
+  capabilities?: Record<string, boolean>;
+  version?: string | null;
 };
 
 export type ObservabilityHealth = {
   kubernetes: ObservabilityComponentHealth;
   prometheus: ObservabilityComponentHealth;
   loki: ObservabilityComponentHealth;
+};
+
+export type ObservabilityStatus = ObservabilityHealth & {
+  grafana: ObservabilityComponentHealth;
 };
 
 export type ClusterSummary = {
@@ -682,10 +691,10 @@ export type ApiTokenCreateResponse = {
   item: ApiToken;
 };
 
-export type IntegrationStatus = "connected" | "not_configured" | "error";
+export type IntegrationStatus = "connected" | "not_configured" | "error" | "optional";
 
 export type IntegrationStatusItem = {
-  key: "github" | "argocd" | "kubernetes" | "grafana";
+  key: "github" | "argocd" | "kubernetes" | "prometheus" | "loki" | "grafana";
   name: string;
   status: IntegrationStatus;
   detail: string | null;

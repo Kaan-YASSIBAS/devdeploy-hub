@@ -1,17 +1,37 @@
 from datetime import datetime
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+
+ObservabilityComponentStatus = Literal[
+    "connected",
+    "not_configured",
+    "degraded",
+    "unavailable",
+    "optional",
+]
 
 
 class ObservabilityComponentHealth(BaseModel):
     available: bool
     detail: str | None = None
+    status: ObservabilityComponentStatus = "unavailable"
+    checked_at: datetime | None = None
+    message_code: str | None = None
+    capabilities: dict[str, bool] = Field(default_factory=dict)
+    version: str | None = None
 
 
 class ObservabilityHealth(BaseModel):
     kubernetes: ObservabilityComponentHealth
     prometheus: ObservabilityComponentHealth
     loki: ObservabilityComponentHealth
+
+
+class ObservabilityStatus(ObservabilityHealth):
+    grafana: ObservabilityComponentHealth
 
 
 class ClusterSummary(BaseModel):
