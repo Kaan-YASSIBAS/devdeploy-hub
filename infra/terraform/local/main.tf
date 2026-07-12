@@ -92,8 +92,12 @@ resource "helm_release" "kube_prometheus_stack" {
   values = [
     yamlencode({
       grafana = {
-        enabled       = true
-        adminPassword = "admin"
+        enabled = true
+        admin = {
+          existingSecret = "devdeploy-grafana-admin"
+          userKey        = "admin-user"
+          passwordKey    = "admin-password"
+        }
         service = {
           type = "ClusterIP"
         }

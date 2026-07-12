@@ -12,6 +12,7 @@ from app.core.deps import get_current_user
 from app.schemas.observability import ObservabilityComponentHealth, ObservabilityStatus
 from app.services.loki_service import LokiService
 from app.services.observability_errors import ObservabilityUnavailableError
+from app.services.observability_service_proxy import KubernetesServiceProxyTransport
 from app.services.observability_status_service import ObservabilityStatusService
 from app.services.prometheus_service import PrometheusService
 
@@ -60,6 +61,25 @@ class StreamResponse:
 
     def iter_bytes(self):
         yield self.payload
+
+
+class KubernetesProxyResponse:
+    def __init__(self, payload: bytes = b'{"status":"success","data":{"result":[]}}') -> None:
+        self.payload = payload
+        self.headers = {"content-type": "application/json"}
+
+    def stream(self, amt: int = 65536):
+        yield self.payload
+
+
+class FakeApiClient:
+    def __init__(self, response: KubernetesProxyResponse | None = None) -> None:
+        self.response = response or KubernetesProxyResponse()
+        self.calls: list[dict[str, object]] = []
+
+    def call_api(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.response
 
 
 class ObservabilityStatusApiTestCase(unittest.TestCase):
@@ -331,6 +351,106 @@ class PrometheusAndLokiHealthParsingTestCase(unittest.TestCase):
             LokiService(base_url="http://loki.example").query_logs(namespace="devdeploy-apps", limit=10_000)
 
         self.assertEqual(stream.call_args.kwargs["params"]["limit"], 500)
+
+
+class ObservabilityServiceProxyTransportTestCase(unittest.TestCase):
+    def transport(self) -> tuple[KubernetesServiceProxyTransport, FakeApiClient]:
+        api_client = FakeApiClient()
+        return (
+            KubernetesServiceProxyTransport(
+                api_client=api_client,
+                namespace="monitoring",
+                max_response_bytes=2 * 1024 * 1024,
+            ),
+            api_client,
+        )
+
+    def test_prometheus_service_proxy_uses_fixed_allowlisted_path(self) -> None:
+        transport, api_client = self.transport()
+
+        payload = transport.prometheus_query({"query": "up"})
+
+        self.assertEqual(payload["status"], "success")
+        call = api_client.calls[0]
+        self.assertEqual(
+            call["resource_path"],
+            "/api/v1/namespaces/monitoring/services/kube-prometheus-stack-prometheus:9090/proxy/api/v1/query",
+        )
+        self.assertEqual(call["method"], "GET")
+        self.assertFalse(call["_preload_content"])
+
+    def test_loki_service_proxy_uses_fixed_allowlisted_path(self) -> None:
+        transport, api_client = self.transport()
+
+        transport.loki_query_range({"query": '{namespace="devdeploy-apps"}', "limit": 1})
+
+        self.assertEqual(
+            api_client.calls[0]["resource_path"],
+            "/api/v1/namespaces/monitoring/services/loki-gateway:80/proxy/loki/api/v1/query_range",
+        )
+
+    def test_grafana_service_proxy_uses_fixed_allowlisted_path(self) -> None:
+        transport, api_client = self.transport()
+
+        transport.grafana_health()
+
+        self.assertEqual(
+            api_client.calls[0]["resource_path"],
+            "/api/v1/namespaces/monitoring/services/kube-prometheus-stack-grafana:80/proxy/api/health",
+        )
+
+    def test_arbitrary_proxy_path_is_rejected(self) -> None:
+        transport, _ = self.transport()
+
+        with self.assertRaisesRegex(ObservabilityUnavailableError, "not allowed"):
+            transport.request_json(
+                service_name="loki-gateway",
+                service_port=80,
+                path="/api/v1/namespaces/default/secrets",
+                params={},
+                service_label="Loki",
+            )
+
+    def test_arbitrary_service_or_namespace_is_rejected(self) -> None:
+        api_client = FakeApiClient()
+
+        with self.assertRaisesRegex(ObservabilityUnavailableError, "namespace"):
+            KubernetesServiceProxyTransport(
+                api_client=api_client,
+                namespace="../default",
+                max_response_bytes=100,
+            )
+
+        transport, _ = self.transport()
+        with self.assertRaisesRegex(ObservabilityUnavailableError, "service"):
+            transport.request_json(
+                service_name="http://example.com",
+                service_port=80,
+                path="/api/v1/query",
+                params={},
+                service_label="Prometheus",
+            )
+
+    def test_service_proxy_response_is_bounded(self) -> None:
+        api_client = FakeApiClient(KubernetesProxyResponse(b'{"status":"success"}'))
+        transport = KubernetesServiceProxyTransport(
+            api_client=api_client,
+            namespace="monitoring",
+            max_response_bytes=4,
+        )
+
+        with self.assertRaisesRegex(ObservabilityUnavailableError, "too large"):
+            transport.prometheus_query({"query": "up"})
+
+    def test_prometheus_and_loki_services_use_service_proxy_mode(self) -> None:
+        transport, api_client = self.transport()
+
+        with patch("app.services.prometheus_service.settings.observability_access_mode", "kubernetes_service_proxy"):
+            PrometheusService(service_proxy=transport).check_health()
+        with patch("app.services.loki_service.settings.observability_access_mode", "kubernetes_service_proxy"):
+            LokiService(service_proxy=transport).check_health()
+
+        self.assertEqual(len(api_client.calls), 2)
 
 
 if __name__ == "__main__":

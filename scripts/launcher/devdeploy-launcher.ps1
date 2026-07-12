@@ -62,6 +62,10 @@ param(
 
     [switch]$VerifyGitOpsRootApplication,
 
+    [switch]$BootstrapWorkloadObservability,
+
+    [switch]$VerifyWorkloadObservability,
+
     [string]$GitOpsRepoPath = "",
 
     [string]$GitOpsRepoUrl = "",
@@ -102,6 +106,8 @@ if ($PlanWorkloadRebootstrap -and (
         $ConfigureGitOpsRepository -or
         $BootstrapGitOpsRootApplication -or
         $VerifyGitOpsRootApplication -or
+        $BootstrapWorkloadObservability -or
+        $VerifyWorkloadObservability -or
         $InitializeManagementBackendDatabase
     )) {
     throw "-PlanWorkloadRebootstrap is plan-only and cannot be combined with launcher execution or preview modes."
@@ -114,6 +120,7 @@ $LocalRoot = Join-Path $RepoRoot ".devdeploy\local"
 $StatusDir = Join-Path $LocalRoot "status"
 $LogsDir = Join-Path $LocalRoot "logs"
 $KindDir = Join-Path $LocalRoot "kind"
+$ToolsDir = Join-Path $LocalRoot "tools"
 $StatusPath = Join-Path $StatusDir "launcher-status.json"
 $LogPath = Join-Path $LogsDir "devdeploy-launcher.log"
 $MgmtKindConfigPath = Join-Path $KindDir "devdeploy-mgmt.yaml"
@@ -173,6 +180,44 @@ $GitOpsSourceRelativeWindowsPath = "gitops\workloads\devdeploy-apps"
 $GitOpsRootApplicationName = "devdeploy-workloads-root"
 $GitOpsExpectedRepositoryUrl = "https://github.com/Kaan-YASSIBAS/devdeploy-hub.git"
 $GitOpsTargetRevision = "main"
+$ObservabilityNamespace = "monitoring"
+$ObservabilityPrometheusRelease = "kube-prometheus-stack"
+$ObservabilityPrometheusRepoName = "prometheus-community"
+$ObservabilityPrometheusRepoUrl = "https://prometheus-community.github.io/helm-charts"
+$ObservabilityPrometheusChart = "prometheus-community/kube-prometheus-stack"
+$ObservabilityPrometheusChartVersion = "80.3.1"
+$ObservabilityLokiRelease = "loki"
+$ObservabilityGrafanaRepoName = "grafana"
+$ObservabilityGrafanaRepoUrl = "https://grafana.github.io/helm-charts"
+$ObservabilityLokiChart = "grafana/loki"
+$ObservabilityLokiChartVersion = "6.46.0"
+$ObservabilityAlloyRelease = "alloy"
+$ObservabilityAlloyChart = "grafana/alloy"
+$ObservabilityAlloyChartVersion = "1.3.0"
+$ObservabilityManifestRelativePath = "platform/workload/observability"
+$ObservabilityManifestPath = Join-Path $RepoRoot "platform\workload\observability"
+$ObservabilityPrometheusValuesPath = Join-Path $ObservabilityManifestPath "kube-prometheus-stack-values.yaml"
+$ObservabilityLokiValuesPath = Join-Path $ObservabilityManifestPath "loki-values.yaml"
+$ObservabilityAlloyValuesPath = Join-Path $ObservabilityManifestPath "alloy-values.yaml"
+$ObservabilityGrafanaDatasourcesPath = Join-Path $ObservabilityManifestPath "grafana-datasources.yaml"
+$ObservabilityReaderRbacPath = Join-Path $ObservabilityManifestPath "backend-service-proxy-reader.yaml"
+$ObservabilityGrafanaAdminSecretName = "devdeploy-grafana-admin"
+$BackendWorkloadKubeconfigSecretName = "devdeploy-backend-workload-kubeconfig"
+$ObservabilityReaderServiceAccountName = "devdeploy-observability-reader"
+$ObservabilityReaderRoleName = "devdeploy-observability-service-proxy-reader"
+$ObservabilityReaderRoleBindingName = "devdeploy-observability-service-proxy-reader"
+$ObservabilityReaderTokenSecretName = "devdeploy-observability-reader-token"
+$HelmPinnedVersion = "v3.18.6"
+$HelmPlatform = "windows-amd64"
+$HelmArchiveName = "helm-$HelmPinnedVersion-$HelmPlatform.zip"
+$HelmDownloadBaseUrl = "https://get.helm.sh"
+$HelmArchiveUrl = "$HelmDownloadBaseUrl/$HelmArchiveName"
+$HelmChecksumUrl = "$HelmArchiveUrl.sha256sum"
+$HelmManagedDir = Join-Path $ToolsDir ("helm\{0}" -f $HelmPinnedVersion)
+$HelmManagedArchivePath = Join-Path $HelmManagedDir $HelmArchiveName
+$HelmManagedChecksumPath = Join-Path $HelmManagedDir "$HelmArchiveName.sha256sum"
+$HelmManagedExePath = Join-Path $HelmManagedDir "$HelmPlatform\helm.exe"
+$HelmManagedVerificationPath = Join-Path $HelmManagedDir "devdeploy-helm-verification.json"
 
 $PortPlan = [ordered]@{
     management_api   = 58080
@@ -863,6 +908,26 @@ function New-NextActions {
         }
     }
 
+    if ($LauncherMode -eq "workload_observability_bootstrap" -or $LauncherMode -eq "workload_observability_verify") {
+        $observabilityStatus = "not_started"
+        try {
+            $observabilityStatus = [string]$PlatformBootstrap["components"]["workload_observability"]["status"]
+        }
+        catch {
+            $observabilityStatus = "unknown"
+        }
+
+        if ($observabilityStatus -eq "ready") {
+            $actions.Add("Workload observability is ready. Verify backend /api/v1/observability/status after the backend rollout has the service-proxy configuration.") | Out-Null
+        }
+        elseif ($observabilityStatus -eq "warning") {
+            $actions.Add("Workload metrics/logs transport is ready, but optional Grafana readiness needs review.") | Out-Null
+        }
+        else {
+            $actions.Add("Review sanitized workload observability checks and rerun the explicit observability mode after resolving the issue.") | Out-Null
+        }
+    }
+
     if ($LauncherMode -eq "workload_rebootstrap_plan") {
         if ($managementClusterStatus -eq "ready") {
             $actions.Add("Review the plan-only workload rebootstrap steps. No command has been executed and user confirmation remains required before manual recreation.") | Out-Null
@@ -998,6 +1063,194 @@ function Invoke-ReadOnlyCommand {
             $process.Dispose()
         }
     }
+}
+
+function Test-HelmCommandCompatible {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Command,
+
+        [bool]$RequirePinnedVersion = $false
+    )
+
+    $result = Invoke-ReadOnlyCommand -FileName $Command -Arguments @("version", "--template", "{{.Version}}") -TimeoutSeconds 20 -PreserveStandardOutput $true
+    $version = [string]$result.stdout
+    $version = $version.Trim()
+    $compatible = [bool]($result.exit_code -eq 0 -and -not $result.timed_out -and $version -match "^v3\.")
+    if ($RequirePinnedVersion) {
+        $compatible = [bool]($compatible -and $version -eq $HelmPinnedVersion)
+    }
+
+    return [ordered]@{
+        compatible = [bool]$compatible
+        version    = [string]$version
+        error      = [string]$result.stderr
+    }
+}
+
+function Test-ManagedHelmVerified {
+    if (-not (Test-Path -LiteralPath $HelmManagedExePath -PathType Leaf)) {
+        return $false
+    }
+    if (-not (Test-Path -LiteralPath $HelmManagedVerificationPath -PathType Leaf)) {
+        return $false
+    }
+
+    try {
+        $verification = Get-Content -LiteralPath $HelmManagedVerificationPath -Raw | ConvertFrom-Json
+        $expectedExeHash = [string]$verification.exe_sha256
+        if ([string]::IsNullOrWhiteSpace($expectedExeHash)) {
+            return $false
+        }
+        $actualExeHash = [string](Get-FileHash -LiteralPath $HelmManagedExePath -Algorithm SHA256).Hash
+        return [bool]($actualExeHash.ToLowerInvariant() -eq $expectedExeHash.ToLowerInvariant())
+    }
+    catch {
+        Write-LauncherLog ("Managed Helm verification failed: {0}" -f $_.Exception.Message)
+        return $false
+    }
+}
+
+function Invoke-PrepareManagedHelm {
+    $result = [ordered]@{
+        available = $false
+        command   = ""
+        source    = "managed"
+        version   = $HelmPinnedVersion
+        message   = ""
+    }
+
+    try {
+        New-LocalDirectory -Path $ToolsDir
+        New-LocalDirectory -Path $HelmManagedDir
+
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $HelmChecksumUrl -OutFile $HelmManagedChecksumPath -UseBasicParsing -TimeoutSec 120
+        Invoke-WebRequest -Uri $HelmArchiveUrl -OutFile $HelmManagedArchivePath -UseBasicParsing -TimeoutSec 300
+
+        $checksumText = [string](Get-Content -LiteralPath $HelmManagedChecksumPath -Raw)
+        $expectedHash = ""
+        if ($checksumText -match "([a-fA-F0-9]{64})") {
+            $expectedHash = $Matches[1]
+        }
+        if ([string]::IsNullOrWhiteSpace($expectedHash)) {
+            $result["message"] = "Official Helm checksum file did not contain a SHA256 checksum."
+            return $result
+        }
+
+        $actualHash = [string](Get-FileHash -LiteralPath $HelmManagedArchivePath -Algorithm SHA256).Hash
+        if ($actualHash.ToLowerInvariant() -ne $expectedHash.ToLowerInvariant()) {
+            $result["message"] = "Helm archive checksum mismatch; refusing to use the downloaded binary."
+            return $result
+        }
+
+        Expand-Archive -LiteralPath $HelmManagedArchivePath -DestinationPath $HelmManagedDir -Force
+        if (-not (Test-Path -LiteralPath $HelmManagedExePath -PathType Leaf)) {
+            $result["message"] = "Verified Helm archive did not contain the expected helm.exe path."
+            return $result
+        }
+
+        $versionCheck = Test-HelmCommandCompatible -Command $HelmManagedExePath -RequirePinnedVersion $true
+        if (-not [bool]$versionCheck["compatible"]) {
+            $result["message"] = "Managed Helm binary did not report the pinned Helm version."
+            return $result
+        }
+
+        $exeHash = [string](Get-FileHash -LiteralPath $HelmManagedExePath -Algorithm SHA256).Hash
+        $verification = [ordered]@{
+            version             = $HelmPinnedVersion
+            platform            = $HelmPlatform
+            archive_sha256      = $actualHash
+            exe_sha256          = $exeHash
+            checksum_source_url = $HelmChecksumUrl
+            archive_source_url  = $HelmArchiveUrl
+            verified_at         = [string](Get-Timestamp)
+        }
+        $verification | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $HelmManagedVerificationPath -Encoding UTF8
+
+        $result["available"] = $true
+        $result["command"] = [string]$HelmManagedExePath
+        $result["message"] = "Pinned Helm $HelmPinnedVersion was downloaded from the official Helm release source and checksum verified."
+        return $result
+    }
+    catch {
+        $result["message"] = Protect-LogText $_.Exception.Message
+        return $result
+    }
+}
+
+function Resolve-WorkloadObservabilityHelm {
+    param(
+        [bool]$BootstrapMode = $false
+    )
+
+    $pathCommand = Get-Command "helm" -ErrorAction SilentlyContinue
+    if ($null -ne $pathCommand) {
+        $pathHelm = Test-HelmCommandCompatible -Command "helm"
+        if ([bool]$pathHelm["compatible"]) {
+            Add-Check -Id "workload_observability_helm_dependency" -Label "Workload observability Helm dependency" -Status "ok" -Message "A compatible Helm v3 CLI is available on PATH." -Details @{
+                required = $true
+                source = "path"
+                command = "helm"
+                version = [string]$pathHelm["version"]
+                installs_dependency = $false
+            }
+            return [ordered]@{
+                available = $true
+                command   = "helm"
+                source    = "path"
+                version   = [string]$pathHelm["version"]
+            }
+        }
+    }
+
+    if (Test-ManagedHelmVerified) {
+        $managedHelm = Test-HelmCommandCompatible -Command $HelmManagedExePath -RequirePinnedVersion $true
+        if ([bool]$managedHelm["compatible"]) {
+            Add-Check -Id "workload_observability_helm_dependency" -Label "Workload observability Helm dependency" -Status "ok" -Message "Using DevDeploy-managed pinned Helm." -Details @{
+                required = $true
+                source = "managed"
+                command = $HelmManagedExePath
+                version = [string]$managedHelm["version"]
+                installs_dependency = $false
+            }
+            return [ordered]@{
+                available = $true
+                command   = [string]$HelmManagedExePath
+                source    = "managed"
+                version   = [string]$managedHelm["version"]
+            }
+        }
+    }
+
+    if (-not $BootstrapMode) {
+        Add-Check -Id "workload_observability_helm_dependency" -Label "Workload observability Helm dependency" -Status "failed" -Message "Helm is required for read-only workload observability verification, but no compatible verified Helm CLI is available." -Details @{
+            required = $true
+            source = "none"
+            pinned_version = $HelmPinnedVersion
+            installs_dependency = $false
+        }
+        return [ordered]@{
+            available = $false
+            command   = ""
+            source    = "none"
+            version   = ""
+        }
+    }
+
+    $prepared = Invoke-PrepareManagedHelm
+    $preparedOk = [bool]$prepared["available"]
+    Add-Check -Id "workload_observability_helm_dependency" -Label "Workload observability Helm dependency" -Status $(if ($preparedOk) { "ok" } else { "failed" }) -Message ([string]$prepared["message"]) -Details @{
+        required = $true
+        source = "managed"
+        command = $HelmManagedExePath
+        pinned_version = $HelmPinnedVersion
+        checksum_source = $HelmChecksumUrl
+        archive_source = $HelmArchiveUrl
+        installs_dependency = $true
+        checksum_verified = $preparedOk
+    }
+    return $prepared
 }
 
 function Invoke-SanitizedInputCommand {
@@ -8778,6 +9031,599 @@ function Invoke-VerifyGitOpsRootApplication {
     return $status
 }
 
+function New-WorkloadObservabilityStatus {
+    param(
+        [ValidateSet("not_started", "bootstrap", "verify")]
+        [string]$Mode = "not_started"
+    )
+
+    return [ordered]@{
+        installed                         = $false
+        ready                             = $false
+        mode                              = $Mode
+        target_cluster                    = "devdeploy-workload"
+        target_context                    = "kind-devdeploy-workload"
+        namespace                         = $ObservabilityNamespace
+        prometheus_release                = $ObservabilityPrometheusRelease
+        prometheus_service                = "kube-prometheus-stack-prometheus"
+        prometheus_service_port           = 9090
+        loki_release                      = $ObservabilityLokiRelease
+        loki_service                      = "loki-gateway"
+        loki_service_port                 = 80
+        alloy_release                     = $ObservabilityAlloyRelease
+        grafana_service                   = "kube-prometheus-stack-grafana"
+        grafana_service_port              = 80
+        grafana_secret_name               = $ObservabilityGrafanaAdminSecretName
+        grafana_secret_present            = $false
+        grafana_secret_value_logged       = $false
+        datasources_configured            = $false
+        backend_transport_mode            = "kubernetes_service_proxy"
+        backend_config_secret_name        = $BackendWorkloadKubeconfigSecretName
+        reader_service_account            = $ObservabilityReaderServiceAccountName
+        reader_role                       = $ObservabilityReaderRoleName
+        backend_configured                = $false
+        backend_uses_service_identity     = $true
+        backend_uses_cluster_ip           = $false
+        service_proxy_paths_allowlisted   = @(
+            "/api/v1/query",
+            "/api/v1/query_range",
+            "/loki/api/v1/query_range",
+            "/api/health"
+        )
+        status                            = "not_started"
+        message                           = "Workload observability bootstrap has not started."
+        checked_at                        = [string](Get-Timestamp)
+    }
+}
+
+function New-GrafanaCredentialSecretManifest {
+    $passwordBytes = New-Object byte[] 32
+    $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $generator.GetBytes($passwordBytes)
+        $password = [Convert]::ToBase64String($passwordBytes).TrimEnd("=")
+    }
+    finally {
+        [Array]::Clear($passwordBytes, 0, $passwordBytes.Length)
+        $generator.Dispose()
+    }
+
+    return [ordered]@{
+        apiVersion = "v1"
+        kind       = "Secret"
+        metadata   = [ordered]@{
+            name      = $ObservabilityGrafanaAdminSecretName
+            namespace = $ObservabilityNamespace
+            labels    = [ordered]@{
+                "app.kubernetes.io/managed-by" = "devdeploy-launcher"
+                "app.kubernetes.io/part-of" = "devdeploy-observability"
+            }
+        }
+        type       = "Opaque"
+        stringData = [ordered]@{
+            "admin-user" = "admin"
+            "admin-password" = $password
+        }
+    }
+}
+
+function Invoke-WorkloadObservabilityRolloutCheck {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Id,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Kind,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [bool]$Required = $true
+    )
+
+    $result = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-workload", "--namespace", $ObservabilityNamespace, "rollout", "status", "$Kind/$Name", "--timeout=300s") -TimeoutSeconds 330
+    $ready = [bool]($result.exit_code -eq 0 -and -not $result.timed_out)
+    Add-Check -Id $Id -Label "Workload observability $Name readiness" -Status $(if ($ready) { "ok" } elseif ($Required) { "failed" } else { "warning" }) -Message $(if ($ready) { "$Name is Ready in devdeploy-workload/$ObservabilityNamespace." } else { "$Name did not become Ready in devdeploy-workload/$ObservabilityNamespace." }) -Details @{
+        required  = $Required
+        namespace = $ObservabilityNamespace
+        kind      = $Kind
+        name      = $Name
+        error     = $result.stderr
+    }
+    return $ready
+}
+
+function Invoke-BootstrapWorkloadObservability {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$WorkloadCluster,
+
+        [bool]$HelmAvailable,
+
+        [bool]$KubectlAvailable,
+
+        [string]$HelmCommand = "helm"
+    )
+
+    $status = New-WorkloadObservabilityStatus -Mode "bootstrap"
+
+    if ([string]$WorkloadCluster["status"] -ne "ready") {
+        $status["status"] = "error"
+        $status["message"] = "devdeploy-workload must be Ready before bootstrapping observability."
+        Add-Check -Id "workload_observability_cluster" -Label "Workload observability cluster prerequisite" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required       = $true
+            cluster_status = [string]$WorkloadCluster["status"]
+        }
+        return $status
+    }
+    Add-Check -Id "workload_observability_cluster" -Label "Workload observability cluster prerequisite" -Status "ok" -Message "devdeploy-workload is ready for explicit observability bootstrap." -Details @{
+        required = $true
+    }
+
+    if (-not $HelmAvailable -or -not $KubectlAvailable) {
+        $status["status"] = "error"
+        $status["message"] = "Helm and kubectl are required for -BootstrapWorkloadObservability."
+        Add-Check -Id "workload_observability_tools" -Label "Workload observability tools" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required          = $true
+            helm_available    = $HelmAvailable
+            kubectl_available = $KubectlAvailable
+        }
+        return $status
+    }
+    Add-Check -Id "workload_observability_tools" -Label "Workload observability tools" -Status "ok" -Message "Helm and kubectl are available for explicit workload observability bootstrap." -Details @{
+        required = $true
+        helm_command = $HelmCommand
+    }
+
+    foreach ($path in @($ObservabilityPrometheusValuesPath, $ObservabilityLokiValuesPath, $ObservabilityAlloyValuesPath, $ObservabilityGrafanaDatasourcesPath, $ObservabilityReaderRbacPath)) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            $status["status"] = "error"
+            $status["message"] = "One or more observability values or manifest files are missing."
+            Add-Check -Id "workload_observability_assets" -Label "Workload observability assets" -Status "failed" -Message ([string]$status["message"]) -Details @{
+                required = $true
+                path     = [string]$path
+            }
+            return $status
+        }
+    }
+    Add-Check -Id "workload_observability_assets" -Label "Workload observability assets" -Status "ok" -Message "Observability Helm values and datasource manifest are present." -Details @{
+        required      = $true
+        manifest_path = $ObservabilityManifestRelativePath
+    }
+
+    $namespaceResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-workload", "create", "namespace", $ObservabilityNamespace, "--dry-run=client", "--output", "yaml") -TimeoutSeconds 30 -PreserveStandardOutput $true
+    if ($namespaceResult.exit_code -ne 0 -or $namespaceResult.timed_out) {
+        $status["status"] = "error"
+        $status["message"] = "Could not render the monitoring namespace manifest."
+        Add-Check -Id "workload_observability_namespace_render" -Label "Workload observability namespace render" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required = $true
+            error    = $namespaceResult.stderr
+        }
+        return $status
+    }
+    $namespaceApply = Invoke-SanitizedInputCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-workload", "apply", "--filename", "-") -StandardInput ([string]$namespaceResult.stdout) -TimeoutSeconds 45
+    if ($namespaceApply.exit_code -ne 0 -or $namespaceApply.timed_out) {
+        $status["status"] = "error"
+        $status["message"] = "Could not create or verify the monitoring namespace."
+        Add-Check -Id "workload_observability_namespace" -Label "Workload observability namespace" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required = $true
+            error    = $namespaceApply.stderr
+        }
+        return $status
+    }
+    Add-Check -Id "workload_observability_namespace" -Label "Workload observability namespace" -Status "ok" -Message "monitoring namespace is present in devdeploy-workload." -Details @{
+        required  = $true
+        namespace = $ObservabilityNamespace
+    }
+
+    $secretExists = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-workload", "--namespace", $ObservabilityNamespace, "get", "secret", $ObservabilityGrafanaAdminSecretName, "--output", "name") -TimeoutSeconds 20
+    if ($secretExists.exit_code -ne 0 -or $secretExists.timed_out) {
+        $secretManifest = New-GrafanaCredentialSecretManifest
+        $secretApply = Invoke-SanitizedInputCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-workload", "apply", "--filename", "-") -StandardInput ($secretManifest | ConvertTo-Json -Depth 8 -Compress) -TimeoutSeconds 45
+        if ($secretApply.exit_code -ne 0 -or $secretApply.timed_out) {
+            $status["status"] = "error"
+            $status["message"] = "Grafana admin Secret could not be created or verified."
+            Add-Check -Id "workload_observability_grafana_secret" -Label "Grafana admin Secret" -Status "failed" -Message ([string]$status["message"]) -Details @{
+                required = $true
+                secret_name = $ObservabilityGrafanaAdminSecretName
+                secret_value_logged = $false
+                error = $secretApply.stderr
+            }
+            return $status
+        }
+    }
+    $status["grafana_secret_present"] = $true
+    Add-Check -Id "workload_observability_grafana_secret" -Label "Grafana admin Secret" -Status "ok" -Message "Grafana admin Secret exists; the generated password was not logged or written to status." -Details @{
+        required = $true
+        secret_name = $ObservabilityGrafanaAdminSecretName
+        secret_value_logged = $false
+    }
+
+    foreach ($repo in @(
+            @{ name = $ObservabilityPrometheusRepoName; url = $ObservabilityPrometheusRepoUrl },
+            @{ name = $ObservabilityGrafanaRepoName; url = $ObservabilityGrafanaRepoUrl }
+        )) {
+        $repoAdd = Invoke-ReadOnlyCommand -FileName $HelmCommand -Arguments @("repo", "add", [string]$repo.name, [string]$repo.url, "--force-update") -TimeoutSeconds 60
+        if ($repoAdd.exit_code -ne 0 -or $repoAdd.timed_out) {
+            $status["status"] = "error"
+            $status["message"] = "Could not add or update an observability Helm repository."
+            Add-Check -Id "workload_observability_helm_repository" -Label "Workload observability Helm repository" -Status "failed" -Message ([string]$status["message"]) -Details @{
+                required = $true
+                repository = [string]$repo.url
+                error = $repoAdd.stderr
+            }
+            return $status
+        }
+    }
+    $repoUpdate = Invoke-ReadOnlyCommand -FileName $HelmCommand -Arguments @("repo", "update", $ObservabilityPrometheusRepoName, $ObservabilityGrafanaRepoName) -TimeoutSeconds 180
+    if ($repoUpdate.exit_code -ne 0 -or $repoUpdate.timed_out) {
+        $status["status"] = "error"
+        $status["message"] = "Could not refresh observability Helm repositories."
+        Add-Check -Id "workload_observability_helm_repository" -Label "Workload observability Helm repository" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required = $true
+            error = $repoUpdate.stderr
+        }
+        return $status
+    }
+    Add-Check -Id "workload_observability_helm_repository" -Label "Workload observability Helm repository" -Status "ok" -Message "Official Prometheus and Grafana Helm repositories are configured." -Details @{
+        required = $true
+    }
+
+    $datasourceApply = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-workload", "apply", "--filename", $ObservabilityGrafanaDatasourcesPath) -TimeoutSeconds 45
+    if ($datasourceApply.exit_code -ne 0 -or $datasourceApply.timed_out) {
+        $status["status"] = "error"
+        $status["message"] = "Grafana Loki datasource ConfigMap could not be reconciled."
+        Add-Check -Id "workload_observability_datasources" -Label "Grafana datasources" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required = $true
+            manifest = $ObservabilityGrafanaDatasourcesPath
+            error = $datasourceApply.stderr
+        }
+        return $status
+    }
+    $status["datasources_configured"] = $true
+    Add-Check -Id "workload_observability_datasources" -Label "Grafana datasources" -Status "ok" -Message "Grafana Loki datasource ConfigMap is reconciled; kube-prometheus-stack provides the default Prometheus datasource." -Details @{
+        required = $true
+        secret_values_written = $false
+    }
+
+    $helmInstalls = @(
+        @{
+            id = "workload_observability_prometheus_release"
+            release = $ObservabilityPrometheusRelease
+            chart = $ObservabilityPrometheusChart
+            version = $ObservabilityPrometheusChartVersion
+            values = $ObservabilityPrometheusValuesPath
+        },
+        @{
+            id = "workload_observability_loki_release"
+            release = $ObservabilityLokiRelease
+            chart = $ObservabilityLokiChart
+            version = $ObservabilityLokiChartVersion
+            values = $ObservabilityLokiValuesPath
+        },
+        @{
+            id = "workload_observability_alloy_release"
+            release = $ObservabilityAlloyRelease
+            chart = $ObservabilityAlloyChart
+            version = $ObservabilityAlloyChartVersion
+            values = $ObservabilityAlloyValuesPath
+        }
+    )
+    foreach ($install in $helmInstalls) {
+        $releaseStatusResult = Invoke-ReadOnlyCommand -FileName $HelmCommand -Arguments @("--kube-context", "kind-devdeploy-workload", "status", [string]$install.release, "--namespace", $ObservabilityNamespace, "--output", "json") -TimeoutSeconds 30 -PreserveStandardOutput $true
+        if ($releaseStatusResult.exit_code -eq 0 -and -not $releaseStatusResult.timed_out -and -not [string]::IsNullOrWhiteSpace($releaseStatusResult.stdout)) {
+            try {
+                $releaseStatus = ([string]$releaseStatusResult.stdout | ConvertFrom-Json).info.status
+                if ([string]$releaseStatus -in @("pending-install", "pending-upgrade", "pending-rollback")) {
+                    $status["status"] = "error"
+                    $status["message"] = ("Helm release {0} is stuck in {1}. Resolve the pending release state, then rerun -BootstrapWorkloadObservability." -f [string]$install.release, [string]$releaseStatus)
+                    Add-Check -Id ([string]$install.id) -Label "Workload observability Helm release" -Status "failed" -Message ([string]$status["message"]) -Details @{
+                        required = $true
+                        release = [string]$install.release
+                        chart = [string]$install.chart
+                        chart_version = [string]$install.version
+                        helm_status = [string]$releaseStatus
+                        safe_recovery = ("helm --kube-context kind-devdeploy-workload --namespace {0} history {1}" -f $ObservabilityNamespace, [string]$install.release)
+                        deletes_resources = $false
+                    }
+                    return $status
+                }
+            }
+            catch {
+                Write-LauncherLog ("Could not parse Helm status for release {0}: {1}" -f [string]$install.release, $_.Exception.Message)
+            }
+        }
+
+        $helmArgs = @(
+            "upgrade", "--install", [string]$install.release, [string]$install.chart,
+            "--version", [string]$install.version,
+            "--namespace", $ObservabilityNamespace,
+            "--kube-context", "kind-devdeploy-workload",
+            "--values", [string]$install.values,
+            "--wait",
+            "--timeout", "10m"
+        )
+        $result = Invoke-ReadOnlyCommand -FileName $HelmCommand -Arguments $helmArgs -TimeoutSeconds 720
+        if ($result.exit_code -ne 0 -or $result.timed_out) {
+            $status["status"] = "error"
+            $status["message"] = "A workload observability Helm release failed to install or upgrade."
+            Add-Check -Id ([string]$install.id) -Label "Workload observability Helm release" -Status "failed" -Message ([string]$status["message"]) -Details @{
+                required = $true
+                release = [string]$install.release
+                chart = [string]$install.chart
+                chart_version = [string]$install.version
+                error = $result.stderr
+            }
+            return $status
+        }
+        Add-Check -Id ([string]$install.id) -Label "Workload observability Helm release" -Status "ok" -Message ("{0} Helm release is installed or reconciled." -f [string]$install.release) -Details @{
+            required = $true
+            release = [string]$install.release
+            chart = [string]$install.chart
+            chart_version = [string]$install.version
+        }
+    }
+
+    $prometheusReady = Invoke-WorkloadObservabilityRolloutCheck -Id "workload_observability_prometheus_ready" -Kind "statefulset" -Name "prometheus-kube-prometheus-stack-prometheus"
+    $grafanaReady = Invoke-WorkloadObservabilityRolloutCheck -Id "workload_observability_grafana_ready" -Kind "deployment" -Name "kube-prometheus-stack-grafana" -Required $false
+    $lokiReady = Invoke-WorkloadObservabilityRolloutCheck -Id "workload_observability_loki_ready" -Kind "statefulset" -Name "loki"
+    $alloyReady = Invoke-WorkloadObservabilityRolloutCheck -Id "workload_observability_alloy_ready" -Kind "daemonset" -Name "alloy"
+
+    $backendConfigResult = Invoke-EnsureManagementBackendWorkloadKubeconfigSecret -KubectlAvailable $KubectlAvailable
+    $status["backend_configured"] = [bool]$backendConfigResult["configured"]
+
+    $allReady = [bool]($prometheusReady -and $lokiReady -and $alloyReady -and [bool]$backendConfigResult["configured"])
+    $status["installed"] = $allReady
+    $status["ready"] = $allReady
+    $status["status"] = if ($allReady) { "ready" } else { "error" }
+    $status["message"] = if ($allReady) { "Workload observability stack is installed and backend service-proxy configuration is prepared." } else { "Workload observability bootstrap completed with one or more failed readiness checks." }
+    $status["checked_at"] = [string](Get-Timestamp)
+    if (-not $grafanaReady -and $allReady) {
+        $status["status"] = "warning"
+        $status["message"] = "Prometheus, Loki, Alloy, and backend transport are ready. Grafana is optional and needs review."
+    }
+    return $status
+}
+
+function Invoke-EnsureManagementBackendWorkloadKubeconfigSecret {
+    param(
+        [bool]$KubectlAvailable
+    )
+
+    $result = [ordered]@{
+        configured = $false
+        secret_name = $BackendWorkloadKubeconfigSecretName
+        service_account = $ObservabilityReaderServiceAccountName
+        permission_scope = "monitoring/services/proxy:get"
+    }
+    if (-not $KubectlAvailable) {
+        Add-Check -Id "workload_observability_backend_kubeconfig" -Label "Backend workload kubeconfig Secret" -Status "failed" -Message "kubectl is required to create the backend workload kubeconfig Secret." -Details @{
+            required = $true
+            secret_name = $BackendWorkloadKubeconfigSecretName
+        }
+        return $result
+    }
+
+    $readerRbacApply = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-workload", "apply", "--filename", $ObservabilityReaderRbacPath) -TimeoutSeconds 45
+    if ($readerRbacApply.exit_code -ne 0 -or $readerRbacApply.timed_out) {
+        Add-Check -Id "workload_observability_reader_rbac" -Label "Backend observability reader RBAC" -Status "failed" -Message "Could not reconcile the narrow workload observability reader RBAC." -Details @{
+            required = $true
+            namespace = $ObservabilityNamespace
+            service_account = $ObservabilityReaderServiceAccountName
+            role = $ObservabilityReaderRoleName
+            permission_scope = "services:get,list,watch;services/proxy:get"
+            error = $readerRbacApply.stderr
+        }
+        return $result
+    }
+    Add-Check -Id "workload_observability_reader_rbac" -Label "Backend observability reader RBAC" -Status "ok" -Message "A narrow monitoring namespace reader identity is present for backend Service proxy transport." -Details @{
+        required = $true
+        namespace = $ObservabilityNamespace
+        service_account = $ObservabilityReaderServiceAccountName
+        role = $ObservabilityReaderRoleName
+        role_binding = $ObservabilityReaderRoleBindingName
+        allowed_resources = @("services:get,list,watch", "services/proxy:get")
+        cluster_admin = $false
+        secret_data_logged = $false
+    }
+
+    $tokenBase64 = ""
+    $caBase64 = ""
+    for ($attempt = 1; $attempt -le 10; $attempt++) {
+        $tokenResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-workload", "--namespace", $ObservabilityNamespace, "get", "secret", $ObservabilityReaderTokenSecretName, "--output", "jsonpath={.data.token}") -TimeoutSeconds 20 -PreserveStandardOutput $true
+        $caResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-workload", "--namespace", $ObservabilityNamespace, "get", "secret", $ObservabilityReaderTokenSecretName, "--output", "jsonpath={.data.ca\.crt}") -TimeoutSeconds 20 -PreserveStandardOutput $true
+        if ($tokenResult.exit_code -eq 0 -and -not $tokenResult.timed_out -and $caResult.exit_code -eq 0 -and -not $caResult.timed_out -and -not [string]::IsNullOrWhiteSpace($tokenResult.stdout) -and -not [string]::IsNullOrWhiteSpace($caResult.stdout)) {
+            $tokenBase64 = ([string]$tokenResult.stdout).Trim()
+            $caBase64 = ([string]$caResult.stdout).Trim()
+            break
+        }
+        Start-Sleep -Seconds 1
+    }
+    if ([string]::IsNullOrWhiteSpace($tokenBase64) -or [string]::IsNullOrWhiteSpace($caBase64)) {
+        Add-Check -Id "workload_observability_reader_token" -Label "Backend observability reader token" -Status "failed" -Message "The workload observability reader token was not available yet." -Details @{
+            required = $true
+            namespace = $ObservabilityNamespace
+            secret_name = $ObservabilityReaderTokenSecretName
+            secret_data_logged = $false
+        }
+        return $result
+    }
+    Add-Check -Id "workload_observability_reader_token" -Label "Backend observability reader token" -Status "ok" -Message "The workload observability reader token Secret is populated; token contents were not logged." -Details @{
+        required = $true
+        namespace = $ObservabilityNamespace
+        secret_name = $ObservabilityReaderTokenSecretName
+        secret_data_logged = $false
+    }
+
+    try {
+        $readerToken = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($tokenBase64))
+    }
+    catch {
+        Add-Check -Id "workload_observability_backend_kubeconfig" -Label "Backend workload kubeconfig Secret" -Status "failed" -Message "The workload observability reader token could not be decoded safely." -Details @{
+            required = $true
+            secret_name = $ObservabilityReaderTokenSecretName
+            secret_data_logged = $false
+        }
+        return $result
+    }
+
+    $backendKubeconfig = [ordered]@{
+        apiVersion      = "v1"
+        kind            = "Config"
+        "current-context" = "devdeploy-workload-observability"
+        clusters        = @(
+            [ordered]@{
+                name    = "devdeploy-workload"
+                cluster = [ordered]@{
+                    server = $ExpectedWorkloadArgoCDEndpoint
+                    "certificate-authority-data" = $caBase64
+                }
+            }
+        )
+        users           = @(
+            [ordered]@{
+                name = $ObservabilityReaderServiceAccountName
+                user = [ordered]@{
+                    token = $readerToken
+                }
+            }
+        )
+        contexts        = @(
+            [ordered]@{
+                name    = "devdeploy-workload-observability"
+                context = [ordered]@{
+                    cluster   = "devdeploy-workload"
+                    user      = $ObservabilityReaderServiceAccountName
+                    namespace = $ObservabilityNamespace
+                }
+            }
+        )
+    }
+    $backendSecretManifest = [ordered]@{
+        apiVersion = "v1"
+        kind       = "Secret"
+        metadata   = [ordered]@{
+            name      = $BackendWorkloadKubeconfigSecretName
+            namespace = $PostgresNamespace
+            labels    = [ordered]@{
+                "app.kubernetes.io/managed-by" = "devdeploy-launcher"
+                "app.kubernetes.io/part-of"    = "devdeploy-observability"
+            }
+        }
+        type       = "Opaque"
+        stringData = [ordered]@{
+            kubeconfig = ($backendKubeconfig | ConvertTo-Json -Depth 16)
+        }
+    }
+
+    $applyResult = Invoke-SanitizedInputCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "apply", "--filename", "-") -StandardInput ($backendSecretManifest | ConvertTo-Json -Depth 18 -Compress) -TimeoutSeconds 45
+    if ($applyResult.exit_code -ne 0 -or $applyResult.timed_out) {
+        Add-Check -Id "workload_observability_backend_kubeconfig" -Label "Backend workload kubeconfig Secret" -Status "failed" -Message "Could not reconcile the backend workload kubeconfig Secret." -Details @{
+            required = $true
+            secret_name = $BackendWorkloadKubeconfigSecretName
+            secret_data_logged = $false
+            service_account = $ObservabilityReaderServiceAccountName
+            error = $applyResult.stderr
+        }
+        return $result
+    }
+    $result["configured"] = $true
+    Add-Check -Id "workload_observability_backend_kubeconfig" -Label "Backend workload kubeconfig Secret" -Status "ok" -Message "Backend workload kubeconfig Secret is present in devdeploy-mgmt/devdeploy; kubeconfig contents were not logged or written to status." -Details @{
+        required = $true
+        secret_name = $BackendWorkloadKubeconfigSecretName
+        secret_data_logged = $false
+        backend_mount_path = "/var/run/devdeploy/workload/kubeconfig"
+        service_account = $ObservabilityReaderServiceAccountName
+        permission_scope = "monitoring/services/proxy:get"
+        uses_cluster_ip = $false
+        uses_service_identity = $true
+    }
+    $readerToken = $null
+    return $result
+}
+
+function Invoke-VerifyWorkloadObservability {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$WorkloadCluster,
+
+        [bool]$HelmAvailable,
+
+        [bool]$KubectlAvailable,
+
+        [string]$HelmCommand = "helm"
+    )
+
+    $status = New-WorkloadObservabilityStatus -Mode "verify"
+    if ([string]$WorkloadCluster["status"] -ne "ready" -or -not $HelmAvailable -or -not $KubectlAvailable) {
+        $status["status"] = "error"
+        $status["message"] = "devdeploy-workload, Helm, and kubectl are required for read-only observability verification."
+        Add-Check -Id "workload_observability_verify_prerequisites" -Label "Workload observability verification prerequisites" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required = $true
+            workload_cluster_status = [string]$WorkloadCluster["status"]
+            helm_available = $HelmAvailable
+            kubectl_available = $KubectlAvailable
+        }
+        return $status
+    }
+    Add-Check -Id "workload_observability_verify_prerequisites" -Label "Workload observability verification prerequisites" -Status "ok" -Message "devdeploy-workload, Helm, and kubectl are available for read-only verification." -Details @{
+        required = $true
+        helm_command = $HelmCommand
+    }
+
+    $namespaceResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-workload", "get", "namespace", $ObservabilityNamespace, "--output", "name") -TimeoutSeconds 20
+    $namespaceReady = [bool]($namespaceResult.exit_code -eq 0 -and -not $namespaceResult.timed_out)
+    Add-Check -Id "workload_observability_verify_namespace" -Label "Workload observability namespace verification" -Status $(if ($namespaceReady) { "ok" } else { "failed" }) -Message $(if ($namespaceReady) { "monitoring namespace exists in devdeploy-workload." } else { "monitoring namespace could not be verified." }) -Details @{
+        required = $true
+        namespace = $ObservabilityNamespace
+    }
+
+    $releaseChecks = @(
+        @{ release = $ObservabilityPrometheusRelease; chart_prefix = "kube-prometheus-stack" },
+        @{ release = $ObservabilityLokiRelease; chart_prefix = "loki" },
+        @{ release = $ObservabilityAlloyRelease; chart_prefix = "alloy" }
+    )
+    $releasesReady = $true
+    foreach ($release in $releaseChecks) {
+        $releaseResult = Invoke-ReadOnlyCommand -FileName $HelmCommand -Arguments @("--kube-context", "kind-devdeploy-workload", "list", "--namespace", $ObservabilityNamespace, "--filter", ("^{0}$" -f [string]$release.release), "--deployed", "--output", "json") -TimeoutSeconds 30 -PreserveStandardOutput $true
+        $ready = [bool]($releaseResult.exit_code -eq 0 -and -not $releaseResult.timed_out -and -not [string]::IsNullOrWhiteSpace($releaseResult.stdout))
+        $releasesReady = [bool]($releasesReady -and $ready)
+        Add-Check -Id ("workload_observability_verify_{0}_release" -f [string]$release.release) -Label "Workload observability Helm release verification" -Status $(if ($ready) { "ok" } else { "failed" }) -Message $(if ($ready) { ("{0} Helm release is deployed." -f [string]$release.release) } else { ("{0} Helm release is not deployed." -f [string]$release.release) }) -Details @{
+            required = $true
+            release = [string]$release.release
+        }
+    }
+
+    $prometheusReady = Invoke-WorkloadObservabilityRolloutCheck -Id "workload_observability_verify_prometheus_ready" -Kind "statefulset" -Name "prometheus-kube-prometheus-stack-prometheus"
+    $grafanaReady = Invoke-WorkloadObservabilityRolloutCheck -Id "workload_observability_verify_grafana_ready" -Kind "deployment" -Name "kube-prometheus-stack-grafana" -Required $false
+    $lokiReady = Invoke-WorkloadObservabilityRolloutCheck -Id "workload_observability_verify_loki_ready" -Kind "statefulset" -Name "loki"
+    $alloyReady = Invoke-WorkloadObservabilityRolloutCheck -Id "workload_observability_verify_alloy_ready" -Kind "daemonset" -Name "alloy"
+    $backendSecretResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace, "get", "secret", $BackendWorkloadKubeconfigSecretName, "--output", "name") -TimeoutSeconds 20
+    $backendConfigured = [bool]($backendSecretResult.exit_code -eq 0 -and -not $backendSecretResult.timed_out)
+    Add-Check -Id "workload_observability_verify_backend_transport" -Label "Backend observability service-proxy configuration" -Status $(if ($backendConfigured) { "ok" } else { "failed" }) -Message $(if ($backendConfigured) { "Backend workload kubeconfig Secret exists; Secret data was not read." } else { "Backend workload kubeconfig Secret is missing." }) -Details @{
+        required = $true
+        secret_name = $BackendWorkloadKubeconfigSecretName
+        secret_data_read = $false
+        uses_cluster_ip = $false
+        uses_service_identity = $true
+    }
+
+    $allReady = [bool]($namespaceReady -and $releasesReady -and $prometheusReady -and $lokiReady -and $alloyReady -and $backendConfigured)
+    $status["installed"] = $allReady
+    $status["ready"] = $allReady
+    $status["grafana_secret_present"] = $true
+    $status["datasources_configured"] = $allReady
+    $status["backend_configured"] = $backendConfigured
+    $status["status"] = if ($allReady) { "ready" } else { "error" }
+    $status["message"] = if ($allReady) { "Workload observability passed read-only verification." } else { "Workload observability verification failed one or more checks." }
+    if ($allReady -and -not $grafanaReady) {
+        $status["status"] = "warning"
+        $status["message"] = "Prometheus, Loki, Alloy, and backend transport are ready. Grafana is optional and needs review."
+    }
+    $status["checked_at"] = [string](Get-Timestamp)
+    return $status
+}
+
 function New-PlatformBootstrapStatus {
     param(
         [Parameter(Mandatory = $true)]
@@ -8827,7 +9673,10 @@ function New-PlatformBootstrapStatus {
         [object]$GitOpsRepositoryStatusOverride = $null,
 
         [AllowNull()]
-        [object]$GitOpsRootApplicationStatusOverride = $null
+        [object]$GitOpsRootApplicationStatusOverride = $null,
+
+        [AllowNull()]
+        [object]$WorkloadObservabilityStatusOverride = $null
     )
 
     $ingress = if ($null -ne $IngressStatusOverride) { $IngressStatusOverride } else { Get-ManagementIngressStatus -ManagementCluster $ManagementCluster -HelmAvailable $HelmAvailable -KubectlAvailable $KubectlAvailable }
@@ -8838,6 +9687,7 @@ function New-PlatformBootstrapStatus {
     $workloadDeployPermissions = if ($null -ne $WorkloadDeployPermissionsStatusOverride) { $WorkloadDeployPermissionsStatusOverride } else { New-WorkloadDeployPermissionsStatus }
     $gitOpsRepository = if ($null -ne $GitOpsRepositoryStatusOverride) { $GitOpsRepositoryStatusOverride } else { New-GitOpsRepositoryStatus -RepoPath $RepoRoot }
     $gitOpsRootApplication = if ($null -ne $GitOpsRootApplicationStatusOverride) { $GitOpsRootApplicationStatusOverride } else { New-GitOpsRootApplicationStatus }
+    $workloadObservability = if ($null -ne $WorkloadObservabilityStatusOverride) { $WorkloadObservabilityStatusOverride } else { New-WorkloadObservabilityStatus }
     $devdeployNamespace = Get-DevDeployNamespaceStatus -ManagementCluster $ManagementCluster -KubectlAvailable $KubectlAvailable
     $status = "not_started"
     $message = "Management platform bootstrap has not started yet."
@@ -8850,6 +9700,7 @@ function New-PlatformBootstrapStatus {
     $argocdFailedChecks = @($Checks | Where-Object { $_.id -like "management_argocd_*" -and $_.status -eq "failed" }).Count
     $gitOpsRepositoryFailedChecks = @($Checks | Where-Object { $_.id -like "gitops_repository_*" -and $_.status -eq "failed" }).Count
     $gitOpsRootApplicationFailedChecks = @($Checks | Where-Object { $_.id -like "gitops_root_*" -and $_.status -eq "failed" }).Count
+    $workloadObservabilityFailedChecks = @($Checks | Where-Object { $_.id -like "workload_observability_*" -and $_.status -eq "failed" }).Count
 
     if ($ingressFailedChecks -gt 0 -and [string]$ingress["status"] -ne "ready") {
         $ingress["status"] = "failed"
@@ -8890,6 +9741,10 @@ function New-PlatformBootstrapStatus {
     elseif ($gitOpsRootApplicationFailedChecks -gt 0 -and [string]$gitOpsRootApplication["status"] -notin @("ready", "warning")) {
         $status = "failed"
         $message = "GitOps Root Application bootstrap failed."
+    }
+    elseif ($workloadObservabilityFailedChecks -gt 0 -and [string]$workloadObservability["status"] -ne "ready") {
+        $status = "failed"
+        $message = "Workload observability bootstrap failed."
     }
     elseif ([string]$ingress["status"] -eq "ready" -and [string]$postgres["status"] -eq "ready" -and [string]$BackendStatus["status"] -in @("ready", "warning") -and [string]$BackendDatabaseStatus["status"] -eq "ready" -and [string]$FrontendStatus["status"] -in @("ready", "warning") -and [string]$argocd["status"] -eq "ready" -and [string]$argocdWorkloadCluster["status"] -in @("ready", "warning") -and [string]$workloadDeployPermissions["status"] -eq "ready" -and [string]$gitOpsRepository["status"] -eq "ready" -and [string]$gitOpsRootApplication["status"] -in @("ready", "warning") -and [bool]$gitOpsRootApplication["application_present"]) {
         $status = "partial"
@@ -8980,6 +9835,7 @@ function New-PlatformBootstrapStatus {
             workload_deploy_permissions = $workloadDeployPermissions
             gitops_repository = $gitOpsRepository
             gitops_root_application = $gitOpsRootApplication
+            workload_observability = $workloadObservability
         }
     }
 
@@ -9008,6 +9864,7 @@ function New-PlatformBootstrapStatus {
         workload_deploy_permissions_status = [string]$workloadDeployPermissions["status"]
         gitops_repository_status = [string]$gitOpsRepository["status"]
         gitops_root_application_status = [string]$gitOpsRootApplication["status"]
+        workload_observability_status = [string]$workloadObservability["status"]
     }
 
     return $platform
@@ -9926,6 +10783,7 @@ function Invoke-ManagementPostgresBootstrap {
 New-LocalDirectory -Path $StatusDir
 New-LocalDirectory -Path $LogsDir
 New-LocalDirectory -Path $KindDir
+New-LocalDirectory -Path $ToolsDir
 
 if ($PlanWorkloadRebootstrap) {
     Write-LauncherLog "Starting DevDeploy Launcher read-only workload rebootstrap planning mode."
@@ -10016,7 +10874,18 @@ $dockerAvailable = Test-CommandAvailable -Name "docker" -Label "Docker CLI" -Req
 $kindAvailable = Test-CommandAvailable -Name "kind" -Label "kind CLI" -Required ([bool](-not ($BuildManagementBackendImage -or $BuildManagementFrontendImage -or $ConfigureGitOpsRepository)))
 $kubectlAvailable = Test-CommandAvailable -Name "kubectl" -Label "kubectl CLI" -Required ([bool](-not ($BuildManagementBackendImage -or $BuildManagementFrontendImage -or $ConfigureGitOpsRepository)))
 $gitAvailable = Test-CommandAvailable -Name "git" -Label "git CLI" -Required ([bool]($ConfigureGitOpsRepository -or $BootstrapGitOpsRootApplication))
-$helmAvailable = Test-CommandAvailable -Name "helm" -Label "Helm CLI" -Required ([bool]($BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $RegisterWorkloadClusterWithArgoCD))
+$helmAvailable = $false
+if (-not ($BootstrapWorkloadObservability -or $VerifyWorkloadObservability)) {
+    $helmAvailable = Test-CommandAvailable -Name "helm" -Label "Helm CLI" -Required ([bool]($BootstrapManagementIngress -or $BootstrapManagementPostgres -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $RegisterWorkloadClusterWithArgoCD))
+}
+$workloadObservabilityHelmCommand = "helm"
+if ($BootstrapWorkloadObservability -or $VerifyWorkloadObservability) {
+    $workloadObservabilityHelm = Resolve-WorkloadObservabilityHelm -BootstrapMode ([bool]$BootstrapWorkloadObservability)
+    $helmAvailable = [bool]$workloadObservabilityHelm["available"]
+    if ($helmAvailable) {
+        $workloadObservabilityHelmCommand = [string]$workloadObservabilityHelm["command"]
+    }
+}
 
 if ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $VerifyWorkloadDeployPermissions -or $ConfigureGitOpsRepository -or $BootstrapGitOpsRootApplication -or $VerifyGitOpsRootApplication -or $InitializeManagementBackendDatabase) {
     $dockerDaemonReachable = $false
@@ -10215,6 +11084,12 @@ elseif ($BootstrapGitOpsRootApplication) {
 elseif ($VerifyGitOpsRootApplication) {
     $launcherMode = "gitops_root_application_verify"
 }
+elseif ($BootstrapWorkloadObservability) {
+    $launcherMode = "workload_observability_bootstrap"
+}
+elseif ($VerifyWorkloadObservability) {
+    $launcherMode = "workload_observability_verify"
+}
 elseif ($InitializeManagementBackendDatabase) {
     $launcherMode = "management_backend_database_initialize"
 }
@@ -10253,6 +11128,7 @@ $platformArgoCDWorkloadClusterOverride = $null
 $platformWorkloadDeployPermissionsOverride = $null
 $platformGitOpsRepositoryOverride = $null
 $platformGitOpsRootApplicationOverride = $null
+$platformWorkloadObservabilityOverride = $null
 
 if ($CreateManagementCluster) {
     Write-KindConfigPreview -Id "management_kind_config" -Label "Management kind config" -ClusterName "devdeploy-mgmt" -Path $MgmtKindConfigPath -ApiServerPort 58080 -HttpHostPort 8080 -HttpsHostPort 8443
@@ -10420,6 +11296,14 @@ elseif ($VerifyGitOpsRootApplication) {
     $platformArgoCDOverride = Get-ManagementArgoCDRuntimeStatus -ManagementCluster $managementCluster -KubectlAvailable $kubectlAvailable
     $platformGitOpsRootApplicationOverride = Invoke-VerifyGitOpsRootApplication -ManagementCluster $managementCluster -WorkloadCluster $workloadCluster -KubectlAvailable $kubectlAvailable -ArgoCDStatus $platformArgoCDOverride
 }
+elseif ($BootstrapWorkloadObservability) {
+    $workloadCluster = New-WorkloadClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
+    $platformWorkloadObservabilityOverride = Invoke-BootstrapWorkloadObservability -WorkloadCluster $workloadCluster -HelmAvailable $helmAvailable -KubectlAvailable $kubectlAvailable -HelmCommand $workloadObservabilityHelmCommand
+}
+elseif ($VerifyWorkloadObservability) {
+    $workloadCluster = New-WorkloadClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
+    $platformWorkloadObservabilityOverride = Invoke-VerifyWorkloadObservability -WorkloadCluster $workloadCluster -HelmAvailable $helmAvailable -KubectlAvailable $kubectlAvailable -HelmCommand $workloadObservabilityHelmCommand
+}
 elseif ($InitializeManagementBackendDatabase) {
     $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
     $databaseResult = Invoke-InitializeManagementBackendDatabase -KubectlAvailable $kubectlAvailable -ManagementCluster $managementCluster
@@ -10472,8 +11356,8 @@ if ($null -eq $managementCluster) {
 if ($null -eq $workloadCluster) {
     $workloadCluster = New-WorkloadClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
 }
-$platformHelmAvailable = [bool]($helmAvailable -and -not $BuildManagementBackendImage -and -not $BuildManagementFrontendImage -and -not $LoadManagementFrontendImage -and -not $BootstrapManagementFrontend -and -not $VerifyManagementFrontend -and -not $VerifyGitOpsRootApplication -and -not $InitializeManagementBackendDatabase -and -not $LoadManagementBackendImage -and -not $EnsureManagementBackendSecret -and -not $VerifyManagementBackendSecret -and -not $BootstrapManagementBackend -and -not $VerifyManagementBackend)
-$platformBootstrap = New-PlatformBootstrapStatus -ManagementCluster $managementCluster -HelmAvailable $platformHelmAvailable -KubectlAvailable $kubectlAvailable -BackendImageStatus $backendImageStatus -BackendSecretStatus $backendSecretStatus -BackendStatus $backendStatus -BackendDatabaseStatus $backendDatabaseStatus -FrontendImageStatus $frontendImageStatus -FrontendStatus $frontendStatus -IngressStatusOverride $platformIngressOverride -PostgresStatusOverride $platformPostgresOverride -ArgoCDStatusOverride $platformArgoCDOverride -WorkloadEndpointStatusOverride $platformWorkloadEndpointOverride -ArgoCDWorkloadClusterStatusOverride $platformArgoCDWorkloadClusterOverride -WorkloadDeployPermissionsStatusOverride $platformWorkloadDeployPermissionsOverride -GitOpsRepositoryStatusOverride $platformGitOpsRepositoryOverride -GitOpsRootApplicationStatusOverride $platformGitOpsRootApplicationOverride
+$platformHelmAvailable = [bool]($helmAvailable -and -not $BuildManagementBackendImage -and -not $BuildManagementFrontendImage -and -not $LoadManagementFrontendImage -and -not $BootstrapManagementFrontend -and -not $VerifyManagementFrontend -and -not $VerifyGitOpsRootApplication -and -not $InitializeManagementBackendDatabase -and -not $LoadManagementBackendImage -and -not $EnsureManagementBackendSecret -and -not $VerifyManagementBackendSecret -and -not $BootstrapManagementBackend -and -not $VerifyManagementBackend -and -not $BootstrapWorkloadObservability -and -not $VerifyWorkloadObservability)
+$platformBootstrap = New-PlatformBootstrapStatus -ManagementCluster $managementCluster -HelmAvailable $platformHelmAvailable -KubectlAvailable $kubectlAvailable -BackendImageStatus $backendImageStatus -BackendSecretStatus $backendSecretStatus -BackendStatus $backendStatus -BackendDatabaseStatus $backendDatabaseStatus -FrontendImageStatus $frontendImageStatus -FrontendStatus $frontendStatus -IngressStatusOverride $platformIngressOverride -PostgresStatusOverride $platformPostgresOverride -ArgoCDStatusOverride $platformArgoCDOverride -WorkloadEndpointStatusOverride $platformWorkloadEndpointOverride -ArgoCDWorkloadClusterStatusOverride $platformArgoCDWorkloadClusterOverride -WorkloadDeployPermissionsStatusOverride $platformWorkloadDeployPermissionsOverride -GitOpsRepositoryStatusOverride $platformGitOpsRepositoryOverride -GitOpsRootApplicationStatusOverride $platformGitOpsRootApplicationOverride -WorkloadObservabilityStatusOverride $platformWorkloadObservabilityOverride
 $workloadRebootstrapPlan = $null
 if ($PlanWorkloadRebootstrap) {
     $workloadRebootstrapPlan = New-WorkloadRebootstrapPlan -ManagementCluster $managementCluster -WorkloadCluster $workloadCluster
@@ -10599,6 +11483,14 @@ if (-not $Quiet) {
     elseif ($VerifyGitOpsRootApplication) {
         Write-Host ("Verified GitOps Root Application: {0}/{1}" -f $ArgoCDNamespace, $GitOpsRootApplicationName)
         Write-Host "Verification was strictly read-only; no cluster resource was reconciled."
+    }
+    elseif ($BootstrapWorkloadObservability) {
+        Write-Host ("Workload observability namespace: kind-devdeploy-workload/{0}" -f $ObservabilityNamespace)
+        Write-Host "Prometheus, Loki, Alloy, Grafana, datasources, and backend service-proxy configuration were reconciled only because -BootstrapWorkloadObservability was explicitly requested."
+    }
+    elseif ($VerifyWorkloadObservability) {
+        Write-Host ("Verified workload observability namespace: kind-devdeploy-workload/{0}" -f $ObservabilityNamespace)
+        Write-Host "Verification was read-only; no Helm release or Kubernetes resource was reconciled."
     }
     elseif ($InitializeManagementBackendDatabase) {
         Write-Host ("Management backend database: {0}/devdeploy" -f $PostgresNamespace)

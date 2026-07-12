@@ -15,11 +15,21 @@ Backend settings:
 ```text
 KUBERNETES_IN_CLUSTER=true
 KUBECONFIG_PATH=
-PROMETHEUS_BASE_URL=http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
-LOKI_BASE_URL=http://loki-gateway.monitoring.svc.cluster.local
+PROMETHEUS_BASE_URL=
+LOKI_BASE_URL=
+GRAFANA_BASE_URL=
+DEVDEPLOY_OBSERVABILITY_ACCESS_MODE=kubernetes_service_proxy
+DEVDEPLOY_OBSERVABILITY_MONITORING_NAMESPACE=monitoring
+DEVDEPLOY_OBSERVABILITY_PROMETHEUS_SERVICE_NAME=kube-prometheus-stack-prometheus
+DEVDEPLOY_OBSERVABILITY_PROMETHEUS_SERVICE_PORT=9090
+DEVDEPLOY_OBSERVABILITY_LOKI_SERVICE_NAME=loki-gateway
+DEVDEPLOY_OBSERVABILITY_LOKI_SERVICE_PORT=80
+DEVDEPLOY_OBSERVABILITY_GRAFANA_SERVICE_NAME=kube-prometheus-stack-grafana
+DEVDEPLOY_OBSERVABILITY_GRAFANA_SERVICE_PORT=80
+DEVDEPLOY_WORKLOAD_KUBECONFIG=/var/run/devdeploy/workload/kubeconfig
 ```
 
-In Docker Compose, `KUBERNETES_IN_CLUSTER=false` and the Prometheus/Loki URLs point at localhost. If those services are not reachable from the backend container, observability endpoints return `503` instead of crashing startup.
+In Docker Compose, `KUBERNETES_IN_CLUSTER=false` and the Prometheus/Loki URLs may point at localhost. In the multi-cluster local runtime, the management backend should use the Kubernetes service-proxy mode above. If those services are not reachable from the backend, observability endpoints return `503` instead of crashing startup.
 
 ## Authentication
 

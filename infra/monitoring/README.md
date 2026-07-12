@@ -52,12 +52,7 @@ Open:
 http://localhost:3000
 ```
 
-Local credentials:
-
-```text
-username: admin
-password: admin
-```
+Grafana credentials are stored in the `devdeploy-grafana-admin` Kubernetes Secret. Do not commit, paste, or print the password in shared logs.
 
 ## Access Prometheus
 

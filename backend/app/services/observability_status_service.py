@@ -13,11 +13,27 @@ from app.services.kubernetes_service import KubernetesService
 from app.services.loki_service import LokiService
 from app.services.observability_http import QUERY_TIMEOUT, get_bounded_json
 from app.services.observability_errors import ObservabilityUnavailableError
+from app.services.observability_service_proxy import KubernetesServiceProxyTransport
 from app.services.prometheus_service import PrometheusService
 
 
 Check = Callable[[], None]
-CacheKey = tuple[bool, bool, bool, str, str, str | None]
+CacheKey = tuple[
+    bool,
+    bool,
+    bool,
+    str,
+    str,
+    str | None,
+    str,
+    str,
+    str,
+    int,
+    str,
+    int,
+    str,
+    int,
+]
 
 
 _STATUS_CACHE: tuple[float, CacheKey, ObservabilityStatus] | None = None
@@ -41,17 +57,17 @@ class ObservabilityStatusService:
         self.loki_check = loki_check or LokiService().check_health
         self.grafana_check = grafana_check or self._grafana_health
         self.prometheus_configured = (
-            bool(settings.prometheus_base_url.strip())
+            self._component_configured(settings.prometheus_base_url)
             if prometheus_configured is None
             else prometheus_configured
         )
         self.loki_configured = (
-            bool(settings.loki_base_url.strip())
+            self._component_configured(settings.loki_base_url)
             if loki_configured is None
             else loki_configured
         )
         self.grafana_configured = (
-            bool(settings.grafana_base_url and settings.grafana_base_url.strip())
+            self._component_configured(settings.grafana_base_url or "")
             if grafana_configured is None
             else grafana_configured
         )
@@ -88,6 +104,14 @@ class ObservabilityStatusService:
             settings.prometheus_base_url,
             settings.loki_base_url,
             settings.grafana_base_url,
+            settings.observability_access_mode,
+            settings.observability_monitoring_namespace,
+            settings.observability_prometheus_service_name,
+            settings.observability_prometheus_service_port,
+            settings.observability_loki_service_name,
+            settings.observability_loki_service_port,
+            settings.observability_grafana_service_name,
+            settings.observability_grafana_service_port,
         )
 
     def _collect_status(self) -> ObservabilityStatus:
@@ -253,6 +277,9 @@ class ObservabilityStatusService:
 
     @staticmethod
     def _grafana_health() -> None:
+        if settings.observability_access_mode == "kubernetes_service_proxy":
+            KubernetesServiceProxyTransport.from_settings().grafana_health()
+            return
         if not settings.grafana_base_url:
             raise ObservabilityUnavailableError("Grafana is not configured.")
         try:
@@ -268,3 +295,7 @@ class ObservabilityStatusService:
             raise ObservabilityUnavailableError("Grafana is not reachable.") from exc
         if not isinstance(payload, dict):
             raise ObservabilityUnavailableError("Grafana returned an unreadable response.")
+
+    @staticmethod
+    def _component_configured(base_url: str) -> bool:
+        return settings.observability_access_mode == "kubernetes_service_proxy" or bool(base_url.strip())

@@ -14,6 +14,7 @@ from app.services.observability_query import (
     validate_metric_step,
     validate_namespace,
 )
+from app.services.observability_service_proxy import KubernetesServiceProxyTransport
 
 
 logger = logging.getLogger(__name__)
@@ -24,13 +25,23 @@ class PrometheusQueryError(Exception):
 
 
 class PrometheusService:
-    def __init__(self, base_url: str | None = None) -> None:
+    def __init__(self, base_url: str | None = None, service_proxy: KubernetesServiceProxyTransport | None = None) -> None:
         self.base_url = (base_url or settings.prometheus_base_url).rstrip("/")
+        self.service_proxy = service_proxy
 
     def check_health(self) -> None:
         self.query("up")
 
     def query(self, promql: str) -> dict[str, Any]:
+        if self._use_service_proxy:
+            payload = (self.service_proxy or KubernetesServiceProxyTransport.from_settings()).prometheus_query(
+                {"query": promql}
+            )
+            if payload.get("status") != "success":
+                raise ObservabilityUnavailableError("Prometheus query failed.")
+            return payload
+        if not self.base_url:
+            raise ObservabilityUnavailableError("Prometheus configuration is missing.")
         url = f"{self.base_url}/api/v1/query"
         try:
             payload = get_bounded_json(
@@ -50,6 +61,20 @@ class PrometheusService:
         return payload
 
     def query_range(self, promql: str, start: datetime, end: datetime, step: str) -> dict[str, Any]:
+        if self._use_service_proxy:
+            payload = (self.service_proxy or KubernetesServiceProxyTransport.from_settings()).prometheus_query_range(
+                {
+                    "query": promql,
+                    "start": start.timestamp(),
+                    "end": end.timestamp(),
+                    "step": step,
+                }
+            )
+            if payload.get("status") != "success":
+                raise PrometheusQueryError("Prometheus range query failed.")
+            return payload
+        if not self.base_url:
+            raise ObservabilityUnavailableError("Prometheus configuration is missing.")
         url = f"{self.base_url}/api/v1/query_range"
         try:
             payload = get_bounded_json(
@@ -349,3 +374,7 @@ class PrometheusService:
         if duration <= timedelta(hours=24):
             return "15m"
         return "1h"
+
+    @property
+    def _use_service_proxy(self) -> bool:
+        return settings.observability_access_mode == "kubernetes_service_proxy"

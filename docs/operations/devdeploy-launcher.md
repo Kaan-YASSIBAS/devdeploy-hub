@@ -923,6 +923,27 @@ The component reports the sanitized source contract, destination, sync policy, A
 
 When `-VerifyGitOpsRootApplication` is used, the same component reports strict read-only verification under `mode: verify`. It exposes pass/fail booleans for the expected Application count, source, revision, destination, project, automated sync, disabled prune and namespace creation, enabled self-heal, Synced status, Healthy status, and the empty `devdeploy-apps` workload inventory. Expected and actual repository URLs are sanitized, and no Secret, token, kubeconfig, certificate, key, or raw command payload is stored.
 
+When `-BootstrapWorkloadObservability` is used, status includes:
+
+- `platform_bootstrap.components.workload_observability`
+
+This explicit mode installs or verifies the workload-cluster observability stack in `kind-devdeploy-workload/monitoring`: kube-prometheus-stack, Prometheus, kube-state-metrics, node-exporter, Grafana, Loki, Grafana Alloy, and Grafana datasource provisioning. It also prepares the management backend for cross-cluster observability reads by creating a narrow workload-cluster service account and a management-cluster backend kubeconfig Secret. The generated kubeconfig uses only that service account identity; it does not mount the host kubeconfig into the backend.
+
+The Launcher is the end-user entry point for Helm dependency handling. If a compatible Helm v3 CLI is already available on PATH, workload observability bootstrap reuses it. If Helm is missing, bootstrap mode prepares pinned Helm `v3.18.6` from the official `https://get.helm.sh` release archive, verifies the downloaded archive with the official `.sha256sum`, extracts it under `.devdeploy/local/tools/helm/v3.18.6`, and records only sanitized dependency status. This does not change the global PATH, require administrator rights, or write credentials. `-VerifyWorkloadObservability` remains read-only: it can use an already compatible or previously verified DevDeploy-managed Helm binary, but it does not download or install Helm.
+
+The workload observability reader RBAC is intentionally narrow:
+
+- namespace: `monitoring`
+- service account: `devdeploy-observability-reader`
+- allowed reads: `services` with `get`, `list`, `watch`
+- allowed proxy reads: `services/proxy` with `get`
+
+It does not grant cluster-admin, workload writes, Secret reads, RBAC management, CRD management, namespace management, or writes outside `monitoring`.
+
+The Grafana admin password is generated into the Kubernetes Secret `monitoring/devdeploy-grafana-admin`. The launcher does not print the password, write it to status JSON, or store it in repository files. Grafana is useful for local inspection but is not required for DevDeploy Monitoring and Logs pages.
+
+When `-VerifyWorkloadObservability` is used, the same component reports `mode: verify` and performs read-only checks for namespace, Helm releases, rollout readiness, and the backend kubeconfig Secret. It does not install Helm releases, create Secrets, or reconcile Kubernetes resources.
+
 The `next_actions` array contains safe, non-destructive guidance. For example:
 
 - If port `8080` is busy, it tells the user to free port `8080` before creating DevDeploy local clusters.
@@ -932,6 +953,7 @@ The `next_actions` array contains safe, non-destructive guidance. For example:
 - If both clusters are ready, it points to the future Argo CD and platform bootstrap step.
 - If management ingress-nginx is Ready, it points to future PostgreSQL, backend, frontend, and Argo CD bootstrap phases.
 - If PostgreSQL is Ready, it points to future backend and frontend bootstrap phases.
+- If workload observability is Ready, it suggests verifying backend `/api/v1/observability/status` after the backend rollout has the service-proxy configuration.
 
 ## Logs
 
@@ -978,6 +1000,10 @@ They do not:
 `-BootstrapManagementIngress` may install or verify only ingress-nginx in `devdeploy-mgmt`.
 
 `-BootstrapManagementPostgres` may create or verify only the `devdeploy` namespace and PostgreSQL in `devdeploy-mgmt`.
+
+`-BootstrapWorkloadObservability` may create or verify only the workload observability stack in `devdeploy-workload/monitoring`, the narrow workload service-proxy reader identity, and the management backend Secret that contains the generated reader kubeconfig.
+
+`-VerifyWorkloadObservability` is read-only.
 
 ## Phase 2B / 2C Role
 

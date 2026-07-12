@@ -83,9 +83,17 @@ kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.pas
 
 ## Monitoring Stack
 
-Terraform installs `kube-prometheus-stack` into the `monitoring` namespace. The stack includes Prometheus, Grafana, Alertmanager, kube-state-metrics, and node-exporter.
+Terraform observability installation is deprecated for the Phase 2 local-first flow. The Launcher is the end-user entry point for workload observability:
 
-This setup is for local development only. Grafana uses a local placeholder password, and the stack is not exposed publicly.
+```powershell
+.\scripts\launcher\devdeploy-launcher.ps1 -BootstrapWorkloadObservability
+```
+
+The Terraform resources remain as historical local-development reference only and are disabled by default through `install_monitoring=false` and `install_logging=false`. Do not let Terraform and the Launcher own the same `monitoring` Helm releases at the same time.
+
+When explicitly enabled for historical local development, Terraform installs `kube-prometheus-stack` into the `monitoring` namespace. The stack includes Prometheus, Grafana, Alertmanager, kube-state-metrics, and node-exporter.
+
+This setup is for local development only. Grafana reads its admin credentials from the `devdeploy-grafana-admin` Kubernetes Secret, and the stack is not exposed publicly.
 
 Apply the platform bootstrap:
 
@@ -117,12 +125,7 @@ kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
 
 Open `http://localhost:3000`.
 
-Grafana login:
-
-```text
-username: admin
-password: admin
-```
+Grafana login uses the credentials stored in `monitoring/devdeploy-grafana-admin`. Do not commit, paste, or print the password in shared logs.
 
 Access Prometheus:
 
@@ -136,7 +139,9 @@ For production, use proper secret management, persistence, reviewed dashboards, 
 
 ## Logging Stack
 
-Terraform installs Loki and Grafana Alloy into the `monitoring` namespace.
+Terraform logging installation is also deprecated for the Phase 2 local-first flow. Use the Launcher command above so Prometheus, Loki, Alloy, Grafana, datasources, and backend Service proxy credentials are configured together.
+
+When explicitly enabled for historical local development, Terraform installs Loki and Grafana Alloy into the `monitoring` namespace.
 
 - Loki stores and queries logs.
 - Grafana Alloy collects Kubernetes pod logs and forwards them to Loki.

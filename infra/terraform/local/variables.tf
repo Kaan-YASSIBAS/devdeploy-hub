@@ -41,9 +41,9 @@ variable "kube_prometheus_stack_chart_version" {
 }
 
 variable "install_monitoring" {
-  description = "Whether to install kube-prometheus-stack through Helm."
+  description = "Deprecated. Whether to install kube-prometheus-stack through Terraform. Phase 2 local-first flows use scripts/launcher/devdeploy-launcher.ps1 -BootstrapWorkloadObservability instead."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "loki_chart_version" {
@@ -59,7 +59,7 @@ variable "alloy_chart_version" {
 }
 
 variable "install_logging" {
-  description = "Whether to install Loki and Grafana Alloy through Helm."
+  description = "Deprecated. Whether to install Loki and Grafana Alloy through Terraform. Phase 2 local-first flows use scripts/launcher/devdeploy-launcher.ps1 -BootstrapWorkloadObservability instead."
   type        = bool
-  default     = true
+  default     = false
 }

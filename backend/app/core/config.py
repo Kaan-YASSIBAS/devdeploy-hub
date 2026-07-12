@@ -17,6 +17,44 @@ class Settings(BaseSettings):
     prometheus_base_url: str = Field(default="", alias="PROMETHEUS_BASE_URL")
     loki_base_url: str = Field(default="", alias="LOKI_BASE_URL")
     grafana_base_url: str | None = Field(default=None, alias="GRAFANA_BASE_URL")
+    observability_access_mode: Literal["http", "kubernetes_service_proxy"] = Field(
+        default="http",
+        alias="DEVDEPLOY_OBSERVABILITY_ACCESS_MODE",
+    )
+    observability_monitoring_namespace: str = Field(
+        default="monitoring",
+        alias="DEVDEPLOY_OBSERVABILITY_MONITORING_NAMESPACE",
+    )
+    observability_prometheus_service_name: str = Field(
+        default="kube-prometheus-stack-prometheus",
+        alias="DEVDEPLOY_OBSERVABILITY_PROMETHEUS_SERVICE_NAME",
+    )
+    observability_prometheus_service_port: int = Field(
+        default=9090,
+        alias="DEVDEPLOY_OBSERVABILITY_PROMETHEUS_SERVICE_PORT",
+        ge=1,
+        le=65535,
+    )
+    observability_loki_service_name: str = Field(
+        default="loki-gateway",
+        alias="DEVDEPLOY_OBSERVABILITY_LOKI_SERVICE_NAME",
+    )
+    observability_loki_service_port: int = Field(
+        default=80,
+        alias="DEVDEPLOY_OBSERVABILITY_LOKI_SERVICE_PORT",
+        ge=1,
+        le=65535,
+    )
+    observability_grafana_service_name: str = Field(
+        default="kube-prometheus-stack-grafana",
+        alias="DEVDEPLOY_OBSERVABILITY_GRAFANA_SERVICE_NAME",
+    )
+    observability_grafana_service_port: int = Field(
+        default=80,
+        alias="DEVDEPLOY_OBSERVABILITY_GRAFANA_SERVICE_PORT",
+        ge=1,
+        le=65535,
+    )
     observability_health_cache_seconds: int = Field(
         default=10,
         alias="OBSERVABILITY_HEALTH_CACHE_SECONDS",

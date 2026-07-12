@@ -35,6 +35,32 @@ class PlatformBackendManifestTestCase(unittest.TestCase):
             "/api/v1/health/ready",
         )
         self.assertEqual(backend["livenessProbe"]["httpGet"]["path"], "/api/v1/health")
+        volume_names = [item["name"] for item in backend["volumeMounts"]]
+        self.assertIn("workload-kubeconfig", volume_names)
+        workload_mount = next(item for item in backend["volumeMounts"] if item["name"] == "workload-kubeconfig")
+        self.assertEqual(workload_mount["mountPath"], "/var/run/devdeploy/workload")
+        self.assertTrue(workload_mount["readOnly"])
+        workload_secret = next(item for item in pod_spec["volumes"] if item["name"] == "workload-kubeconfig")
+        self.assertEqual(workload_secret["secret"]["secretName"], "devdeploy-backend-workload-kubeconfig")
+        self.assertTrue(workload_secret["secret"]["optional"])
+
+    def test_backend_config_uses_observability_service_proxy_not_cluster_ip_urls(self) -> None:
+        repository_root = Path(__file__).resolve().parents[2]
+        configmap = yaml.safe_load(
+            (repository_root / "platform" / "management" / "backend" / "configmap.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+        data = configmap["data"]
+
+        self.assertEqual(data["DEVDEPLOY_OBSERVABILITY_ACCESS_MODE"], "kubernetes_service_proxy")
+        self.assertEqual(data["PROMETHEUS_BASE_URL"], "")
+        self.assertEqual(data["LOKI_BASE_URL"], "")
+        self.assertEqual(data["DEVDEPLOY_OBSERVABILITY_MONITORING_NAMESPACE"], "monitoring")
+        self.assertEqual(data["DEVDEPLOY_OBSERVABILITY_PROMETHEUS_SERVICE_NAME"], "kube-prometheus-stack-prometheus")
+        self.assertEqual(data["DEVDEPLOY_OBSERVABILITY_LOKI_SERVICE_NAME"], "loki-gateway")
+        self.assertNotIn("ClusterIP", str(data))
+        self.assertNotIn(".svc.cluster.local", str(data))
 
 
 if __name__ == "__main__":

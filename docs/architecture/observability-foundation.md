@@ -1,6 +1,6 @@
 # Observability Foundation
 
-This document defines the Phase 2J.27a observability foundation for the local-first, multi-cluster DevDeploy Hub architecture.
+This document defines the Phase 2J.27 observability foundation for the local-first, multi-cluster DevDeploy Hub architecture.
 
 ## Context
 
@@ -59,13 +59,9 @@ The selected V1 direction is workload-local collection with backend-mediated rea
 
 The backend runs in `devdeploy-mgmt` and reads observability systems through server-controlled configuration. The browser never receives internal service URLs or credentials.
 
-Phase 2J.27a does not complete the cross-cluster transport path. If Prometheus
-and Loki run in `devdeploy-workload`, the management backend cannot rely on
-workload-cluster service DNS names directly. The next bootstrap phase should
-choose one controlled access method, such as Kubernetes API service proxying via
-the server-side workload kubeconfig, or an explicitly provisioned internal route.
-The older direct service DNS settings remain useful for same-cluster and
-historical local setups, but they are not the final multi-cluster access model.
+Phase 2J.27b selects Kubernetes API Service proxying as the V1 cross-cluster transport. The management backend receives a server-side workload kubeconfig for a narrow service account in `devdeploy-workload/monitoring`. The backend uses the Kubernetes Python client to query only configured service identities and allowlisted API paths. It does not expose ClusterIP URLs, accept client-controlled proxy targets, use `kubectl`, or shell out for observability reads.
+
+The older direct service DNS settings remain useful for same-cluster and historical local setups, but they are not the final multi-cluster access model.
 
 ## Alternatives Considered
 
@@ -111,6 +107,22 @@ because Grafana is not required for DevDeploy Monitoring or Logs.
 
 The API returns safe capability flags, message codes, and checked timestamps. It does not return internal URLs, bearer tokens, service account data, certificates, or raw upstream exceptions.
 
+For the multi-cluster local runtime, the backend should use:
+
+```text
+DEVDEPLOY_OBSERVABILITY_ACCESS_MODE=kubernetes_service_proxy
+DEVDEPLOY_OBSERVABILITY_MONITORING_NAMESPACE=monitoring
+DEVDEPLOY_OBSERVABILITY_PROMETHEUS_SERVICE_NAME=kube-prometheus-stack-prometheus
+DEVDEPLOY_OBSERVABILITY_PROMETHEUS_SERVICE_PORT=9090
+DEVDEPLOY_OBSERVABILITY_LOKI_SERVICE_NAME=loki-gateway
+DEVDEPLOY_OBSERVABILITY_LOKI_SERVICE_PORT=80
+DEVDEPLOY_OBSERVABILITY_GRAFANA_SERVICE_NAME=kube-prometheus-stack-grafana
+DEVDEPLOY_OBSERVABILITY_GRAFANA_SERVICE_PORT=80
+DEVDEPLOY_WORKLOAD_KUBECONFIG=/var/run/devdeploy/workload/kubeconfig
+```
+
+The kubeconfig is mounted from a management-cluster Secret created by the launcher. It contains only a workload-cluster service account token scoped to read `services` and `services/proxy` in the `monitoring` namespace.
+
 Namespace-level Kubernetes, metrics, and logs endpoints remain platform
 administrator-only in this foundation phase. Owner-scoped application logs and
 metrics must be added through DeploymentRecord or ServiceDefinition identity in
@@ -144,6 +156,14 @@ Frontend responses must not include:
 
 Backend observability access is read-only. The backend must not use shell, subprocess, or `kubectl` for observability queries.
 
+The selected Service proxy transport is constrained by all of these boundaries:
+
+- namespace and service names come from server configuration
+- API paths are allowlisted for Prometheus, Loki, and Grafana health
+- client requests cannot provide upstream URL, host, port, namespace, service, or path
+- the workload identity has no cluster-admin, workload write, Secret read, RBAC, CRD, or namespace-management permissions
+- response bodies are size-limited and upstream failures are sanitized
+
 ## Resource Sizing and Retention
 
 The local stack should stay developer-machine friendly:
@@ -163,16 +183,21 @@ backend pod in `devdeploy-mgmt` can resolve workload-cluster service DNS.
 
 ## Bootstrap Direction
 
-The repository already has Terraform-based Helm installation for the older local stack. Phase 2J.27a does not perform live installation.
+The repository has Terraform-based Helm installation for the older local stack and launcher-backed Helm values for the multi-cluster workload stack. For Phase 2 local-first flows, the Launcher is the owner and Terraform observability installation is deprecated and disabled by default to avoid two tools managing the same Helm releases.
 
-The future launcher-backed bootstrap should:
+The Phase 2J.27b launcher-backed bootstrap is explicit and idempotent through `-BootstrapWorkloadObservability`. It should:
 
 1. Install or verify a `monitoring` namespace in `devdeploy-workload`.
 2. Install or verify kube-prometheus-stack with local-safe values.
 3. Install or verify Loki in single-binary or equivalent local-safe mode.
 4. Install or verify Grafana Alloy or the selected collector.
-5. Configure backend environment variables or Secrets with the selected internal access path.
-6. Verify `/api/v1/observability/status` reports connected components.
+5. Create or verify the Grafana admin Secret without logging the generated password.
+6. Provision Grafana datasources for Prometheus and Loki.
+7. Create or verify a narrow workload service account for backend Service proxy access.
+8. Create or verify the management-cluster backend kubeconfig Secret for that identity.
+9. Verify `/api/v1/observability/status` reports connected components after the backend is rolled out with the service-proxy configuration.
+
+`-VerifyWorkloadObservability` performs read-only checks for the same expected state and does not install or reconcile Helm releases.
 
 ## Failure Behavior
 
@@ -187,7 +212,6 @@ The UI should show honest not configured, unavailable, degraded, or connected st
 
 ## Follow-Up Phases
 
-- Phase 2J.27b: workload observability stack bootstrap design or launcher implementation.
 - Phase 2J.27c: bounded Prometheus metric APIs for workload-domain views.
 - Phase 2J.27d: owner-scoped Loki logs for DeploymentRecord and ServiceDefinition identities.
 - Phase 2J.27e: Dashboard operational analytics using domain records first and metrics as enrichment.
