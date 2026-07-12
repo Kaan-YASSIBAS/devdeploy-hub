@@ -258,13 +258,13 @@
       "clusterHealth": "Cluster Health",
       "details": {
         "totalApps": "Registered service definitions",
-        "totalDeployments": "All deployment requests",
+        "totalDeployments": "Active deployment records",
         "activeDeployments": "Currently pending or running",
-        "pendingDeployments": "Waiting in the queue",
-        "runningDeployments": "Currently in progress",
-        "successfulDeployments": "Completed successfully",
+        "pendingDeployments": "Waiting for GitOps or runtime readiness",
+        "runningDeployments": "Runtime is healthy and ready",
+        "successfulDeployments": "Completed operation with healthy runtime",
         "healthyPods": "Ready and passing probes",
-        "failedDeployments": "Needs platform review",
+        "failedDeployments": "Failed operation, reconciliation, or runtime",
         "clusterHealth": "Control plane nominal"
       }
     },

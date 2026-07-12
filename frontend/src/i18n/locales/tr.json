@@ -258,13 +258,13 @@
       "clusterHealth": "Cluster Sağlığı",
       "details": {
         "totalApps": "Kayıtlı servis tanımları",
-        "totalDeployments": "Tüm deployment istekleri",
+        "totalDeployments": "Aktif deployment kayıtları",
         "activeDeployments": "Bekleyen veya çalışanlar",
-        "pendingDeployments": "Kuyrukta bekleyenler",
-        "runningDeployments": "Şu anda ilerleyenler",
-        "successfulDeployments": "Başarıyla tamamlananlar",
+        "pendingDeployments": "GitOps veya runtime hazırlığı bekleniyor",
+        "runningDeployments": "Runtime sağlıklı ve hazır",
+        "successfulDeployments": "İşlem tamamlandı, runtime sağlıklı",
         "healthyPods": "Ready ve probe kontrolleri başarılı",
-        "failedDeployments": "Platform incelemesi gerekiyor",
+        "failedDeployments": "İşlem, reconciliation veya runtime hatası",
         "clusterHealth": "Control plane normal"
       }
     },

@@ -5,85 +5,139 @@ from typing import Literal
 from kubernetes.client import ApiException
 from sqlalchemy.orm import Session
 
+from app.models.deployment_record import DeploymentRecord
 from app.models.user import User
-from app.repositories.application_repository import ApplicationRepository
+from app.repositories.deployment_record_repository import DeploymentRecordRepository
+from app.repositories.service_definition_repository import ServiceDefinitionRepository
 from app.schemas.dashboard import (
     DashboardClusterHealthItem,
     DashboardSummaryResponse,
     DashboardTimelineEvent,
 )
 from app.schemas.gitops_deployment import DeploymentListItem
-from app.services.gitops_deployment_service import GitOpsDeploymentService
+from app.schemas.runtime_status import DeploymentRuntimeStatusRead
+from app.services.deployment_drift import DeploymentDriftService, UnavailableGitOpsManifestReader
 from app.services.kubernetes_service import KubernetesService
 from app.services.loki_service import LokiService
 from app.services.observability_errors import ObservabilityUnavailableError
 from app.services.prometheus_service import PrometheusService
+from app.services.product_runtime_status import ProductRuntimeStatusService
 
 
 ClusterHealthKey = Literal["kubernetes", "argocd", "prometheus", "loki"]
 
 
 class DashboardService:
-    def __init__(self, db: Session):
+    def __init__(
+        self,
+        db: Session,
+        *,
+        runtime_service: ProductRuntimeStatusService | None = None,
+        drift_service: DeploymentDriftService | None = None,
+    ):
         self.db = db
-        self.applications = ApplicationRepository(db)
+        self.services = ServiceDefinitionRepository(db)
+        self.deployments = DeploymentRecordRepository(db)
+        self.runtime_service = runtime_service or ProductRuntimeStatusService()
+        self.drift_service = drift_service or DeploymentDriftService(
+            manifest_reader=UnavailableGitOpsManifestReader(),
+            runtime_service=self.runtime_service,
+        )
 
     def summary(self, current_user: User) -> DashboardSummaryResponse:
-        application_count = self.applications.count(
-            owner_id=None if current_user.role == "admin" else current_user.id
-        )
-        deployments = self._dashboard_deployments(self._list_deployments(current_user))
+        services = self.services.list_for_owner(current_user.id, archive_filter="active")
+        deployments = self.deployments.list_for_owner(current_user.id, archive_filter="active")
+        deployment_items = [self._dashboard_deployment_item(deployment) for deployment in deployments]
 
         return DashboardSummaryResponse(
-            application_count=application_count,
+            application_count=len(services),
             deployment_count=len(deployments),
-            pending_deployment_count=self._count_status(deployments, {"pending", "progressing", "deletion_requested"}),
-            running_deployment_count=self._count_status(deployments, {"running"}),
-            successful_deployment_count=self._count_status(deployments, {"success"}),
-            failed_deployment_count=self._count_status(deployments, {"failed"}),
-            environment_distribution=self._environment_distribution(deployments),
-            recent_deployments=deployments[:5],
-            deployment_timeline=self._deployment_timeline(deployments[:5]),
+            pending_deployment_count=sum(1 for deployment in deployments if self._is_pending(deployment)),
+            running_deployment_count=sum(1 for deployment in deployments if self._is_running(deployment)),
+            successful_deployment_count=sum(1 for deployment in deployments if self._is_successful(deployment)),
+            failed_deployment_count=sum(1 for deployment in deployments if self._is_failed(deployment)),
+            environment_distribution=self._environment_distribution(deployment_items),
+            recent_deployments=deployment_items[:5],
+            deployment_timeline=self._deployment_timeline(deployment_items[:5]),
             cluster_health=self._cluster_health(),
         )
 
-    def _list_deployments(self, current_user: User) -> list[DeploymentListItem]:
-        try:
-            return GitOpsDeploymentService(self.db).list_deployments(current_user)
-        except (ObservabilityUnavailableError, ApiException):
-            return self._legacy_deployments_only(current_user)
+    def _is_pending(self, deployment: DeploymentRecord) -> bool:
+        if self._is_failed(deployment) or self._is_running(deployment):
+            return False
+        runtime = self.runtime_service.deployment_status(deployment)
+        if runtime.display_status == "progressing":
+            return True
+        if runtime.display_status == "not_found" and not self._has_completed_operation(deployment):
+            return True
+        if runtime.display_status == "unknown" and deployment.desired_state in {"draft", "pending"}:
+            return True
+        return deployment.desired_state == "draft"
 
-    def _legacy_deployments_only(self, current_user: User) -> list[DeploymentListItem]:
-        service = GitOpsDeploymentService(self.db)
-        legacy_deployments = (
-            service.deployments.list_all()
-            if current_user.role == "admin"
-            else service.deployments.list_for_owner(current_user.id)
+    def _is_running(self, deployment: DeploymentRecord) -> bool:
+        return self.runtime_service.deployment_status(deployment).display_status == "running"
+
+    def _is_successful(self, deployment: DeploymentRecord) -> bool:
+        return (
+            self._is_running(deployment)
+            and self._has_completed_operation(deployment)
+            and not self._is_failed(deployment)
         )
-        items = [service._from_legacy_deployment(deployment) for deployment in legacy_deployments]
-        return sorted(items, key=service._sort_timestamp, reverse=True)
+
+    def _is_failed(self, deployment: DeploymentRecord) -> bool:
+        runtime = self.runtime_service.deployment_status(deployment)
+        drift = self.drift_service.evaluate(deployment)
+        if drift.status in {"gitops_missing", "runtime_missing"}:
+            return True
+        if self._has_failed_status_summary(deployment.status_summary):
+            return True
+        return runtime.display_status == "not_found" and self._has_completed_operation(deployment)
+
+    def _dashboard_deployment_item(self, deployment: DeploymentRecord) -> DeploymentListItem:
+        runtime = self.runtime_service.deployment_status(deployment)
+        status = self._deployment_list_status(deployment, runtime)
+        return DeploymentListItem(
+            id=deployment.id,
+            name=deployment.app_name,
+            app_name=deployment.app_name,
+            namespace=deployment.namespace,
+            image=deployment.image,
+            tag=None,
+            environment="cluster",
+            replicas=runtime.desired_replicas or deployment.replicas,
+            available_replicas=runtime.available_replicas or 0,
+            updated_replicas=runtime.updated_replicas or 0,
+            status=status,  # type: ignore[arg-type]
+            source="gitops" if deployment.gitops_manifest_path or deployment.commit_sha else "legacy",
+            is_live=runtime.deployment_found,
+            created_at=deployment.created_at,
+            updated_at=deployment.updated_at,
+        )
 
     @staticmethod
-    def _dashboard_deployments(deployments: list[DeploymentListItem]) -> list[DeploymentListItem]:
-        return [
-            deployment
-            for deployment in deployments
-            if DashboardService._is_dashboard_deployment(deployment)
-        ]
+    def _deployment_list_status(
+        deployment: DeploymentRecord,
+        runtime: DeploymentRuntimeStatusRead,
+    ) -> str:
+        if runtime.display_status == "running":
+            return "running"
+        if runtime.display_status == "progressing":
+            return "progressing"
+        if runtime.display_status == "not_found":
+            return "pending" if deployment.desired_state == "draft" else "failed"
+        return "pending" if deployment.desired_state in {"draft", "pending"} else "unknown"
 
     @staticmethod
-    def _is_dashboard_deployment(deployment: DeploymentListItem) -> bool:
-        if deployment.status == "stale":
-            return False
-        if deployment.status == "deleted":
-            return False
-        if deployment.source == "gitops" and not deployment.is_live and deployment.status == "failed":
-            return False
-        return True
+    def _has_completed_operation(deployment: DeploymentRecord) -> bool:
+        if deployment.commit_sha:
+            return True
+        summary = (deployment.status_summary or "").lower()
+        return "gitops manifests published" in summary or "recovered" in summary
 
     @staticmethod
-    def _count_status(deployments: list[DeploymentListItem], statuses: set[str]) -> int:
-        return sum(1 for deployment in deployments if deployment.status in statuses)
+    def _has_failed_status_summary(summary: str | None) -> bool:
+        value = (summary or "").lower()
+        return any(marker in value for marker in ("failed", "conflict", "could not"))
 
     @staticmethod
     def _environment_distribution(deployments: list[DeploymentListItem]) -> list[dict[str, int | str]]:
