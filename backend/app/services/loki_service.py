@@ -11,11 +11,31 @@ from app.services.observability_service_proxy import KubernetesServiceProxyTrans
 
 class LokiService:
     def __init__(self, base_url: str | None = None, service_proxy: KubernetesServiceProxyTransport | None = None) -> None:
+        self._explicit_base_url = base_url is not None
         self.base_url = (base_url or settings.loki_base_url).rstrip("/")
         self.service_proxy = service_proxy
 
     def check_health(self) -> None:
-        self.query_logs(namespace=settings.workload_namespace, limit=1)
+        if self._use_service_proxy:
+            payload = (self.service_proxy or KubernetesServiceProxyTransport.from_settings()).loki_labels()
+        else:
+            if not self.base_url:
+                raise ObservabilityUnavailableError("Loki configuration is missing.")
+            try:
+                payload = get_bounded_json(
+                    f"{self.base_url}/loki/api/v1/labels",
+                    params=None,
+                    timeout=RANGE_QUERY_TIMEOUT,
+                    service_name="Loki",
+                )
+            except httpx.TimeoutException as exc:
+                raise ObservabilityUnavailableError("Loki request timed out.") from exc
+            except httpx.HTTPStatusError as exc:
+                raise ObservabilityUnavailableError("Loki returned an unsuccessful response.") from exc
+            except httpx.HTTPError as exc:
+                raise ObservabilityUnavailableError("Loki is unreachable.") from exc
+        if payload.get("status") != "success":
+            raise ObservabilityUnavailableError("Loki health check failed.")
 
     def query_logs(self, namespace: str, limit: int = 100) -> list[dict[str, Any]]:
         safe_namespace = escape_label_value(validate_namespace(namespace))
@@ -62,4 +82,4 @@ class LokiService:
 
     @property
     def _use_service_proxy(self) -> bool:
-        return settings.observability_access_mode == "kubernetes_service_proxy"
+        return settings.observability_access_mode == "kubernetes_service_proxy" and not self._explicit_base_url

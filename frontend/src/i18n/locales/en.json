@@ -840,6 +840,7 @@
       "not_configured": "Not configured",
       "degraded": "Degraded",
       "unavailable": "Unavailable",
+      "restricted": "Restricted",
       "optional": "Optional"
     },
     "messages": {
@@ -853,18 +854,21 @@
         "connected": "Prometheus is reachable through the backend.",
         "not_configured": "Prometheus backend access is not configured.",
         "unavailable": "Prometheus is configured but not reachable.",
+        "restricted": "Prometheus access is denied by backend-to-service credentials.",
         "degraded": "Prometheus returned an unreadable health response."
       },
       "loki": {
         "connected": "Loki is reachable through the backend.",
         "not_configured": "Loki backend access is not configured.",
         "unavailable": "Loki is configured but not reachable.",
+        "restricted": "Loki access is denied by backend-to-service credentials.",
         "degraded": "Loki returned an unreadable health response."
       },
       "grafana": {
         "connected": "Grafana health endpoint is reachable.",
         "optional": "Grafana is optional and is not configured.",
         "unavailable": "Grafana is configured but not reachable.",
+        "restricted": "Grafana access is denied by backend-to-service credentials.",
         "degraded": "Grafana returned an unreadable health response."
       }
     }

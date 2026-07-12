@@ -1,11 +1,15 @@
 import unittest
 import time
+from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import httpx
+from kubernetes import client
+from kubernetes.client import ApiException
 
 from app.api.v1 import observability
 from app.core.deps import get_current_user
@@ -73,13 +77,32 @@ class KubernetesProxyResponse:
 
 
 class FakeApiClient:
-    def __init__(self, response: KubernetesProxyResponse | None = None) -> None:
+    def __init__(self, response: KubernetesProxyResponse | None = None, error: Exception | None = None) -> None:
         self.response = response or KubernetesProxyResponse()
+        self.error = error
         self.calls: list[dict[str, object]] = []
 
     def call_api(self, **kwargs):
         self.calls.append(kwargs)
+        if self.error:
+            raise self.error
         return self.response
+
+
+class RoutingFakeApiClient:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def call_api(self, **kwargs):
+        self.calls.append(kwargs)
+        resource_path = str(kwargs["resource_path"])
+        if resource_path.endswith("/api/v1/query"):
+            return KubernetesProxyResponse(b'{"status":"success","data":{"resultType":"vector","result":[]}}')
+        if resource_path.endswith("/loki/api/v1/labels"):
+            return KubernetesProxyResponse(b'{"status":"success","data":[]}')
+        if resource_path.endswith("/api/health"):
+            return KubernetesProxyResponse(b'{"database":"ok","version":"11.0.0"}')
+        raise ApiException(status=404, reason="Not Found")
 
 
 class ObservabilityStatusApiTestCase(unittest.TestCase):
@@ -149,12 +172,26 @@ class ObservabilityStatusApiTestCase(unittest.TestCase):
         self.assertNotIn("grafana", body)
         self.assertTrue(body["prometheus"]["available"])
 
-    def test_logs_endpoint_requires_platform_admin_scope(self) -> None:
+    def test_logs_endpoint_allows_authenticated_local_user_scope(self) -> None:
         self.authenticate_as("developer")
 
-        response = self.client.get("/api/v1/observability/logs")
+        with patch("app.api.v1.observability.settings.environment", "development"):
+            response = self.client.get("/api/v1/observability/logs")
+
+        self.assertNotEqual(response.status_code, 403)
+
+    def test_logs_endpoint_requires_admin_scope_outside_local_development(self) -> None:
+        self.authenticate_as("developer")
+
+        with patch("app.core.deps.settings.environment", "production"):
+            response = self.client.get("/api/v1/observability/logs")
 
         self.assertEqual(response.status_code, 403)
+
+    def test_observability_data_endpoints_remain_unauthenticated_401(self) -> None:
+        response = self.client.get("/api/v1/observability/logs")
+
+        self.assertEqual(response.status_code, 401)
 
 
 class ObservabilityStatusServiceTestCase(unittest.TestCase):
@@ -280,6 +317,36 @@ class ObservabilityStatusServiceTestCase(unittest.TestCase):
         service.get_status()
         self.assertEqual(calls, 2)
 
+    def test_cache_key_changes_when_observability_kubeconfig_changes(self) -> None:
+        calls = 0
+
+        def counted_check() -> None:
+            nonlocal calls
+            calls += 1
+
+        service = ObservabilityStatusService(
+            kubernetes_check=counted_check,
+            prometheus_check=lambda: None,
+            loki_check=lambda: None,
+            prometheus_configured=True,
+            loki_configured=True,
+            grafana_configured=False,
+            cache_ttl_seconds=60,
+        )
+
+        with patch(
+            "app.services.observability_status_service.settings.observability_workload_kubeconfig",
+            "../.devdeploy/local/kubeconfig/one.yaml",
+        ):
+            service.get_status()
+        with patch(
+            "app.services.observability_status_service.settings.observability_workload_kubeconfig",
+            "../.devdeploy/local/kubeconfig/two.yaml",
+        ):
+            service.get_status()
+
+        self.assertEqual(calls, 2)
+
     def test_kubernetes_configuration_error_is_not_configured(self) -> None:
         service = ObservabilityStatusService(
             kubernetes_check=lambda: (_ for _ in ()).throw(
@@ -310,6 +377,7 @@ class PrometheusAndLokiHealthParsingTestCase(unittest.TestCase):
         self.assertEqual(timeout.connect, 2.0)
         self.assertEqual(timeout.read, 5.0)
         self.assertFalse(stream.call_args.kwargs["follow_redirects"])
+        self.assertEqual(stream.call_args.kwargs["params"]["query"], "vector(1)")
 
     def test_prometheus_malformed_response_is_sanitized(self) -> None:
         response = StreamResponse(b"{bad-json")
@@ -326,7 +394,7 @@ class PrometheusAndLokiHealthParsingTestCase(unittest.TestCase):
                 PrometheusService(base_url="http://prometheus.example").check_health()
 
     def test_loki_health_uses_strict_timeout_and_no_redirects(self) -> None:
-        response = StreamResponse()
+        response = StreamResponse(b'{"status":"success","data":[]}')
 
         with patch("app.services.observability_http.httpx.stream", return_value=response) as stream:
             LokiService(base_url="http://loki.example").check_health()
@@ -335,7 +403,14 @@ class PrometheusAndLokiHealthParsingTestCase(unittest.TestCase):
         self.assertEqual(timeout.connect, 2.0)
         self.assertEqual(timeout.read, 8.0)
         self.assertFalse(stream.call_args.kwargs["follow_redirects"])
-        self.assertEqual(stream.call_args.kwargs["params"]["limit"], 1)
+        self.assertIsNone(stream.call_args.kwargs["params"])
+        self.assertTrue(str(stream.call_args.args[1]).endswith("/loki/api/v1/labels"))
+
+    def test_loki_health_accepts_success_with_empty_labels(self) -> None:
+        response = StreamResponse(b'{"status":"success","data":[]}')
+
+        with patch("app.services.observability_http.httpx.stream", return_value=response):
+            LokiService(base_url="http://loki.example").check_health()
 
     def test_loki_malformed_response_is_sanitized(self) -> None:
         response = StreamResponse(b"{bad-json")
@@ -351,6 +426,13 @@ class PrometheusAndLokiHealthParsingTestCase(unittest.TestCase):
             LokiService(base_url="http://loki.example").query_logs(namespace="devdeploy-apps", limit=10_000)
 
         self.assertEqual(stream.call_args.kwargs["params"]["limit"], 500)
+
+    def test_plain_text_health_response_is_malformed_not_json(self) -> None:
+        response = StreamResponse(b"ready", content_type="text/plain")
+
+        with patch("app.services.observability_http.httpx.stream", return_value=response):
+            with self.assertRaisesRegex(ObservabilityUnavailableError, "unsupported response type"):
+                PrometheusService(base_url="http://prometheus.example").check_health()
 
 
 class ObservabilityServiceProxyTransportTestCase(unittest.TestCase):
@@ -368,16 +450,81 @@ class ObservabilityServiceProxyTransportTestCase(unittest.TestCase):
     def test_prometheus_service_proxy_uses_fixed_allowlisted_path(self) -> None:
         transport, api_client = self.transport()
 
-        payload = transport.prometheus_query({"query": "up"})
+        payload = transport.prometheus_query({"query": "vector(1)"})
 
         self.assertEqual(payload["status"], "success")
         call = api_client.calls[0]
         self.assertEqual(
             call["resource_path"],
-            "/api/v1/namespaces/monitoring/services/kube-prometheus-stack-prometheus:9090/proxy/api/v1/query",
+            "/api/v1/namespaces/monitoring/services/http:kube-prometheus-stack-prometheus:9090/proxy/api/v1/query",
         )
         self.assertEqual(call["method"], "GET")
         self.assertFalse(call["_preload_content"])
+        self.assertEqual(call["query_params"], [("query", "vector(1)")])
+
+    def test_service_proxy_request_passes_loaded_authorization_override(self) -> None:
+        api_client = FakeApiClient()
+        api_client.configuration = SimpleNamespace(api_key={"authorization": "Bearer test-token"})
+        transport = KubernetesServiceProxyTransport(
+            api_client=api_client,
+            namespace="monitoring",
+            max_response_bytes=2 * 1024 * 1024,
+        )
+
+        transport.prometheus_query({"query": "vector(1)"})
+
+        request_auth = api_client.calls[0]["_request_auth"]
+        self.assertEqual(request_auth["in"], "header")
+        self.assertEqual(request_auth["key"], "authorization")
+        self.assertTrue(str(request_auth["value"]).startswith("Bearer "))
+
+    def test_json_kubeconfig_fallback_accepts_utf8_bom(self) -> None:
+        kubeconfig = """{
+          "apiVersion": "v1",
+          "kind": "Config",
+          "current-context": "devdeploy-workload-observability",
+          "clusters": [
+            {
+              "name": "devdeploy-workload",
+              "cluster": {
+                "server": "https://127.0.0.1:58081",
+                "certificate-authority-data": "Y2E="
+              }
+            }
+          ],
+          "contexts": [
+            {
+              "name": "devdeploy-workload-observability",
+              "context": {
+                "cluster": "devdeploy-workload",
+                "user": "devdeploy-observability"
+              }
+            }
+          ],
+          "users": [
+            {
+              "name": "devdeploy-observability",
+              "user": {
+                "token": "Bearer fake-token"
+              }
+            }
+          ]
+        }"""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            kubeconfig_path = Path(temporary_directory) / "observability-kubeconfig.json"
+            kubeconfig_path.write_text(kubeconfig, encoding="utf-8-sig")
+            configuration = client.Configuration()
+
+            KubernetesServiceProxyTransport._load_json_kubeconfig_fallback(
+                str(kubeconfig_path),
+                configuration,
+                context="devdeploy-workload-observability",
+                original_error=ValueError("standard loader failed"),
+            )
+
+        self.assertEqual(configuration.host, "https://127.0.0.1:58081")
+        self.assertIn("authorization", configuration.api_key)
+        self.assertTrue(configuration.api_key["authorization"].startswith("Bearer "))
 
     def test_loki_service_proxy_uses_fixed_allowlisted_path(self) -> None:
         transport, api_client = self.transport()
@@ -386,7 +533,17 @@ class ObservabilityServiceProxyTransportTestCase(unittest.TestCase):
 
         self.assertEqual(
             api_client.calls[0]["resource_path"],
-            "/api/v1/namespaces/monitoring/services/loki-gateway:80/proxy/loki/api/v1/query_range",
+            "/api/v1/namespaces/monitoring/services/http:loki-gateway:80/proxy/loki/api/v1/query_range",
+        )
+
+    def test_loki_service_proxy_health_uses_labels_path(self) -> None:
+        transport, api_client = self.transport()
+
+        transport.loki_labels()
+
+        self.assertEqual(
+            api_client.calls[0]["resource_path"],
+            "/api/v1/namespaces/monitoring/services/http:loki-gateway:80/proxy/loki/api/v1/labels",
         )
 
     def test_grafana_service_proxy_uses_fixed_allowlisted_path(self) -> None:
@@ -396,7 +553,7 @@ class ObservabilityServiceProxyTransportTestCase(unittest.TestCase):
 
         self.assertEqual(
             api_client.calls[0]["resource_path"],
-            "/api/v1/namespaces/monitoring/services/kube-prometheus-stack-grafana:80/proxy/api/health",
+            "/api/v1/namespaces/monitoring/services/http:kube-prometheus-stack-grafana:80/proxy/api/health",
         )
 
     def test_arbitrary_proxy_path_is_rejected(self) -> None:
@@ -451,6 +608,121 @@ class ObservabilityServiceProxyTransportTestCase(unittest.TestCase):
             LokiService(service_proxy=transport).check_health()
 
         self.assertEqual(len(api_client.calls), 2)
+        self.assertEqual(api_client.calls[0]["query_params"], [("query", "vector(1)")])
+        self.assertTrue(str(api_client.calls[1]["resource_path"]).endswith("/loki/api/v1/labels"))
+
+    def test_service_proxy_403_is_restricted_not_unreachable(self) -> None:
+        api_client = FakeApiClient(error=ApiException(status=403, reason="Forbidden"))
+        transport = KubernetesServiceProxyTransport(
+            api_client=api_client,
+            namespace="monitoring",
+            max_response_bytes=2 * 1024 * 1024,
+        )
+        service = ObservabilityStatusService(
+            kubernetes_check=lambda: None,
+            prometheus_check=lambda: PrometheusService(service_proxy=transport).check_health(),
+            loki_check=lambda: None,
+            prometheus_configured=True,
+            loki_configured=True,
+            grafana_configured=False,
+            cache_ttl_seconds=0,
+        )
+
+        status = service.get_status()
+
+        self.assertEqual(status.prometheus.status, "restricted")
+        self.assertFalse(status.prometheus.available)
+
+    def test_service_proxy_plain_text_health_response_is_malformed(self) -> None:
+        transport = KubernetesServiceProxyTransport(
+            api_client=FakeApiClient(KubernetesProxyResponse(b"ready")),
+            namespace="monitoring",
+            max_response_bytes=2 * 1024 * 1024,
+        )
+        transport.api_client.response.headers = {"content-type": "text/plain"}
+
+        service = ObservabilityStatusService(
+            kubernetes_check=lambda: None,
+            prometheus_check=lambda: PrometheusService(service_proxy=transport).check_health(),
+            loki_check=lambda: None,
+            prometheus_configured=True,
+            loki_configured=True,
+            grafana_configured=False,
+            cache_ttl_seconds=0,
+        )
+
+        status = service.get_status()
+
+        self.assertEqual(status.prometheus.status, "degraded")
+
+    def test_grafana_database_ok_is_connected(self) -> None:
+        transport = KubernetesServiceProxyTransport(
+            api_client=FakeApiClient(KubernetesProxyResponse(b'{"database":"ok","version":"11.0.0"}')),
+            namespace="monitoring",
+            max_response_bytes=2 * 1024 * 1024,
+        )
+        service = ObservabilityStatusService(
+            kubernetes_check=lambda: None,
+            prometheus_check=lambda: None,
+            loki_check=lambda: None,
+            grafana_check=lambda: ObservabilityStatusService._validate_grafana_payload(transport.grafana_health()),
+            prometheus_configured=True,
+            loki_configured=True,
+            grafana_configured=True,
+            cache_ttl_seconds=0,
+        )
+
+        status = service.get_status()
+
+        self.assertEqual(status.grafana.status, "connected")
+        self.assertTrue(status.grafana.available)
+
+    def test_grafana_database_failure_is_unavailable(self) -> None:
+        transport = KubernetesServiceProxyTransport(
+            api_client=FakeApiClient(KubernetesProxyResponse(b'{"database":"locked"}')),
+            namespace="monitoring",
+            max_response_bytes=2 * 1024 * 1024,
+        )
+        service = ObservabilityStatusService(
+            kubernetes_check=lambda: None,
+            prometheus_check=lambda: None,
+            loki_check=lambda: None,
+            grafana_check=lambda: ObservabilityStatusService._validate_grafana_payload(transport.grafana_health()),
+            prometheus_configured=True,
+            loki_configured=True,
+            grafana_configured=True,
+            cache_ttl_seconds=0,
+        )
+
+        status = service.get_status()
+
+        self.assertEqual(status.grafana.status, "unavailable")
+
+    def test_service_proxy_health_connects_all_observability_components(self) -> None:
+        transport = KubernetesServiceProxyTransport(
+            api_client=RoutingFakeApiClient(),
+            namespace="monitoring",
+            max_response_bytes=2 * 1024 * 1024,
+        )
+        service = ObservabilityStatusService(
+            kubernetes_check=lambda: None,
+            prometheus_check=lambda: PrometheusService(service_proxy=transport).check_health(),
+            loki_check=lambda: LokiService(service_proxy=transport).check_health(),
+            grafana_check=lambda: ObservabilityStatusService._validate_grafana_payload(transport.grafana_health()),
+            prometheus_configured=True,
+            loki_configured=True,
+            grafana_configured=True,
+            cache_ttl_seconds=0,
+        )
+
+        status = service.get_status()
+
+        self.assertEqual(status.prometheus.status, "connected")
+        self.assertTrue(status.prometheus.available)
+        self.assertEqual(status.loki.status, "connected")
+        self.assertTrue(status.loki.available)
+        self.assertEqual(status.grafana.status, "connected")
+        self.assertTrue(status.grafana.available)
 
 
 if __name__ == "__main__":

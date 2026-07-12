@@ -2,6 +2,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.deps import ensure_local_admin_user
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
@@ -25,7 +26,7 @@ class AuthService:
                 detail="Username is already registered",
             )
 
-        role = "admin" if settings.environment == "development" and self.users.count() == 0 else "developer"
+        role = "admin" if settings.environment == "development" else "developer"
         user = self.users.create(
             email=payload.email,
             username=payload.username,
@@ -50,4 +51,5 @@ class AuthService:
                 detail="Incorrect email or password",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        ensure_local_admin_user(self.db, user)
         return create_access_token(user.id)

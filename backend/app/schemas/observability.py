@@ -10,6 +10,7 @@ ObservabilityComponentStatus = Literal[
     "not_configured",
     "degraded",
     "unavailable",
+    "restricted",
     "optional",
 ]
 

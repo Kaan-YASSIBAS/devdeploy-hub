@@ -4,7 +4,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
-from app.services.observability_errors import ObservabilityUnavailableError
+from app.services.observability_errors import ObservabilityMalformedResponseError, ObservabilityUnavailableError
 
 
 QUERY_TIMEOUT = httpx.Timeout(timeout=5.0, connect=2.0, read=5.0, write=5.0, pool=2.0)
@@ -27,11 +27,11 @@ def get_bounded_json(
                 if int(content_length) > settings.observability_max_response_bytes:
                     raise ObservabilityUnavailableError(f"{service_name} returned a response that is too large.")
             except ValueError:
-                raise ObservabilityUnavailableError(f"{service_name} returned an invalid response size.") from None
+                raise ObservabilityMalformedResponseError(f"{service_name} returned an invalid response size.") from None
 
         content_type = response.headers.get("content-type", "")
         if content_type and "json" not in content_type.lower():
-            raise ObservabilityUnavailableError(f"{service_name} returned an unsupported response type.")
+            raise ObservabilityMalformedResponseError(f"{service_name} returned an unsupported response type.")
 
         body = bytearray()
         for chunk in response.iter_bytes():
@@ -42,7 +42,7 @@ def get_bounded_json(
     try:
         payload = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as exc:
-        raise ObservabilityUnavailableError(f"{service_name} returned a malformed response.") from exc
+        raise ObservabilityMalformedResponseError(f"{service_name} returned a malformed response.") from exc
     if not isinstance(payload, dict):
-        raise ObservabilityUnavailableError(f"{service_name} returned a malformed response.")
+        raise ObservabilityMalformedResponseError(f"{service_name} returned a malformed response.")
     return payload

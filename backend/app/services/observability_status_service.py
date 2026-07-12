@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+import logging
 import time
 from typing import Any
 
@@ -12,28 +13,18 @@ from app.schemas.observability import ObservabilityComponentHealth, Observabilit
 from app.services.kubernetes_service import KubernetesService
 from app.services.loki_service import LokiService
 from app.services.observability_http import QUERY_TIMEOUT, get_bounded_json
-from app.services.observability_errors import ObservabilityUnavailableError
+from app.services.observability_errors import (
+    ObservabilityMalformedResponseError,
+    ObservabilityRestrictedError,
+    ObservabilityUnavailableError,
+)
 from app.services.observability_service_proxy import KubernetesServiceProxyTransport
 from app.services.prometheus_service import PrometheusService
 
 
 Check = Callable[[], None]
-CacheKey = tuple[
-    bool,
-    bool,
-    bool,
-    str,
-    str,
-    str | None,
-    str,
-    str,
-    str,
-    int,
-    str,
-    int,
-    str,
-    int,
-]
+CacheKey = tuple[Any, ...]
+logger = logging.getLogger(__name__)
 
 
 _STATUS_CACHE: tuple[float, CacheKey, ObservabilityStatus] | None = None
@@ -112,6 +103,9 @@ class ObservabilityStatusService:
             settings.observability_loki_service_port,
             settings.observability_grafana_service_name,
             settings.observability_grafana_service_port,
+            settings.resolved_observability_workload_kubeconfig,
+            settings.observability_workload_kubeconfig_context,
+            settings.observability_max_response_bytes,
         )
 
     def _collect_status(self) -> ObservabilityStatus:
@@ -220,40 +214,73 @@ class ObservabilityStatusService:
         check: Check,
         capabilities: dict[str, bool],
     ) -> ObservabilityComponentHealth:
+        logger.info(
+            "Observability health evaluation started: component=%s mode=%s",
+            key,
+            settings.observability_access_mode,
+        )
         try:
             check()
-        except ObservabilityUnavailableError as exc:
-            reason = "not_configured" if "configuration" in str(exc).lower() else "unavailable"
-            return ObservabilityStatusService._component(
+        except ObservabilityRestrictedError:
+            component = ObservabilityStatusService._component(
                 available=False,
-                status=reason,
-                detail=f"{label} is not reachable.",
-                message_code=f"{key}.{reason}",
+                status="restricted",
+                detail=f"{label} access is restricted by backend-to-service credentials.",
+                message_code=f"{key}.restricted",
                 capabilities=capabilities,
             )
-        except (ApiException, httpx.HTTPError):
-            return ObservabilityStatusService._component(
-                available=False,
-                status="unavailable",
-                detail=f"{label} is not reachable.",
-                message_code=f"{key}.unavailable",
-                capabilities=capabilities,
-            )
-        except Exception:
-            return ObservabilityStatusService._component(
+            ObservabilityStatusService._log_component_result(key, component)
+            return component
+        except ObservabilityMalformedResponseError:
+            component = ObservabilityStatusService._component(
                 available=False,
                 status="degraded",
                 detail=f"{label} returned an unreadable health response.",
                 message_code=f"{key}.degraded",
                 capabilities=capabilities,
             )
-        return ObservabilityStatusService._component(
+            ObservabilityStatusService._log_component_result(key, component)
+            return component
+        except ObservabilityUnavailableError as exc:
+            reason = "not_configured" if "configuration" in str(exc).lower() else "unavailable"
+            component = ObservabilityStatusService._component(
+                available=False,
+                status=reason,
+                detail=f"{label} is not reachable.",
+                message_code=f"{key}.{reason}",
+                capabilities=capabilities,
+            )
+            ObservabilityStatusService._log_component_result(key, component)
+            return component
+        except (ApiException, httpx.HTTPError):
+            component = ObservabilityStatusService._component(
+                available=False,
+                status="unavailable",
+                detail=f"{label} is not reachable.",
+                message_code=f"{key}.unavailable",
+                capabilities=capabilities,
+            )
+            ObservabilityStatusService._log_component_result(key, component)
+            return component
+        except Exception:
+            component = ObservabilityStatusService._component(
+                available=False,
+                status="degraded",
+                detail=f"{label} returned an unreadable health response.",
+                message_code=f"{key}.degraded",
+                capabilities=capabilities,
+            )
+            ObservabilityStatusService._log_component_result(key, component)
+            return component
+        component = ObservabilityStatusService._component(
             available=True,
             status="connected",
             detail=f"{label} is reachable.",
             message_code=f"{key}.connected",
             capabilities=capabilities,
         )
+        ObservabilityStatusService._log_component_result(key, component)
+        return component
 
     @staticmethod
     def _component(
@@ -278,7 +305,8 @@ class ObservabilityStatusService:
     @staticmethod
     def _grafana_health() -> None:
         if settings.observability_access_mode == "kubernetes_service_proxy":
-            KubernetesServiceProxyTransport.from_settings().grafana_health()
+            payload = KubernetesServiceProxyTransport.from_settings().grafana_health()
+            ObservabilityStatusService._validate_grafana_payload(payload)
             return
         if not settings.grafana_base_url:
             raise ObservabilityUnavailableError("Grafana is not configured.")
@@ -294,8 +322,24 @@ class ObservabilityStatusService:
         except httpx.HTTPError as exc:
             raise ObservabilityUnavailableError("Grafana is not reachable.") from exc
         if not isinstance(payload, dict):
-            raise ObservabilityUnavailableError("Grafana returned an unreadable response.")
+            raise ObservabilityMalformedResponseError("Grafana returned an unreadable response.")
+        ObservabilityStatusService._validate_grafana_payload(payload)
+
+    @staticmethod
+    def _validate_grafana_payload(payload: dict[str, Any]) -> None:
+        if payload.get("database") != "ok":
+            raise ObservabilityUnavailableError("Grafana health check failed.")
 
     @staticmethod
     def _component_configured(base_url: str) -> bool:
         return settings.observability_access_mode == "kubernetes_service_proxy" or bool(base_url.strip())
+
+    @staticmethod
+    def _log_component_result(key: str, component: ObservabilityComponentHealth) -> None:
+        logger.info(
+            "Observability health evaluation completed: component=%s status=%s available=%s message_code=%s",
+            key,
+            component.status,
+            component.available,
+            component.message_code,
+        )

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from kubernetes.client import ApiException
 
 from app.core.config import settings
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, has_effective_admin_access
 from app.models.user import User
 from app.schemas.observability import (
     ClusterSummary,
@@ -54,7 +54,7 @@ def _bad_request(detail: str) -> HTTPException:
 
 
 def _require_observability_admin(current_user: User) -> None:
-    if current_user.role != "admin":
+    if not has_effective_admin_access(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Observability resource access is limited to platform administrators.",

@@ -118,10 +118,11 @@ DEVDEPLOY_OBSERVABILITY_LOKI_SERVICE_NAME=loki-gateway
 DEVDEPLOY_OBSERVABILITY_LOKI_SERVICE_PORT=80
 DEVDEPLOY_OBSERVABILITY_GRAFANA_SERVICE_NAME=kube-prometheus-stack-grafana
 DEVDEPLOY_OBSERVABILITY_GRAFANA_SERVICE_PORT=80
-DEVDEPLOY_WORKLOAD_KUBECONFIG=/var/run/devdeploy/workload/kubeconfig
+DEVDEPLOY_OBSERVABILITY_WORKLOAD_KUBECONFIG=/var/run/devdeploy/workload-observability/kubeconfig
+DEVDEPLOY_OBSERVABILITY_WORKLOAD_KUBECONFIG_CONTEXT=devdeploy-workload-observability
 ```
 
-The kubeconfig is mounted from a management-cluster Secret created by the launcher. It contains only a workload-cluster service account token scoped to read `services` and `services/proxy` in the `monitoring` namespace.
+The observability kubeconfig is separate from the normal workload kubeconfig. In-cluster it is mounted from a management-cluster Secret created by the launcher. For local uvicorn development, the launcher writes the same narrow credential to `.devdeploy/local/kubeconfig/observability-workload-kubeconfig.yaml` and configures `backend/.env` with `../.devdeploy/local/kubeconfig/observability-workload-kubeconfig.yaml`. The host-local kubeconfig derives its server and CA data from the selected normal workload kubeconfig/context so it can reach the kind API from the host, while the in-cluster Secret can keep the Docker-network control-plane endpoint. Both representations use only the narrow workload-cluster service account token scoped to read `services` and `services/proxy` in the `monitoring` namespace.
 
 Namespace-level Kubernetes, metrics, and logs endpoints remain platform
 administrator-only in this foundation phase. Owner-scoped application logs and

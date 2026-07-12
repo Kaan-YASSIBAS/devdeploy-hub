@@ -840,6 +840,7 @@
       "not_configured": "Yapılandırılmadı",
       "degraded": "Kısıtlı",
       "unavailable": "Kullanılamıyor",
+      "restricted": "Kısıtlı",
       "optional": "Opsiyonel"
     },
     "messages": {
@@ -853,18 +854,21 @@
         "connected": "Prometheus backend üzerinden erişilebilir.",
         "not_configured": "Prometheus backend erişimi yapılandırılmadı.",
         "unavailable": "Prometheus yapılandırılmış ancak erişilemiyor.",
+        "restricted": "Prometheus erişimi backend servis kimliği tarafından reddedildi.",
         "degraded": "Prometheus okunabilir bir health yanıtı döndürmedi."
       },
       "loki": {
         "connected": "Loki backend üzerinden erişilebilir.",
         "not_configured": "Loki backend erişimi yapılandırılmadı.",
         "unavailable": "Loki yapılandırılmış ancak erişilemiyor.",
+        "restricted": "Loki erişimi backend servis kimliği tarafından reddedildi.",
         "degraded": "Loki okunabilir bir health yanıtı döndürmedi."
       },
       "grafana": {
         "connected": "Grafana health endpoint erişilebilir.",
         "optional": "Grafana opsiyoneldir ve yapılandırılmadı.",
         "unavailable": "Grafana yapılandırılmış ancak erişilemiyor.",
+        "restricted": "Grafana erişimi backend servis kimliği tarafından reddedildi.",
         "degraded": "Grafana okunabilir bir health yanıtı döndürmedi."
       }
     }

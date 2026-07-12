@@ -121,6 +121,7 @@ $StatusDir = Join-Path $LocalRoot "status"
 $LogsDir = Join-Path $LocalRoot "logs"
 $KindDir = Join-Path $LocalRoot "kind"
 $ToolsDir = Join-Path $LocalRoot "tools"
+$KubeconfigDir = Join-Path $LocalRoot "kubeconfig"
 $StatusPath = Join-Path $StatusDir "launcher-status.json"
 $LogPath = Join-Path $LogsDir "devdeploy-launcher.log"
 $MgmtKindConfigPath = Join-Path $KindDir "devdeploy-mgmt.yaml"
@@ -207,6 +208,12 @@ $ObservabilityReaderServiceAccountName = "devdeploy-observability-reader"
 $ObservabilityReaderRoleName = "devdeploy-observability-service-proxy-reader"
 $ObservabilityReaderRoleBindingName = "devdeploy-observability-service-proxy-reader"
 $ObservabilityReaderTokenSecretName = "devdeploy-observability-reader-token"
+$BackendEnvPath = Join-Path $RepoRoot "backend\.env"
+$ObservabilityLocalKubeconfigRelativePath = "..\.devdeploy\local\kubeconfig\observability-workload-kubeconfig.yaml"
+$ObservabilityLocalKubeconfigPath = Join-Path $KubeconfigDir "observability-workload-kubeconfig.yaml"
+$ObservabilityKubeconfigContext = "devdeploy-workload-observability"
+$ObservabilityBackendMountDirectory = "/var/run/devdeploy/workload-observability"
+$ObservabilityBackendMountPath = "$ObservabilityBackendMountDirectory/kubeconfig"
 $HelmPinnedVersion = "v3.18.6"
 $HelmPlatform = "windows-amd64"
 $HelmArchiveName = "helm-$HelmPinnedVersion-$HelmPlatform.zip"
@@ -989,6 +996,51 @@ function Test-CommandAvailable {
     return $true
 }
 
+function Join-NativeArguments {
+    param(
+        [string[]]$Arguments = @()
+    )
+
+    $escapedArguments = foreach ($argument in $Arguments) {
+        $value = [string]$argument
+        if ($value -notmatch '[\s"]' -and $value.Length -gt 0) {
+            $value
+            continue
+        }
+
+        $builder = New-Object System.Text.StringBuilder
+        [void]$builder.Append('"')
+        $backslashCount = 0
+        foreach ($character in $value.ToCharArray()) {
+            if ($character -eq '\') {
+                $backslashCount += 1
+                continue
+            }
+
+            if ($character -eq '"') {
+                [void]$builder.Append('\', ($backslashCount * 2) + 1)
+                [void]$builder.Append('"')
+                $backslashCount = 0
+                continue
+            }
+
+            if ($backslashCount -gt 0) {
+                [void]$builder.Append('\', $backslashCount)
+                $backslashCount = 0
+            }
+            [void]$builder.Append($character)
+        }
+
+        if ($backslashCount -gt 0) {
+            [void]$builder.Append('\', $backslashCount * 2)
+        }
+        [void]$builder.Append('"')
+        $builder.ToString()
+    }
+
+    return [string]($escapedArguments -join " ")
+}
+
 function Invoke-ReadOnlyCommand {
     param(
         [Parameter(Mandatory = $true)]
@@ -1005,14 +1057,15 @@ function Invoke-ReadOnlyCommand {
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $FileName
-    $psi.Arguments = ($Arguments | ForEach-Object {
-            if ($_ -match "\s") {
-                '"' + ($_ -replace '"', '\"') + '"'
-            }
-            else {
-                $_
-            }
-        }) -join " "
+    $argumentListProperty = $psi.GetType().GetProperty("ArgumentList")
+    if ($null -ne $argumentListProperty) {
+        foreach ($argument in $Arguments) {
+            [void]$psi.ArgumentList.Add([string]$argument)
+        }
+    }
+    else {
+        $psi.Arguments = Join-NativeArguments -Arguments $Arguments
+    }
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $psi.UseShellExecute = $false
@@ -1026,6 +1079,8 @@ function Invoke-ReadOnlyCommand {
 
     try {
         [void]$process.Start()
+        $standardOutputTask = $process.StandardOutput.ReadToEndAsync()
+        $standardErrorTask = $process.StandardError.ReadToEndAsync()
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             try {
                 $process.Kill()
@@ -1037,17 +1092,18 @@ function Invoke-ReadOnlyCommand {
             return [ordered]@{
                 exit_code = $null
                 timed_out = $true
-                stdout    = ""
+                stdout    = if ($PreserveStandardOutput -and $null -ne $standardOutputTask -and $standardOutputTask.IsCompleted) { $standardOutputTask.Result } else { "" }
                 stderr    = "Command timed out."
             }
         }
 
-        $standardOutput = $process.StandardOutput.ReadToEnd()
+        $standardOutput = $standardOutputTask.Result
+        $standardError = $standardErrorTask.Result
         return [ordered]@{
             exit_code = $process.ExitCode
             timed_out = $false
             stdout    = if ($PreserveStandardOutput) { $standardOutput } else { Protect-LogText $standardOutput }
-            stderr    = Protect-LogText $process.StandardError.ReadToEnd()
+            stderr    = Protect-LogText $standardError
         }
     }
     catch {
@@ -1062,6 +1118,392 @@ function Invoke-ReadOnlyCommand {
         if ($null -ne $process) {
             $process.Dispose()
         }
+    }
+}
+
+function Set-LauncherManagedBackendEnvValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Key,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Value
+    )
+
+    $lines = @()
+    if (Test-Path -LiteralPath $BackendEnvPath -PathType Leaf) {
+        $lines = @(Get-Content -LiteralPath $BackendEnvPath)
+    }
+
+    $updated = $false
+    $prefix = "$Key="
+    $nextLines = New-Object System.Collections.Generic.List[string]
+    foreach ($line in $lines) {
+        if ([string]$line -like "$prefix*") {
+            $nextLines.Add("$prefix$Value") | Out-Null
+            $updated = $true
+        }
+        else {
+            $nextLines.Add([string]$line) | Out-Null
+        }
+    }
+
+    if (-not $updated) {
+        if ($nextLines.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($nextLines[$nextLines.Count - 1])) {
+            $nextLines.Add("") | Out-Null
+        }
+        $nextLines.Add("$prefix$Value") | Out-Null
+    }
+
+    Set-Content -LiteralPath $BackendEnvPath -Value @($nextLines | ForEach-Object { [string]$_ }) -Encoding UTF8
+}
+
+function Get-LauncherBackendEnvValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Key
+    )
+
+    if (-not (Test-Path -LiteralPath $BackendEnvPath -PathType Leaf)) {
+        return ""
+    }
+
+    $pattern = "^\s*{0}\s*=\s*(.*)\s*$" -f [System.Text.RegularExpressions.Regex]::Escape($Key)
+    foreach ($line in @(Get-Content -LiteralPath $BackendEnvPath)) {
+        $match = [System.Text.RegularExpressions.Regex]::Match([string]$line, $pattern)
+        if ($match.Success) {
+            $value = [string]$match.Groups[1].Value
+            $value = $value.Trim()
+            if (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'"))) {
+                $value = $value.Substring(1, $value.Length - 2)
+            }
+            return $value
+        }
+    }
+
+    return ""
+}
+
+function Resolve-LauncherRuntimePath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PathValue
+    )
+
+    $expanded = [System.Environment]::ExpandEnvironmentVariables($PathValue.Trim())
+    if ($expanded.StartsWith("~")) {
+        $home = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::UserProfile)
+        if ($expanded -eq "~") {
+            $expanded = $home
+        }
+        elseif ($expanded.StartsWith("~/") -or $expanded.StartsWith("~\")) {
+            $expanded = Join-Path $home $expanded.Substring(2)
+        }
+    }
+
+    if ([System.IO.Path]::IsPathRooted($expanded)) {
+        return [string]$expanded
+    }
+
+    return [string](Join-Path $RepoRoot $expanded)
+}
+
+function Set-ContentAtomicUtf8 {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Value
+    )
+
+    $directory = Split-Path -Parent $Path
+    if (-not [string]::IsNullOrWhiteSpace($directory)) {
+        New-LocalDirectory -Path $directory
+    }
+
+    $temporaryPath = Join-Path $directory (".{0}.{1}.tmp" -f (Split-Path -Leaf $Path), [System.Guid]::NewGuid().ToString("N"))
+    try {
+        Set-Content -LiteralPath $temporaryPath -Value $Value -Encoding UTF8
+        Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
+            Remove-Item -LiteralPath $temporaryPath -Force
+        }
+    }
+}
+
+function Get-LauncherWorkloadKubeconfigSelection {
+    $path = [string]$env:DEVDEPLOY_WORKLOAD_KUBECONFIG
+    if ([string]::IsNullOrWhiteSpace($path)) {
+        $path = [string](Get-LauncherBackendEnvValue -Key "DEVDEPLOY_WORKLOAD_KUBECONFIG")
+    }
+
+    $context = [string]$env:DEVDEPLOY_WORKLOAD_KUBECONFIG_CONTEXT
+    if ([string]::IsNullOrWhiteSpace($context)) {
+        $context = [string](Get-LauncherBackendEnvValue -Key "DEVDEPLOY_WORKLOAD_KUBECONFIG_CONTEXT")
+    }
+    if ([string]::IsNullOrWhiteSpace($context)) {
+        $context = "kind-devdeploy-workload"
+    }
+
+    $resolvedPath = ""
+    if (-not [string]::IsNullOrWhiteSpace($path)) {
+        $resolvedPath = Resolve-LauncherRuntimePath -PathValue $path
+    }
+
+    return [ordered]@{
+        kubeconfig_path = $resolvedPath
+        context = $context.Trim()
+    }
+}
+
+function Get-CommandResultField {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Result,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    if ($Result -is [System.Collections.IDictionary] -and $Result.Contains($Name)) {
+        return $Result[$Name]
+    }
+
+    $property = $Result.PSObject.Properties[$Name]
+    if ($null -ne $property) {
+        return $property.Value
+    }
+
+    return $null
+}
+
+function Convert-CommandStdoutToString {
+    param(
+        [AllowNull()]
+        [object]$Stdout
+    )
+
+    if ($null -eq $Stdout) {
+        return ""
+    }
+
+    if ($Stdout -is [string]) {
+        $text = [string]$Stdout
+    }
+    elseif ($Stdout -is [System.Array]) {
+        $text = [string](@($Stdout | ForEach-Object { [string]$_ }) -join "`n")
+    }
+    else {
+        $valueProperty = $Stdout.PSObject.Properties["stdout"]
+        if ($null -ne $valueProperty) {
+            return Convert-CommandStdoutToString -Stdout $valueProperty.Value
+        }
+        $text = [string]$Stdout
+    }
+
+    return [string]$text.TrimStart([char]0xFEFF).Trim()
+}
+
+function Get-SafeTypeName {
+    param(
+        [AllowNull()]
+        [object]$Value
+    )
+
+    if ($null -eq $Value) {
+        return "null"
+    }
+    return [string]$Value.GetType().FullName
+}
+
+function Write-HostWorkloadKubeconfigDiagnostic {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Category,
+
+        [AllowNull()]
+        [object]$ExitCode,
+
+        [bool]$StdoutEmpty,
+
+        [string]$StdoutType,
+
+        [bool]$ServerFound = $false,
+
+        [bool]$CertificateAuthorityFound = $false
+    )
+
+    Write-LauncherLog ("Host workload kubeconfig endpoint resolution failed: category={0}; exit_code={1}; stdout_empty={2}; stdout_type={3}; server_found={4}; ca_found={5}" -f $Category, [string]$ExitCode, [string]$StdoutEmpty, $StdoutType, [string]$ServerFound, [string]$CertificateAuthorityFound)
+}
+
+function Get-JsonPropertyValue {
+    param(
+        [AllowNull()]
+        [object]$Object,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    if ($null -eq $Object) {
+        return $null
+    }
+
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        return $null
+    }
+
+    return ,$property.Value
+}
+
+function Convert-HostWorkloadKubeconfigJson {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Json
+    )
+
+    $result = [ordered]@{
+        ok = $false
+        server = ""
+        certificate_authority_data = ""
+        server_found = $false
+        certificate_authority_found = $false
+        insecure_skip_tls_verify = $false
+        error_category = ""
+    }
+
+    try {
+        $parsed = $Json | ConvertFrom-Json
+    }
+    catch {
+        $result["error_category"] = "malformed_json"
+        return $result
+    }
+
+    $clustersValue = Get-JsonPropertyValue -Object $parsed -Name "clusters"
+    if ($null -eq $clustersValue) {
+        $result["error_category"] = "missing_clusters_property"
+        return $result
+    }
+
+    $clusters = @($clustersValue)
+    if ($clusters.Count -lt 1 -or $null -eq $clusters[0]) {
+        $result["error_category"] = "empty_clusters"
+        return $result
+    }
+
+    $clusterEntry = $clusters[0]
+    $clusterData = Get-JsonPropertyValue -Object $clusterEntry -Name "cluster"
+    if ($null -eq $clusterData) {
+        $result["error_category"] = "missing_cluster_property"
+        return $result
+    }
+
+    $server = [string](Get-JsonPropertyValue -Object $clusterData -Name "server")
+    $caData = [string](Get-JsonPropertyValue -Object $clusterData -Name "certificate-authority-data")
+    $insecure = Get-JsonPropertyValue -Object $clusterData -Name "insecure-skip-tls-verify"
+
+    $result["server_found"] = -not [string]::IsNullOrWhiteSpace($server)
+    $result["certificate_authority_found"] = -not [string]::IsNullOrWhiteSpace($caData)
+    $result["insecure_skip_tls_verify"] = ($insecure -eq $true)
+
+    if (-not [bool]$result["server_found"]) {
+        $result["error_category"] = "missing_server"
+        return $result
+    }
+    if (-not [bool]$result["certificate_authority_found"]) {
+        $result["error_category"] = "missing_ca"
+        return $result
+    }
+    if ([bool]$result["insecure_skip_tls_verify"]) {
+        $result["error_category"] = "insecure_skip_tls_verify"
+        return $result
+    }
+
+    $result["ok"] = $true
+    $result["server"] = $server
+    $result["certificate_authority_data"] = $caData
+    return $result
+}
+
+function Get-HostWorkloadKubeconfigCluster {
+    param(
+        [bool]$KubectlAvailable
+    )
+
+    $selection = Get-LauncherWorkloadKubeconfigSelection
+    $result = [ordered]@{
+        ok = $false
+        context = [string]$selection["context"]
+        kubeconfig_path_set = -not [string]::IsNullOrWhiteSpace([string]$selection["kubeconfig_path"])
+        server = ""
+        certificate_authority_data_present = $false
+        message = "The host workload kubeconfig endpoint could not be resolved."
+    }
+
+    if (-not $KubectlAvailable) {
+        $result["message"] = "kubectl is required to read the selected workload kubeconfig endpoint."
+        return $result
+    }
+
+    $args = @("config", "view")
+    if ($result["kubeconfig_path_set"]) {
+        $args += @("--kubeconfig", [string]$selection["kubeconfig_path"])
+    }
+    $args += @("--context", [string]$selection["context"], "--minify", "--raw", "--output=json")
+
+    $viewResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments $args -TimeoutSeconds 20 -PreserveStandardOutput $true
+    $exitCode = Get-CommandResultField -Result $viewResult -Name "exit_code"
+    $timedOut = [bool](Get-CommandResultField -Result $viewResult -Name "timed_out")
+    $stdoutValue = Get-CommandResultField -Result $viewResult -Name "stdout"
+    $stderrValue = Get-CommandResultField -Result $viewResult -Name "stderr"
+    $stdoutText = Convert-CommandStdoutToString -Stdout $stdoutValue
+    $stdoutEmpty = [string]::IsNullOrWhiteSpace($stdoutText)
+    $stdoutType = Get-SafeTypeName -Value $stdoutValue
+
+    if ($exitCode -ne 0 -or $timedOut -or $stdoutEmpty) {
+        $result["message"] = "The selected workload kubeconfig context could not be read safely."
+        $result["kubectl_exit_code"] = $exitCode
+        $result["kubectl_timed_out"] = $timedOut
+        $result["kubectl_error"] = if ($exitCode -ne 0 -or $timedOut) { [string]$stderrValue } else { "" }
+        $result["stdout_empty"] = $stdoutEmpty
+        $result["stdout_type"] = $stdoutType
+        Write-HostWorkloadKubeconfigDiagnostic -Category "command_failed_or_empty_stdout" -ExitCode $exitCode -StdoutEmpty $stdoutEmpty -StdoutType $stdoutType
+        return $result
+    }
+
+    $parsedCluster = Convert-HostWorkloadKubeconfigJson -Json $stdoutText
+    if (-not [bool]$parsedCluster["ok"]) {
+        $result["message"] = "The selected workload kubeconfig context could not be parsed safely."
+        $result["parse_error"] = [string]$parsedCluster["error_category"]
+        Write-HostWorkloadKubeconfigDiagnostic -Category ([string]$parsedCluster["error_category"]) -ExitCode $exitCode -StdoutEmpty $stdoutEmpty -StdoutType $stdoutType -ServerFound ([bool]$parsedCluster["server_found"]) -CertificateAuthorityFound ([bool]$parsedCluster["certificate_authority_found"])
+        return $result
+    }
+
+    $result["ok"] = $true
+    $result["server"] = [string]$parsedCluster["server"]
+    $result["certificate_authority_data"] = [string]$parsedCluster["certificate_authority_data"]
+    $result["certificate_authority_data_present"] = $true
+    $result["message"] = "The host-reachable workload API endpoint was resolved from the selected workload kubeconfig context."
+    return $result
+}
+
+function Set-LauncherManagedObservabilityBackendEnv {
+    Set-LauncherManagedBackendEnvValue -Key "DEVDEPLOY_OBSERVABILITY_ACCESS_MODE" -Value "kubernetes_service_proxy"
+    Set-LauncherManagedBackendEnvValue -Key "DEVDEPLOY_OBSERVABILITY_WORKLOAD_KUBECONFIG" -Value $ObservabilityLocalKubeconfigRelativePath
+    Set-LauncherManagedBackendEnvValue -Key "DEVDEPLOY_OBSERVABILITY_WORKLOAD_KUBECONFIG_CONTEXT" -Value $ObservabilityKubeconfigContext
+
+    Add-Check -Id "workload_observability_local_backend_env" -Label "Local backend observability environment" -Status "ok" -Message "Local backend observability kubeconfig settings were updated with launcher-managed portable paths." -Details @{
+        required = $false
+        env_file = "backend/.env"
+        kubeconfig_path = $ObservabilityLocalKubeconfigRelativePath
+        context = $ObservabilityKubeconfigContext
+        normal_workload_kubeconfig_modified = $false
+        secret_values_written = $false
     }
 }
 
@@ -9467,10 +9909,70 @@ function Invoke-EnsureManagementBackendWorkloadKubeconfigSecret {
         return $result
     }
 
+    $hostCluster = Get-HostWorkloadKubeconfigCluster -KubectlAvailable $KubectlAvailable
+    if (-not [bool]$hostCluster["ok"]) {
+        Add-Check -Id "workload_observability_host_kubeconfig_endpoint" -Label "Local observability kubeconfig endpoint" -Status "failed" -Message ([string]$hostCluster["message"]) -Details @{
+            required = $true
+            context = [string]$hostCluster["context"]
+            kubeconfig_path_set = [bool]$hostCluster["kubeconfig_path_set"]
+            kubectl_exit_code = $hostCluster["kubectl_exit_code"]
+            kubectl_timed_out = $hostCluster["kubectl_timed_out"]
+            kubectl_error = $hostCluster["kubectl_error"]
+            secret_values_logged = $false
+            insecure_skip_tls_verify = $false
+            normal_workload_kubeconfig_modified = $false
+        }
+        $readerToken = $null
+        return $result
+    }
+    Add-Check -Id "workload_observability_host_kubeconfig_endpoint" -Label "Local observability kubeconfig endpoint" -Status "ok" -Message "The local observability kubeconfig will use the host-reachable API endpoint from the selected workload kubeconfig context." -Details @{
+        required = $true
+        context = [string]$hostCluster["context"]
+        kubeconfig_path_set = [bool]$hostCluster["kubeconfig_path_set"]
+        server = [string]$hostCluster["server"]
+        certificate_authority_data_present = [bool]$hostCluster["certificate_authority_data_present"]
+        secret_values_logged = $false
+        insecure_skip_tls_verify = $false
+        normal_workload_kubeconfig_modified = $false
+    }
+
+    $localKubeconfig = [ordered]@{
+        apiVersion      = "v1"
+        kind            = "Config"
+        "current-context" = $ObservabilityKubeconfigContext
+        clusters        = @(
+            [ordered]@{
+                name    = "devdeploy-workload"
+                cluster = [ordered]@{
+                    server = [string]$hostCluster["server"]
+                    "certificate-authority-data" = [string]$hostCluster["certificate_authority_data"]
+                }
+            }
+        )
+        users           = @(
+            [ordered]@{
+                name = $ObservabilityReaderServiceAccountName
+                user = [ordered]@{
+                    token = $readerToken
+                }
+            }
+        )
+        contexts        = @(
+            [ordered]@{
+                name    = $ObservabilityKubeconfigContext
+                context = [ordered]@{
+                    cluster   = "devdeploy-workload"
+                    user      = $ObservabilityReaderServiceAccountName
+                    namespace = $ObservabilityNamespace
+                }
+            }
+        )
+    }
+
     $backendKubeconfig = [ordered]@{
         apiVersion      = "v1"
         kind            = "Config"
-        "current-context" = "devdeploy-workload-observability"
+        "current-context" = $ObservabilityKubeconfigContext
         clusters        = @(
             [ordered]@{
                 name    = "devdeploy-workload"
@@ -9490,7 +9992,7 @@ function Invoke-EnsureManagementBackendWorkloadKubeconfigSecret {
         )
         contexts        = @(
             [ordered]@{
-                name    = "devdeploy-workload-observability"
+                name    = $ObservabilityKubeconfigContext
                 context = [ordered]@{
                     cluster   = "devdeploy-workload"
                     user      = $ObservabilityReaderServiceAccountName
@@ -9499,6 +10001,23 @@ function Invoke-EnsureManagementBackendWorkloadKubeconfigSecret {
             }
         )
     }
+    $localKubeconfigJson = ($localKubeconfig | ConvertTo-Json -Depth 16)
+    $backendKubeconfigJson = ($backendKubeconfig | ConvertTo-Json -Depth 16)
+    Set-ContentAtomicUtf8 -Path $ObservabilityLocalKubeconfigPath -Value $localKubeconfigJson
+    Add-Check -Id "workload_observability_local_kubeconfig" -Label "Local observability kubeconfig" -Status "ok" -Message "A launcher-managed narrow observability kubeconfig was written under .devdeploy for local backend development." -Details @{
+        required = $false
+        path = $ObservabilityLocalKubeconfigRelativePath
+        context = $ObservabilityKubeconfigContext
+        service_account = $ObservabilityReaderServiceAccountName
+        server = [string]$hostCluster["server"]
+        endpoint_source = "selected_workload_kubeconfig_context"
+        in_cluster_endpoint = $false
+        certificate_authority_data_present = $true
+        secret_values_logged = $false
+        normal_workload_kubeconfig_modified = $false
+    }
+    Set-LauncherManagedObservabilityBackendEnv
+
     $backendSecretManifest = [ordered]@{
         apiVersion = "v1"
         kind       = "Secret"
@@ -9512,7 +10031,7 @@ function Invoke-EnsureManagementBackendWorkloadKubeconfigSecret {
         }
         type       = "Opaque"
         stringData = [ordered]@{
-            kubeconfig = ($backendKubeconfig | ConvertTo-Json -Depth 16)
+            kubeconfig = $backendKubeconfigJson
         }
     }
 
@@ -9532,7 +10051,7 @@ function Invoke-EnsureManagementBackendWorkloadKubeconfigSecret {
         required = $true
         secret_name = $BackendWorkloadKubeconfigSecretName
         secret_data_logged = $false
-        backend_mount_path = "/var/run/devdeploy/workload/kubeconfig"
+        backend_mount_path = $ObservabilityBackendMountPath
         service_account = $ObservabilityReaderServiceAccountName
         permission_scope = "monitoring/services/proxy:get"
         uses_cluster_ip = $false
@@ -10784,6 +11303,7 @@ New-LocalDirectory -Path $StatusDir
 New-LocalDirectory -Path $LogsDir
 New-LocalDirectory -Path $KindDir
 New-LocalDirectory -Path $ToolsDir
+New-LocalDirectory -Path $KubeconfigDir
 
 if ($PlanWorkloadRebootstrap) {
     Write-LauncherLog "Starting DevDeploy Launcher read-only workload rebootstrap planning mode."

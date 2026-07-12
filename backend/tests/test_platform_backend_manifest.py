@@ -36,13 +36,17 @@ class PlatformBackendManifestTestCase(unittest.TestCase):
         )
         self.assertEqual(backend["livenessProbe"]["httpGet"]["path"], "/api/v1/health")
         volume_names = [item["name"] for item in backend["volumeMounts"]]
-        self.assertIn("workload-kubeconfig", volume_names)
-        workload_mount = next(item for item in backend["volumeMounts"] if item["name"] == "workload-kubeconfig")
-        self.assertEqual(workload_mount["mountPath"], "/var/run/devdeploy/workload")
-        self.assertTrue(workload_mount["readOnly"])
-        workload_secret = next(item for item in pod_spec["volumes"] if item["name"] == "workload-kubeconfig")
-        self.assertEqual(workload_secret["secret"]["secretName"], "devdeploy-backend-workload-kubeconfig")
-        self.assertTrue(workload_secret["secret"]["optional"])
+        self.assertIn("observability-workload-kubeconfig", volume_names)
+        observability_mount = next(
+            item for item in backend["volumeMounts"] if item["name"] == "observability-workload-kubeconfig"
+        )
+        self.assertEqual(observability_mount["mountPath"], "/var/run/devdeploy/workload-observability")
+        self.assertTrue(observability_mount["readOnly"])
+        observability_secret = next(
+            item for item in pod_spec["volumes"] if item["name"] == "observability-workload-kubeconfig"
+        )
+        self.assertEqual(observability_secret["secret"]["secretName"], "devdeploy-backend-workload-kubeconfig")
+        self.assertTrue(observability_secret["secret"]["optional"])
 
     def test_backend_config_uses_observability_service_proxy_not_cluster_ip_urls(self) -> None:
         repository_root = Path(__file__).resolve().parents[2]
@@ -59,6 +63,15 @@ class PlatformBackendManifestTestCase(unittest.TestCase):
         self.assertEqual(data["DEVDEPLOY_OBSERVABILITY_MONITORING_NAMESPACE"], "monitoring")
         self.assertEqual(data["DEVDEPLOY_OBSERVABILITY_PROMETHEUS_SERVICE_NAME"], "kube-prometheus-stack-prometheus")
         self.assertEqual(data["DEVDEPLOY_OBSERVABILITY_LOKI_SERVICE_NAME"], "loki-gateway")
+        self.assertEqual(
+            data["DEVDEPLOY_OBSERVABILITY_WORKLOAD_KUBECONFIG"],
+            "/var/run/devdeploy/workload-observability/kubeconfig",
+        )
+        self.assertEqual(
+            data["DEVDEPLOY_OBSERVABILITY_WORKLOAD_KUBECONFIG_CONTEXT"],
+            "devdeploy-workload-observability",
+        )
+        self.assertEqual(data["DEVDEPLOY_WORKLOAD_KUBECONFIG"], "")
         self.assertNotIn("ClusterIP", str(data))
         self.assertNotIn(".svc.cluster.local", str(data))
 

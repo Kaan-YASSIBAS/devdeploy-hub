@@ -1,4 +1,6 @@
 from functools import lru_cache
+import os
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
@@ -13,6 +15,7 @@ class Settings(BaseSettings):
     frontend_origin: str = Field(default="http://localhost:5173", alias="FRONTEND_ORIGIN")
     environment: str = Field(default="development", alias="ENVIRONMENT")
     kubernetes_in_cluster: bool = Field(default=False, alias="KUBERNETES_IN_CLUSTER")
+    devdeploy_runtime_root: str | None = Field(default=None, alias="DEVDEPLOY_RUNTIME_ROOT")
     kubeconfig_path: str | None = Field(default=None, alias="KUBECONFIG_PATH")
     prometheus_base_url: str = Field(default="", alias="PROMETHEUS_BASE_URL")
     loki_base_url: str = Field(default="", alias="LOKI_BASE_URL")
@@ -65,6 +68,14 @@ class Settings(BaseSettings):
         alias="OBSERVABILITY_MAX_RESPONSE_BYTES",
         ge=1024,
     )
+    observability_workload_kubeconfig: str | None = Field(
+        default="../.devdeploy/local/kubeconfig/observability-workload-kubeconfig.yaml",
+        alias="DEVDEPLOY_OBSERVABILITY_WORKLOAD_KUBECONFIG",
+    )
+    observability_workload_kubeconfig_context: str | None = Field(
+        default="devdeploy-workload-observability",
+        alias="DEVDEPLOY_OBSERVABILITY_WORKLOAD_KUBECONFIG_CONTEXT",
+    )
     gitops_enabled: bool = Field(default=False, alias="GITOPS_ENABLED")
     github_owner: str = Field(default="Kaan-YASSIBAS", alias="GITHUB_OWNER")
     github_repo: str = Field(default="devdeploy-hub", alias="GITHUB_REPO")
@@ -115,6 +126,33 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.frontend_origin.split(",") if origin.strip()]
+
+    @property
+    def resolved_observability_workload_kubeconfig(self) -> str | None:
+        return self.resolve_runtime_path(self.observability_workload_kubeconfig)
+
+    def resolve_runtime_path(self, path_value: str | None) -> str | None:
+        if path_value is None or not path_value.strip():
+            return None
+
+        expanded = Path(os.path.expandvars(path_value.strip())).expanduser()
+        if expanded.is_absolute():
+            return str(expanded)
+
+        if expanded.parts and expanded.parts[0] == ".devdeploy":
+            root = self._runtime_root_path()
+            return str(root / expanded)
+
+        if len(expanded.parts) >= 2 and expanded.parts[0] == ".." and expanded.parts[1] == ".devdeploy":
+            root = self._runtime_root_path()
+            return str(root / Path(*expanded.parts[1:]))
+
+        return str(expanded)
+
+    def _runtime_root_path(self) -> Path:
+        if self.devdeploy_runtime_root and self.devdeploy_runtime_root.strip():
+            return Path(os.path.expandvars(self.devdeploy_runtime_root.strip())).expanduser()
+        return Path(__file__).resolve().parents[3]
 
 
 @lru_cache

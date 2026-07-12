@@ -534,7 +534,7 @@ export type MockLogEntry = {
 export type ObservabilityComponentHealth = {
   available: boolean;
   detail?: string | null;
-  status?: "connected" | "not_configured" | "degraded" | "unavailable" | "optional";
+  status?: "connected" | "not_configured" | "degraded" | "unavailable" | "restricted" | "optional";
   checked_at?: string | null;
   message_code?: string | null;
   capabilities?: Record<string, boolean>;

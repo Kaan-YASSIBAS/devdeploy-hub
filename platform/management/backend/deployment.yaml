@@ -76,8 +76,8 @@ spec:
             - name: ACCESS_TOKEN_EXPIRE_MINUTES
               value: "60"
           volumeMounts:
-            - name: workload-kubeconfig
-              mountPath: /var/run/devdeploy/workload
+            - name: observability-workload-kubeconfig
+              mountPath: /var/run/devdeploy/workload-observability
               readOnly: true
           livenessProbe:
             httpGet:
@@ -112,7 +112,7 @@ spec:
               drop:
                 - ALL
       volumes:
-        - name: workload-kubeconfig
+        - name: observability-workload-kubeconfig
           secret:
             secretName: devdeploy-backend-workload-kubeconfig
             optional: true

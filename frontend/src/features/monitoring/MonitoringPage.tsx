@@ -141,7 +141,8 @@ function HealthCard({ isLoading, label, health }: { isLoading: boolean; label: s
   const available = Boolean(health?.available);
   const status = health?.status ?? (available ? "connected" : "unavailable");
   const statusLabel = isLoading ? t("common.loading") : t(`observability.status.${status}`);
-  const badgeVariant = isLoading ? "muted" : available ? "success" : status === "unavailable" || status === "degraded" ? "warning" : "muted";
+  const badgeVariant =
+    isLoading ? "muted" : available ? "success" : status === "unavailable" || status === "degraded" || status === "restricted" ? "warning" : "muted";
 
   return (
     <Card className="p-5">

@@ -19,6 +19,21 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
 API_TOKEN_PREFIX = "ddh_live_"
 
 
+def has_effective_admin_access(user: User) -> bool:
+    return user.role == "admin" or settings.environment == "development"
+
+
+def ensure_local_admin_user(db: Session, user: User) -> User:
+    if settings.environment != "development" or user.role == "admin":
+        return user
+
+    user.role = "admin"
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
@@ -43,7 +58,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
             raise credentials_error
         api_token.last_used_at = datetime.now(timezone.utc)
         db.commit()
-        return api_token.user
+        return ensure_local_admin_user(db, api_token.user)
 
     try:
         payload = jwt.decode(
@@ -62,11 +77,11 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     user = UserRepository(db).get_by_id(user_id)
     if user is None or not user.is_active:
         raise credentials_error
-    return user
+    return ensure_local_admin_user(db, user)
 
 
 def require_admin(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role != "admin":
+    if not has_effective_admin_access(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin privileges are required",

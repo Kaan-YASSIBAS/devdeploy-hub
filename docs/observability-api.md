@@ -26,10 +26,11 @@ DEVDEPLOY_OBSERVABILITY_LOKI_SERVICE_NAME=loki-gateway
 DEVDEPLOY_OBSERVABILITY_LOKI_SERVICE_PORT=80
 DEVDEPLOY_OBSERVABILITY_GRAFANA_SERVICE_NAME=kube-prometheus-stack-grafana
 DEVDEPLOY_OBSERVABILITY_GRAFANA_SERVICE_PORT=80
-DEVDEPLOY_WORKLOAD_KUBECONFIG=/var/run/devdeploy/workload/kubeconfig
+DEVDEPLOY_OBSERVABILITY_WORKLOAD_KUBECONFIG=/var/run/devdeploy/workload-observability/kubeconfig
+DEVDEPLOY_OBSERVABILITY_WORKLOAD_KUBECONFIG_CONTEXT=devdeploy-workload-observability
 ```
 
-In Docker Compose, `KUBERNETES_IN_CLUSTER=false` and the Prometheus/Loki URLs may point at localhost. In the multi-cluster local runtime, the management backend should use the Kubernetes service-proxy mode above. If those services are not reachable from the backend, observability endpoints return `503` instead of crashing startup.
+In Docker Compose, `KUBERNETES_IN_CLUSTER=false` and the Prometheus/Loki URLs may point at localhost. In the multi-cluster local runtime, the management backend should use the Kubernetes service-proxy mode above. For local uvicorn development, the launcher writes the same narrow observability kubeconfig under `.devdeploy/local/kubeconfig/observability-workload-kubeconfig.yaml` and sets `DEVDEPLOY_OBSERVABILITY_WORKLOAD_KUBECONFIG` to `../.devdeploy/local/kubeconfig/observability-workload-kubeconfig.yaml` in `backend/.env`. The local file uses the host-reachable workload API endpoint from the selected normal workload kubeconfig/context, while the in-cluster Secret can keep the Docker-network endpoint. If those services are not reachable from the backend, observability endpoints return `503` instead of crashing startup.
 
 ## Authentication
 

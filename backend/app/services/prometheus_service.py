@@ -26,11 +26,12 @@ class PrometheusQueryError(Exception):
 
 class PrometheusService:
     def __init__(self, base_url: str | None = None, service_proxy: KubernetesServiceProxyTransport | None = None) -> None:
+        self._explicit_base_url = base_url is not None
         self.base_url = (base_url or settings.prometheus_base_url).rstrip("/")
         self.service_proxy = service_proxy
 
     def check_health(self) -> None:
-        self.query("up")
+        self.query("vector(1)")
 
     def query(self, promql: str) -> dict[str, Any]:
         if self._use_service_proxy:
@@ -377,4 +378,4 @@ class PrometheusService:
 
     @property
     def _use_service_proxy(self) -> bool:
-        return settings.observability_access_mode == "kubernetes_service_proxy"
+        return settings.observability_access_mode == "kubernetes_service_proxy" and not self._explicit_base_url
