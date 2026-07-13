@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.schemas.runtime_status import DeploymentRuntimeStatusRead
 from app.schemas.deployment_drift import DeploymentDriftStatusRead
+from app.schemas.telemetry import HttpTelemetryConfig, disabled_telemetry
 
 
 APP_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
@@ -152,6 +153,7 @@ class DeploymentRecordRead(BaseModel):
     commit_sha: str | None = None
     desired_state: DesiredState
     status_summary: str | None = None
+    telemetry: HttpTelemetryConfig = Field(default_factory=disabled_telemetry)
     archived_at: datetime | None = None
     created_at: datetime
     updated_at: datetime

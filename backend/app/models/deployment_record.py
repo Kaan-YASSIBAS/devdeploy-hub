@@ -4,6 +4,7 @@ from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Integer, S
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
+from app.schemas.telemetry import HttpTelemetryConfig, disabled_telemetry
 
 
 def utc_now() -> datetime:
@@ -54,3 +55,9 @@ class DeploymentRecord(Base):
 
     owner = relationship("User", back_populates="deployment_records")
     service_definition = relationship("ServiceDefinition", back_populates="deployment_records")
+
+    @property
+    def telemetry(self) -> HttpTelemetryConfig:
+        if self.service_definition is None:
+            return disabled_telemetry()
+        return self.service_definition.telemetry

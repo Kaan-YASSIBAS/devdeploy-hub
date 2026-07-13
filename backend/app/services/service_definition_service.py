@@ -7,6 +7,7 @@ from app.repositories.deployment_record_repository import DeploymentRecordReposi
 from app.repositories.service_definition_repository import ServiceDefinitionRepository
 from app.schemas.archive import ArchiveFilter
 from app.schemas.service_definition import ServiceDefinitionCreate, ServiceDefinitionUpdate
+from app.schemas.telemetry import HttpTelemetryConfig, telemetry_columns
 
 
 class ServiceDefinitionService:
@@ -37,9 +38,49 @@ class ServiceDefinitionService:
                 detail="A service definition with this name already exists.",
             )
 
+    @staticmethod
+    def _telemetry_columns_for_service(
+        telemetry: HttpTelemetryConfig,
+        *,
+        default_port: int | None,
+    ) -> dict:
+        if telemetry.enabled and telemetry.mode == "managed_http_proxy":
+            if default_port is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="managed_http_proxy requires default_port on the service definition.",
+                )
+            if telemetry.service_port != default_port:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="telemetry.service_port must match the service definition default_port.",
+                )
+            runtime_ports = {
+                default_port,
+                telemetry.application_container_port,
+                telemetry.proxy_listener_port,
+                telemetry.admin_port,
+            }
+            if len(runtime_ports) != 4:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=(
+                        "default_port, application_container_port, proxy_listener_port, "
+                        "and admin_port must be distinct for managed_http_proxy."
+                    ),
+                )
+        return telemetry_columns(telemetry)
+
     def create(self, payload: ServiceDefinitionCreate, owner: User) -> ServiceDefinition:
         self._ensure_name_available(owner_id=owner.id, name=payload.name)
-        service = self.services.create(owner_id=owner.id, data=payload.model_dump())
+        data = payload.model_dump(exclude={"telemetry"})
+        data.update(
+            self._telemetry_columns_for_service(
+                payload.telemetry,
+                default_port=payload.default_port,
+            )
+        )
+        service = self.services.create(owner_id=owner.id, data=data)
         self.db.commit()
         self.db.refresh(service)
         return service
@@ -64,7 +105,15 @@ class ServiceDefinitionService:
         user: User,
     ) -> ServiceDefinition:
         service = self.get(service_id, user)
-        data = payload.model_dump(exclude_unset=True)
+        data = payload.model_dump(exclude_unset=True, exclude={"telemetry"})
+        if "telemetry" in payload.model_fields_set and payload.telemetry is not None:
+            default_port = data.get("default_port", service.default_port)
+            data.update(
+                self._telemetry_columns_for_service(
+                    payload.telemetry,
+                    default_port=default_port,
+                )
+            )
         if "name" in data:
             self._ensure_name_available(
                 owner_id=service.owner_id,

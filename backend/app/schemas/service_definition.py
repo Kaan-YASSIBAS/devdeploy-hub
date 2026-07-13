@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.runtime_status import ServiceRuntimeStatusRead
+from app.schemas.telemetry import HttpTelemetryConfig, disabled_telemetry
 
 
 def _clean_name(value: str) -> str:
@@ -30,6 +31,7 @@ class ServiceDefinitionCreate(BaseModel):
     default_image: str | None = Field(default=None, max_length=512)
     default_replicas: int = Field(default=1, ge=1, le=20)
     default_port: int | None = Field(default=None, ge=1, le=65535)
+    telemetry: HttpTelemetryConfig = Field(default_factory=disabled_telemetry)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -50,6 +52,7 @@ class ServiceDefinitionUpdate(BaseModel):
     default_image: str | None = Field(default=None, max_length=512)
     default_replicas: int | None = Field(default=None, ge=1, le=20)
     default_port: int | None = Field(default=None, ge=1, le=65535)
+    telemetry: HttpTelemetryConfig | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -68,6 +71,8 @@ class ServiceDefinitionUpdate(BaseModel):
         for field_name in ("name", "default_replicas"):
             if field_name in self.model_fields_set and getattr(self, field_name) is None:
                 raise ValueError(f"{field_name} cannot be null")
+        if "telemetry" in self.model_fields_set and self.telemetry is None:
+            raise ValueError("telemetry cannot be null")
         return self
 
 
@@ -79,6 +84,7 @@ class ServiceDefinitionRead(BaseModel):
     default_image: str | None = None
     default_replicas: int
     default_port: int | None = None
+    telemetry: HttpTelemetryConfig = Field(default_factory=disabled_telemetry)
     archived_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
