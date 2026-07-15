@@ -65,6 +65,27 @@ class ObservabilityKubeconfigPortabilityTestCase(unittest.TestCase):
 
         return json.loads(completed.stdout)
 
+    def run_launcher_managed_selection(self, managed_path: Path) -> dict:
+        powershell = shutil.which("powershell")
+        if powershell is None:
+            self.skipTest("Windows PowerShell is not available")
+
+        script = "\n".join(
+            [
+                f"$ObservabilityLocalKubeconfigPath = '{managed_path}'",
+                '$ObservabilityKubeconfigContext = "devdeploy-workload-observability"',
+                self.launcher_function_body("Get-LauncherWorkloadKubeconfigSelection"),
+                "Get-LauncherWorkloadKubeconfigSelection | ConvertTo-Json -Depth 5",
+            ]
+        )
+        completed = subprocess.run(
+            [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return json.loads(completed.stdout)
+
     def test_example_and_assets_do_not_use_machine_specific_paths(self) -> None:
         checked_paths = [
             REPOSITORY_ROOT / "backend" / ".env.example",
@@ -121,6 +142,28 @@ class ObservabilityKubeconfigPortabilityTestCase(unittest.TestCase):
             "devdeploy-workload-observability",
         )
 
+    def test_normal_workload_kubeconfig_does_not_fall_back_to_observability(self) -> None:
+        settings = Settings(
+            _env_file=None,
+            DATABASE_URL="postgresql://devdeploy:devdeploy@localhost:5432/devdeploy",
+            JWT_SECRET_KEY="x" * 32,
+            DEVDEPLOY_RUNTIME_ROOT="D:/portable/devdeploy-hub",
+            DEVDEPLOY_WORKLOAD_KUBECONFIG="",
+            DEVDEPLOY_WORKLOAD_KUBECONFIG_CONTEXT="",
+            DEVDEPLOY_OBSERVABILITY_WORKLOAD_KUBECONFIG=(
+                "../.devdeploy/local/kubeconfig/observability-workload-kubeconfig.yaml"
+            ),
+            DEVDEPLOY_OBSERVABILITY_WORKLOAD_KUBECONFIG_CONTEXT="devdeploy-workload-observability",
+        )
+
+        self.assertIsNone(settings.resolved_workload_kubeconfig)
+        self.assertIsNone(settings.resolved_workload_kubeconfig_context)
+        self.assertEqual(
+            settings.resolved_observability_workload_kubeconfig,
+            "D:\\portable\\devdeploy-hub\\.devdeploy\\local\\kubeconfig"
+            "\\observability-workload-kubeconfig.yaml",
+        )
+
     def test_service_proxy_loads_observability_kubeconfig_not_normal_workload(self) -> None:
         fake_settings = SimpleNamespace(
             resolved_observability_workload_kubeconfig=(
@@ -163,6 +206,19 @@ class ObservabilityKubeconfigPortabilityTestCase(unittest.TestCase):
         self.assertIn('Get-CommandResultField -Result $viewResult -Name "stderr"', body)
         self.assertIn("Convert-CommandStdoutToString -Stdout $stdoutValue", body)
         self.assertIn("Convert-HostWorkloadKubeconfigJson -Json $stdoutText", body)
+
+    def test_launcher_prefers_existing_managed_kubeconfig_and_context(self) -> None:
+        test_root = REPOSITORY_ROOT / ".devdeploy" / "local" / "test-temp"
+        test_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=test_root, prefix="managed kubeconfig ") as tmpdir:
+            managed_path = Path(tmpdir) / "observability-workload-kubeconfig.yaml"
+            managed_path.write_text("{}", encoding="utf-8")
+
+            selection = self.run_launcher_managed_selection(managed_path)
+
+        self.assertEqual(Path(selection["kubeconfig_path"]), managed_path)
+        self.assertEqual(selection["context"], "devdeploy-workload-observability")
+        self.assertEqual(selection["source"], "launcher_managed_observability_kubeconfig")
 
     def test_launcher_passes_windows_kubeconfig_path_as_single_argument(self) -> None:
         body = self.launcher_function_body("Get-HostWorkloadKubeconfigCluster")
@@ -316,6 +372,19 @@ class ObservabilityKubeconfigPortabilityTestCase(unittest.TestCase):
         self.assertIn("normal_workload_kubeconfig_modified = $false", body)
         self.assertIn('token = $readerToken', body)
 
+    def test_launcher_preserves_normal_workload_credentials(self) -> None:
+        body = self.launcher_function_body("Set-LauncherManagedObservabilityBackendEnv")
+
+        self.assertNotIn(
+            'Set-LauncherManagedBackendEnvValue -Key "DEVDEPLOY_WORKLOAD_KUBECONFIG"',
+            body,
+        )
+        self.assertNotIn(
+            'Set-LauncherManagedBackendEnvValue -Key "DEVDEPLOY_WORKLOAD_KUBECONFIG_CONTEXT"',
+            body,
+        )
+        self.assertIn("normal_workload_kubeconfig_modified = $false", body)
+
     def test_launcher_local_kubeconfig_does_not_hardcode_internal_endpoint_or_port(self) -> None:
         body = self.launcher_function_body("Invoke-EnsureManagementBackendWorkloadKubeconfigSecret")
         local_start = body.index("$localKubeconfig =")
@@ -332,7 +401,7 @@ class ObservabilityKubeconfigPortabilityTestCase(unittest.TestCase):
 
         self.assertIn("Set-ContentAtomicUtf8 -Path $ObservabilityLocalKubeconfigPath", body)
         self.assertNotIn("Add-Content -LiteralPath $ObservabilityLocalKubeconfigPath", body)
-        self.assertIn('endpoint_source = "selected_workload_kubeconfig_context"', body)
+        self.assertIn('endpoint_source = [string]$hostCluster["source"]', body)
 
     def test_launcher_uses_atomic_replace_and_does_not_overwrite_on_failed_resolution(self) -> None:
         atomic_body = self.launcher_function_body("Set-ContentAtomicUtf8")

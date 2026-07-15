@@ -18,6 +18,12 @@ param(
 
     [switch]$PlanWorkloadRebootstrap,
 
+    [switch]$PlanWorkloadPortRecovery,
+
+    [switch]$PlanManagementPortRecovery,
+
+    [switch]$RepairDevDeployKindRestartPolicies,
+
     [switch]$BootstrapManagementIngress,
 
     [switch]$BootstrapManagementPostgres,
@@ -80,10 +86,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-if ($PlanWorkloadRebootstrap -and (
+if (($PlanWorkloadRebootstrap -or $PlanWorkloadPortRecovery -or $PlanManagementPortRecovery) -and (
         $GenerateKindConfigs -or
         $CreateManagementCluster -or
         $CreateWorkloadCluster -or
+        (@(@($PlanWorkloadRebootstrap, $PlanWorkloadPortRecovery, $PlanManagementPortRecovery) | Where-Object { $_ }).Count -gt 1) -or
+        $RepairDevDeployKindRestartPolicies -or
         $BootstrapManagementIngress -or
         $BootstrapManagementPostgres -or
         $BuildManagementBackendImage -or
@@ -110,11 +118,46 @@ if ($PlanWorkloadRebootstrap -and (
         $VerifyWorkloadObservability -or
         $InitializeManagementBackendDatabase
     )) {
-    throw "-PlanWorkloadRebootstrap is plan-only and cannot be combined with launcher execution or preview modes."
+    throw "Workload recovery planning modes are plan-only and cannot be combined with launcher execution or preview modes."
+}
+
+if ($RepairDevDeployKindRestartPolicies -and (
+        $GenerateKindConfigs -or
+        $CreateManagementCluster -or
+        $CreateWorkloadCluster -or
+        $PlanWorkloadRebootstrap -or
+        $PlanWorkloadPortRecovery -or
+        $PlanManagementPortRecovery -or
+        $BootstrapManagementIngress -or
+        $BootstrapManagementPostgres -or
+        $BuildManagementBackendImage -or
+        $LoadManagementBackendImage -or
+        $EnsureManagementBackendSecret -or
+        $VerifyManagementBackendSecret -or
+        $BootstrapManagementBackend -or
+        $VerifyManagementBackend -or
+        $BuildManagementFrontendImage -or
+        $LoadManagementFrontendImage -or
+        $BootstrapManagementFrontend -or
+        $VerifyManagementFrontend -or
+        $BootstrapManagementArgoCD -or
+        $VerifyManagementArgoCD -or
+        $DiscoverWorkloadClusterEndpoint -or
+        $RegisterWorkloadClusterWithArgoCD -or
+        $VerifyWorkloadClusterRegistration -or
+        $GrantWorkloadDeployPermissions -or
+        $VerifyWorkloadDeployPermissions -or
+        $ConfigureGitOpsRepository -or
+        $BootstrapGitOpsRootApplication -or
+        $VerifyGitOpsRootApplication -or
+        $BootstrapWorkloadObservability -or
+        $VerifyWorkloadObservability -or
+        $InitializeManagementBackendDatabase
+    )) {
+    throw "-RepairDevDeployKindRestartPolicies cannot be combined with other launcher modes."
 }
 
 $LauncherVersion = "0.1.0"
-$RequiredPorts = @(58080, 8080, 8443, 58081, 8081, 8444)
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
 $LocalRoot = Join-Path $RepoRoot ".devdeploy\local"
 $StatusDir = Join-Path $LocalRoot "status"
@@ -226,7 +269,7 @@ $HelmManagedChecksumPath = Join-Path $HelmManagedDir "$HelmArchiveName.sha256sum
 $HelmManagedExePath = Join-Path $HelmManagedDir "$HelmPlatform\helm.exe"
 $HelmManagedVerificationPath = Join-Path $HelmManagedDir "devdeploy-helm-verification.json"
 
-$PortPlan = [ordered]@{
+$DefaultPortPlan = [ordered]@{
     management_api   = 58080
     management_http  = 8080
     management_https = 8443
@@ -234,6 +277,19 @@ $PortPlan = [ordered]@{
     workload_http    = 8081
     workload_https   = 8444
 }
+$WorkloadHttpsCandidatePorts = @(8444, 9444, 10444, 11444, 12444, 13444, 18444, 20444, 21444, 22444, 23444, 24444)
+$ManagementHttpsCandidatePorts = @(8443, 9443, 10443, 11443, 12443, 13443, 18443, 20443, 21443, 22443, 23443, 24443)
+$ExpectedKindRestartPolicy = "unless-stopped"
+$PortPlan = [ordered]@{
+    management_api   = [int]$DefaultPortPlan["management_api"]
+    management_http  = [int]$DefaultPortPlan["management_http"]
+    management_https = [int]$DefaultPortPlan["management_https"]
+    workload_api     = [int]$DefaultPortPlan["workload_api"]
+    workload_http    = [int]$DefaultPortPlan["workload_http"]
+    workload_https   = [int]$DefaultPortPlan["workload_https"]
+}
+$PortSelection = [ordered]@{}
+$ManagementClusterStatusCache = $null
 
 function New-LocalDirectory {
     param(
@@ -309,6 +365,121 @@ function Add-Check {
 
     $Checks.Add($check) | Out-Null
     Write-LauncherLog ("{0}: {1} - {2}" -f $Id, $Status, $Message)
+}
+
+function Set-CheckResult {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Id,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("ok", "warning", "failed", "skipped")]
+        [string]$Status,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Message,
+
+        [hashtable]$Details = @{}
+    )
+
+    for ($checkIndex = 0; $checkIndex -lt $Checks.Count; $checkIndex++) {
+        $check = $Checks[$checkIndex]
+        if ([string]$check["id"] -ne $Id) {
+            continue
+        }
+        $check["status"] = $Status
+        $check["message"] = $Message
+        $check["details"] = $Details
+        $check["checked_at"] = [string](Get-Timestamp)
+        Write-LauncherLog ("{0}: reconciled to {1} - {2}" -f $Id, $Status, $Message)
+        return $true
+    }
+    return $false
+}
+
+function Get-NamedObjectValue {
+    param(
+        [object]$InputObject,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    if ($null -eq $InputObject) {
+        return $null
+    }
+    if ($InputObject -is [System.Collections.IDictionary]) {
+        return $InputObject[$Name]
+    }
+    $property = $InputObject.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        return $null
+    }
+    return $property.Value
+}
+
+function ConvertTo-PlainHostPublicationDetails {
+    param(
+        [object]$Publications
+    )
+
+    $items = New-Object System.Collections.Generic.List[object]
+    if ($null -eq $Publications) {
+        return ,([object[]]$items.ToArray())
+    }
+
+    foreach ($publication in $Publications) {
+        if ($null -eq $publication) {
+            continue
+        }
+        $plain = @{}
+        foreach ($field in @("container_port", "expected_host_port", "configured_host_port", "published_host_port", "docker_port_host_port")) {
+            $value = Get-NamedObjectValue -InputObject $publication -Name $field
+            $plain[$field] = if ($null -eq $value) { $null } else { [int]$value }
+        }
+        foreach ($field in @("docker_port_owner")) {
+            $value = Get-NamedObjectValue -InputObject $publication -Name $field
+            $plain[$field] = if ($null -eq $value) { "" } else { [string]$value }
+        }
+        foreach ($field in @("configured", "published", "publication_consistent", "healthy")) {
+            $value = Get-NamedObjectValue -InputObject $publication -Name $field
+            $plain[$field] = if ($null -eq $value) { $null } else { [bool]$value }
+        }
+        $items.Add($plain) | Out-Null
+    }
+
+    return ,([object[]]$items.ToArray())
+}
+
+function New-ManagementIntegrityCheckDetails {
+    param(
+        [bool]$Required,
+
+        [Parameter(Mandatory = $true)]
+        [string]$IntegrityStatus,
+
+        [object]$InternalClusterReady,
+
+        [bool]$HostAccessHealthy,
+
+        [bool]$RecreationRequired,
+
+        [string]$RecreationReason = "",
+
+        [object]$RequiredHostPublications
+    )
+
+    $plainPublications = ConvertTo-PlainHostPublicationDetails -Publications $RequiredHostPublications
+    return @{
+        required                   = [bool]$Required
+        cluster_name               = [string]"devdeploy-mgmt"
+        integrity_status           = [string]$IntegrityStatus
+        internal_cluster_ready     = if ($null -eq $InternalClusterReady) { $null } else { [bool]$InternalClusterReady }
+        host_access_healthy        = [bool]$HostAccessHealthy
+        recreation_required        = [bool]$RecreationRequired
+        recreation_reason          = [string]$RecreationReason
+        required_host_publications = $plainPublications
+    }
 }
 
 function Get-CheckRequired {
@@ -935,7 +1106,11 @@ function New-NextActions {
         }
     }
 
-    if ($LauncherMode -eq "workload_rebootstrap_plan") {
+    if ($LauncherMode -eq "management_port_recovery_plan") {
+        $actions.Add("Review the plan-only management port recovery steps and verify the PostgreSQL backup before any future management recreation. No command has been executed.") | Out-Null
+    }
+
+    if ($LauncherMode -in @("workload_rebootstrap_plan", "workload_port_recovery_plan")) {
         if ($managementClusterStatus -eq "ready") {
             $actions.Add("Review the plan-only workload rebootstrap steps. No command has been executed and user confirmation remains required before manual recreation.") | Out-Null
         }
@@ -1235,9 +1410,19 @@ function Set-ContentAtomicUtf8 {
 }
 
 function Get-LauncherWorkloadKubeconfigSelection {
+    if (Test-Path -LiteralPath $ObservabilityLocalKubeconfigPath -PathType Leaf) {
+        return [ordered]@{
+            kubeconfig_path = [string]$ObservabilityLocalKubeconfigPath
+            context = [string]$ObservabilityKubeconfigContext
+            source = "launcher_managed_observability_kubeconfig"
+        }
+    }
+
     $path = [string]$env:DEVDEPLOY_WORKLOAD_KUBECONFIG
+    $source = "process_environment"
     if ([string]::IsNullOrWhiteSpace($path)) {
         $path = [string](Get-LauncherBackendEnvValue -Key "DEVDEPLOY_WORKLOAD_KUBECONFIG")
+        $source = "backend_environment"
     }
 
     $context = [string]$env:DEVDEPLOY_WORKLOAD_KUBECONFIG_CONTEXT
@@ -1256,6 +1441,7 @@ function Get-LauncherWorkloadKubeconfigSelection {
     return [ordered]@{
         kubeconfig_path = $resolvedPath
         context = $context.Trim()
+        source = $source
     }
 }
 
@@ -1439,6 +1625,7 @@ function Get-HostWorkloadKubeconfigCluster {
     $result = [ordered]@{
         ok = $false
         context = [string]$selection["context"]
+        source = [string]$selection["source"]
         kubeconfig_path_set = -not [string]::IsNullOrWhiteSpace([string]$selection["kubeconfig_path"])
         server = ""
         certificate_authority_data_present = $false
@@ -1497,7 +1684,7 @@ function Set-LauncherManagedObservabilityBackendEnv {
     Set-LauncherManagedBackendEnvValue -Key "DEVDEPLOY_OBSERVABILITY_WORKLOAD_KUBECONFIG" -Value $ObservabilityLocalKubeconfigRelativePath
     Set-LauncherManagedBackendEnvValue -Key "DEVDEPLOY_OBSERVABILITY_WORKLOAD_KUBECONFIG_CONTEXT" -Value $ObservabilityKubeconfigContext
 
-    Add-Check -Id "workload_observability_local_backend_env" -Label "Local backend observability environment" -Status "ok" -Message "Local backend observability kubeconfig settings were updated with launcher-managed portable paths." -Details @{
+    Add-Check -Id "workload_observability_local_backend_env" -Label "Local backend workload environment" -Status "ok" -Message "Local backend read-only workload and observability readers were configured with the launcher-managed kubeconfig; normal workload credentials were preserved separately." -Details @{
         required = $false
         env_file = "backend/.env"
         kubeconfig_path = $ObservabilityLocalKubeconfigRelativePath
@@ -1800,6 +1987,49 @@ function Test-DockerDaemon {
         error    = $result.stderr
     }
     return $false
+}
+
+function Set-DockerDaemonCheckFromEvidence {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Evidence
+    )
+
+    foreach ($check in $Checks) {
+        if ([string]$check["id"] -ne "docker_daemon" -or [string]$check["status"] -ne "failed") {
+            continue
+        }
+
+        $initialMessage = [string]$check["message"]
+        $initialTimedOut = [bool]($initialMessage -match "timed out")
+        return (Set-CheckResult -Id "docker_daemon" -Status "ok" -Message "Docker daemon reachability was confirmed by later successful read-only evidence." -Details @{
+                required = $true
+                evidence = $Evidence
+                initial_probe_status = $(if ($initialTimedOut) { "timed_out" } else { "failed" })
+                initial_probe_recorded = $true
+                superseded = $true
+            })
+    }
+
+    return $false
+}
+
+function Test-DockerDaemonFollowUp {
+    param(
+        [bool]$DockerCliAvailable
+    )
+
+    if (-not $DockerCliAvailable) {
+        return $false
+    }
+
+    $result = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @("version", "--format", "{{json .Server.Version}}") -TimeoutSeconds 20
+    if ($result.exit_code -ne 0 -or $result.timed_out -or [string]::IsNullOrWhiteSpace([string]$result.stdout)) {
+        return $false
+    }
+
+    Set-DockerDaemonCheckFromEvidence -Evidence "docker_version_read_only" | Out-Null
+    return $true
 }
 
 function New-ManagementBackendImageStatus {
@@ -4548,6 +4778,642 @@ function Invoke-InitializeManagementBackendDatabase {
     return New-ManagementBackendDatabaseResult -Database $database -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Frontend $frontend -Ingress $ingress -Postgres $postgres
 }
 
+function Get-WindowsExcludedTcpPortRanges {
+    $ranges = New-Object System.Collections.Generic.List[object]
+    if (-not [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) {
+        return @($ranges | ForEach-Object { $_ })
+    }
+
+    $result = Invoke-ReadOnlyCommand -FileName "netsh" -Arguments @("interface", "ipv4", "show", "excludedportrange", "protocol=tcp") -TimeoutSeconds 10 -PreserveStandardOutput $true
+    if ($result.exit_code -ne 0 -or $result.timed_out -or [string]::IsNullOrWhiteSpace($result.stdout)) {
+        Write-LauncherLog "Windows excluded TCP port range query was unavailable; bind checks will still be used."
+        return @($ranges | ForEach-Object { $_ })
+    }
+
+    foreach ($line in @(([string]$result.stdout) -split "\r?\n")) {
+        $match = [System.Text.RegularExpressions.Regex]::Match([string]$line, '^\s*(\d+)\s+(\d+)\s*$')
+        if ($match.Success) {
+            $ranges.Add([ordered]@{
+                    start = [int]$match.Groups[1].Value
+                    end   = [int]$match.Groups[2].Value
+                }) | Out-Null
+        }
+    }
+
+    return @($ranges | ForEach-Object { $_ })
+}
+
+function Test-PortInExcludedRanges {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$Port,
+
+        [object[]]$Ranges = @()
+    )
+
+    foreach ($range in @($Ranges)) {
+        if ($null -eq $range) {
+            continue
+        }
+
+        $start = [int]$range["start"]
+        $end = [int]$range["end"]
+        if ($Port -ge $start -and $Port -le $end) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Test-HostPortBindAvailable {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$Port
+    )
+
+    $listener = $null
+    try {
+        $endpoint = New-Object System.Net.IPEndPoint ([System.Net.IPAddress]::Parse("127.0.0.1")), $Port
+        $listener = New-Object System.Net.Sockets.TcpListener $endpoint
+        $listener.Start()
+        return [ordered]@{
+            available = $true
+            error     = ""
+        }
+    }
+    catch {
+        return [ordered]@{
+            available = $false
+            error     = Protect-LogText $_.Exception.Message
+        }
+    }
+    finally {
+        if ($null -ne $listener) {
+            $listener.Stop()
+        }
+    }
+}
+
+function Get-DockerPublishedHostPorts {
+    param(
+        [bool]$DockerAvailable,
+
+        [bool]$DockerDaemonReachable
+    )
+
+    return @(
+        Get-DockerPublishedPortOwnership -DockerAvailable $DockerAvailable -DockerDaemonReachable $DockerDaemonReachable |
+            ForEach-Object { [int]$_['host_port'] } |
+            Select-Object -Unique
+    )
+}
+
+function Get-DockerPublishedPortOwnership {
+    param(
+        [bool]$DockerAvailable,
+
+        [bool]$DockerDaemonReachable
+    )
+
+    $ownership = New-Object System.Collections.Generic.List[object]
+    if (-not $DockerAvailable) {
+        return @($ownership | ForEach-Object { $_ })
+    }
+
+    $result = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @("ps", "--format", "{{.Names}}|{{.Ports}}") -TimeoutSeconds 10 -PreserveStandardOutput $true
+    if ($result.exit_code -ne 0 -or $result.timed_out -or [string]::IsNullOrWhiteSpace($result.stdout)) {
+        return @($ownership | ForEach-Object { $_ })
+    }
+
+    foreach ($line in @(([string]$result.stdout) -split "\r?\n")) {
+        if ([string]::IsNullOrWhiteSpace($line) -or $line -notmatch '^([^|]+)\|(.*)$') {
+            continue
+        }
+        $containerName = [string]$Matches[1]
+        $portsText = [string]$Matches[2]
+        foreach ($match in [System.Text.RegularExpressions.Regex]::Matches($portsText, '(?:(?:127\.0\.0\.1|0\.0\.0\.0|\[::\]|::):)?(\d+)->(\d+)\/tcp')) {
+            $ownership.Add([ordered]@{
+                    host_port      = [int]$match.Groups[1].Value
+                    container_port = [int]$match.Groups[2].Value
+                    container_name = $containerName
+                }) | Out-Null
+        }
+    }
+
+    return @($ownership | ForEach-Object { $_ })
+}
+
+function Get-DockerContainerPublishedHostPort {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ContainerName,
+
+        [Parameter(Mandatory = $true)]
+        [int]$ContainerPort,
+
+        [bool]$DockerAvailable,
+
+        [bool]$DockerDaemonReachable
+    )
+
+    $bindingState = Get-DockerContainerPortBindingState -ContainerName $ContainerName -ContainerPort $ContainerPort -DockerAvailable $DockerAvailable -DockerDaemonReachable $DockerDaemonReachable
+    if ($null -ne $bindingState["published_host_port"]) {
+        return [int]$bindingState["published_host_port"]
+    }
+    return $null
+}
+
+function Get-DockerContainerPortBindingState {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ContainerName,
+
+        [Parameter(Mandatory = $true)]
+        [int]$ContainerPort,
+
+        [bool]$DockerAvailable,
+
+        [bool]$DockerDaemonReachable
+    )
+
+    $state = [ordered]@{
+        container_port        = $ContainerPort
+        configured_host_port  = $null
+        published_host_port   = $null
+        docker_port_host_port = $null
+        configured            = $false
+        published             = $false
+        docker_port_reported  = $false
+        publication_consistent = $false
+        inspect_succeeded     = $false
+    }
+    if (-not $DockerAvailable) {
+        return $state
+    }
+
+    $portKey = "{0}/tcp" -f $ContainerPort
+    foreach ($inspection in @(
+            @{ field = "configured_host_port"; source = ".HostConfig.PortBindings" },
+            @{ field = "published_host_port"; source = ".NetworkSettings.Ports" }
+        )) {
+        $inspectResult = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @("inspect", "--format", ("{{{{json {0}}}}}" -f [string]$inspection.source), $ContainerName) -TimeoutSeconds 10 -PreserveStandardOutput $true
+        if ($inspectResult.exit_code -ne 0 -or $inspectResult.timed_out -or [string]::IsNullOrWhiteSpace($inspectResult.stdout)) {
+            continue
+        }
+
+        try {
+            $parsed = ([string]$inspectResult.stdout).Trim() | ConvertFrom-Json
+            $bindingProperty = $parsed.PSObject.Properties[$portKey]
+            if ($null -eq $bindingProperty -or $null -eq $bindingProperty.Value) {
+                continue
+            }
+            foreach ($binding in @($bindingProperty.Value)) {
+                if ($null -eq $binding) {
+                    continue
+                }
+                $hostPortProperty = $binding.PSObject.Properties["HostPort"]
+                if ($null -ne $hostPortProperty -and -not [string]::IsNullOrWhiteSpace([string]$hostPortProperty.Value)) {
+                    $state[[string]$inspection.field] = [int]$hostPortProperty.Value
+                    break
+                }
+            }
+            $state["inspect_succeeded"] = $true
+        }
+        catch {
+            Write-LauncherLog ("Could not parse sanitized Docker {0} port metadata for {1}:{2}." -f [string]$inspection.field, $ContainerName, $ContainerPort)
+        }
+    }
+
+    $portResult = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @("port", $ContainerName, $portKey) -TimeoutSeconds 10 -PreserveStandardOutput $true
+    if ($portResult.exit_code -eq 0 -and -not $portResult.timed_out -and -not [string]::IsNullOrWhiteSpace($portResult.stdout)) {
+        $portMatch = [System.Text.RegularExpressions.Regex]::Match([string]$portResult.stdout, ':(\d+)\s*$')
+        if ($portMatch.Success) {
+            $state["docker_port_host_port"] = [int]$portMatch.Groups[1].Value
+        }
+    }
+
+    $state["configured"] = [bool]($null -ne $state["configured_host_port"])
+    $state["published"] = [bool]($null -ne $state["published_host_port"])
+    $state["docker_port_reported"] = [bool]($null -ne $state["docker_port_host_port"])
+    $state["publication_consistent"] = [bool](
+        $state["configured"] -and
+        $state["published"] -and
+        $state["docker_port_reported"] -and
+        [int]$state["configured_host_port"] -eq [int]$state["published_host_port"] -and
+        [int]$state["published_host_port"] -eq [int]$state["docker_port_host_port"]
+    )
+    return $state
+}
+
+function Get-DockerContainerRestartPolicy {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("devdeploy-mgmt", "devdeploy-workload")]
+        [string]$ClusterName,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("devdeploy-mgmt-control-plane", "devdeploy-workload-control-plane")]
+        [string]$ControlPlaneContainer,
+
+        [bool]$DockerAvailable,
+
+        [bool]$DockerDaemonReachable
+    )
+
+    if (-not $DockerAvailable) {
+        return [ordered]@{
+            known                 = $false
+            policy_name           = ""
+            maximum_retry_count   = $null
+            healthy               = $false
+            reconciliation_needed = $null
+            error                 = "Docker is unavailable."
+        }
+    }
+
+    $result = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @("inspect", "--format", "{{json .HostConfig.RestartPolicy}}", $ControlPlaneContainer) -TimeoutSeconds 10 -PreserveStandardOutput $true
+    if ($result.exit_code -ne 0 -or $result.timed_out -or [string]::IsNullOrWhiteSpace($result.stdout)) {
+        return [ordered]@{
+            known                 = $false
+            policy_name           = ""
+            maximum_retry_count   = $null
+            healthy               = $false
+            reconciliation_needed = $null
+            error                 = if ($result.timed_out) { "Docker inspect timed out." } else { Protect-LogText $result.stderr }
+        }
+    }
+
+    try {
+        $parsed = ([string]$result.stdout).Trim() | ConvertFrom-Json
+        $nameProperty = $parsed.PSObject.Properties["Name"]
+        $retryProperty = $parsed.PSObject.Properties["MaximumRetryCount"]
+        $policyName = if ($null -ne $nameProperty) { [string]$nameProperty.Value } else { "" }
+        $maximumRetryCount = if ($null -ne $retryProperty -and $null -ne $retryProperty.Value) { [int]$retryProperty.Value } else { $null }
+        $healthy = [bool]($policyName -eq $ExpectedKindRestartPolicy)
+
+        return [ordered]@{
+            known                 = $true
+            policy_name           = $policyName
+            maximum_retry_count   = $maximumRetryCount
+            healthy               = $healthy
+            reconciliation_needed = [bool](-not $healthy)
+            error                 = ""
+        }
+    }
+    catch {
+        return [ordered]@{
+            known                 = $false
+            policy_name           = ""
+            maximum_retry_count   = $null
+            healthy               = $false
+            reconciliation_needed = $null
+            error                 = Protect-LogText $_.Exception.Message
+        }
+    }
+}
+
+function Add-KindRestartPolicyCheck {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ClusterName,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ControlPlaneContainer,
+
+        [Parameter(Mandatory = $true)]
+        [object]$RestartPolicy
+    )
+
+    $checkId = "kind_restart_policy_{0}" -f $ClusterName
+    if (-not [bool]$RestartPolicy["known"]) {
+        Add-Check -Id $checkId -Label ("{0} Docker restart policy" -f $ClusterName) -Status "warning" -Message ("Could not verify Docker restart policy for {0}." -f $ControlPlaneContainer) -Details @{
+            required                = $false
+            cluster_name            = $ClusterName
+            control_plane_container = $ControlPlaneContainer
+            expected_policy         = $ExpectedKindRestartPolicy
+            restart_policy_known    = $false
+            reconciliation_needed   = $null
+            error                   = [string]$RestartPolicy["error"]
+        }
+        return
+    }
+
+    $healthy = [bool]$RestartPolicy["healthy"]
+    $message = if ($healthy) {
+        "Docker restart policy is unless-stopped for {0}." -f $ControlPlaneContainer
+    }
+    else {
+        "Docker restart policy for {0} is {1}; reconcile it to unless-stopped with an explicit launcher repair or create mode." -f $ControlPlaneContainer, [string]$RestartPolicy["policy_name"]
+    }
+
+    Add-Check -Id $checkId -Label ("{0} Docker restart policy" -f $ClusterName) -Status $(if ($healthy) { "ok" } else { "warning" }) -Message $message -Details @{
+        required                = $false
+        cluster_name            = $ClusterName
+        control_plane_container = $ControlPlaneContainer
+        expected_policy         = $ExpectedKindRestartPolicy
+        policy_name             = [string]$RestartPolicy["policy_name"]
+        maximum_retry_count     = $RestartPolicy["maximum_retry_count"]
+        restart_policy_healthy  = $healthy
+        reconciliation_needed   = [bool]$RestartPolicy["reconciliation_needed"]
+    }
+}
+
+function Invoke-KindRestartPolicyReconcile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("devdeploy-mgmt", "devdeploy-workload")]
+        [string]$ClusterName,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("devdeploy-mgmt-control-plane", "devdeploy-workload-control-plane")]
+        [string]$ControlPlaneContainer,
+
+        [bool]$DockerAvailable,
+
+        [bool]$DockerDaemonReachable
+    )
+
+    if (-not $DockerAvailable -or -not $DockerDaemonReachable) {
+        Add-Check -Id ("kind_restart_policy_reconcile_{0}" -f $ClusterName) -Label ("{0} restart policy reconcile" -f $ClusterName) -Status "failed" -Message "Docker is required to reconcile the kind node restart policy." -Details @{
+            required                = $true
+            cluster_name            = $ClusterName
+            control_plane_container = $ControlPlaneContainer
+            expected_policy         = $ExpectedKindRestartPolicy
+        }
+        return $false
+    }
+
+    $before = Get-DockerContainerRestartPolicy -ClusterName $ClusterName -ControlPlaneContainer $ControlPlaneContainer -DockerAvailable $DockerAvailable -DockerDaemonReachable $DockerDaemonReachable
+    if ([bool]$before["known"] -and [bool]$before["healthy"]) {
+        Add-Check -Id ("kind_restart_policy_reconcile_{0}" -f $ClusterName) -Label ("{0} restart policy reconcile" -f $ClusterName) -Status "ok" -Message ("Docker restart policy is already unless-stopped for {0}." -f $ControlPlaneContainer) -Details @{
+            required                = $true
+            cluster_name            = $ClusterName
+            control_plane_container = $ControlPlaneContainer
+            expected_policy         = $ExpectedKindRestartPolicy
+            policy_name             = [string]$before["policy_name"]
+            updated                 = $false
+        }
+        return $true
+    }
+
+    $updateResult = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @("update", "--restart", $ExpectedKindRestartPolicy, $ControlPlaneContainer) -TimeoutSeconds 30
+    if ($updateResult.exit_code -ne 0 -or $updateResult.timed_out) {
+        Add-Check -Id ("kind_restart_policy_reconcile_{0}" -f $ClusterName) -Label ("{0} restart policy reconcile" -f $ClusterName) -Status "failed" -Message ("Could not reconcile Docker restart policy for {0}. No cluster deletion or cleanup was performed." -f $ControlPlaneContainer) -Details @{
+            required                = $true
+            cluster_name            = $ClusterName
+            control_plane_container = $ControlPlaneContainer
+            expected_policy         = $ExpectedKindRestartPolicy
+            previous_policy         = if ([bool]$before["known"]) { [string]$before["policy_name"] } else { "" }
+            error                   = if ($updateResult.timed_out) { "Docker update timed out." } else { [string]$updateResult.stderr }
+            deletes_cluster         = $false
+        }
+        return $false
+    }
+
+    $after = Get-DockerContainerRestartPolicy -ClusterName $ClusterName -ControlPlaneContainer $ControlPlaneContainer -DockerAvailable $DockerAvailable -DockerDaemonReachable $DockerDaemonReachable
+    if (-not [bool]$after["known"] -or -not [bool]$after["healthy"]) {
+        Add-Check -Id ("kind_restart_policy_reconcile_{0}" -f $ClusterName) -Label ("{0} restart policy reconcile" -f $ClusterName) -Status "failed" -Message ("Docker accepted restart policy update for {0}, but verification did not confirm unless-stopped." -f $ControlPlaneContainer) -Details @{
+            required                = $true
+            cluster_name            = $ClusterName
+            control_plane_container = $ControlPlaneContainer
+            expected_policy         = $ExpectedKindRestartPolicy
+            verified_policy         = if ([bool]$after["known"]) { [string]$after["policy_name"] } else { "" }
+            deletes_cluster         = $false
+        }
+        return $false
+    }
+
+    Add-Check -Id ("kind_restart_policy_reconcile_{0}" -f $ClusterName) -Label ("{0} restart policy reconcile" -f $ClusterName) -Status "ok" -Message ("Docker restart policy was reconciled to unless-stopped for {0}." -f $ControlPlaneContainer) -Details @{
+        required                = $true
+        cluster_name            = $ClusterName
+        control_plane_container = $ControlPlaneContainer
+        expected_policy         = $ExpectedKindRestartPolicy
+        previous_policy         = if ([bool]$before["known"]) { [string]$before["policy_name"] } else { "" }
+        policy_name             = [string]$after["policy_name"]
+        updated                 = $true
+        deletes_cluster         = $false
+    }
+    return $true
+}
+
+function Invoke-DevDeployKindRestartPolicyRepair {
+    param(
+        [bool]$DockerAvailable,
+
+        [bool]$DockerDaemonReachable
+    )
+
+    $managementReady = Invoke-KindRestartPolicyReconcile -ClusterName "devdeploy-mgmt" -ControlPlaneContainer "devdeploy-mgmt-control-plane" -DockerAvailable $DockerAvailable -DockerDaemonReachable $DockerDaemonReachable
+    $workloadReady = Invoke-KindRestartPolicyReconcile -ClusterName "devdeploy-workload" -ControlPlaneContainer "devdeploy-workload-control-plane" -DockerAvailable $DockerAvailable -DockerDaemonReachable $DockerDaemonReachable
+
+    return [bool]($managementReady -and $workloadReady)
+}
+
+function Test-HostPortSafety {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$Port,
+
+        [object[]]$ExcludedRanges = @(),
+
+        [int[]]$DockerPublishedPorts = @(),
+
+        [object[]]$DockerPortOwnership = @(),
+
+        [string]$ExpectedControlPlaneContainer = "",
+
+        [bool]$AllowExpectedContainerOwnership = $false,
+
+        [int[]]$ReservedDevDeployPorts = @()
+    )
+
+    $excluded = [bool](Test-PortInExcludedRanges -Port $Port -Ranges $ExcludedRanges)
+    $owners = @(
+        $DockerPortOwnership |
+            Where-Object { [int]$_['host_port'] -eq $Port } |
+            ForEach-Object { [string]$_['container_name'] } |
+            Select-Object -Unique
+    )
+    $dockerPublished = [bool]($owners.Count -gt 0 -or @($DockerPublishedPorts) -contains $Port)
+    $ownedByExpectedCluster = [bool](
+        -not [string]::IsNullOrWhiteSpace($ExpectedControlPlaneContainer) -and
+        $owners -contains $ExpectedControlPlaneContainer
+    )
+    $knownDevDeployContainers = @("devdeploy-mgmt-control-plane", "devdeploy-workload-control-plane")
+    $ownedByOtherDevDeployCluster = [bool](@($owners | Where-Object { $_ -in $knownDevDeployContainers -and $_ -ne $ExpectedControlPlaneContainer }).Count -gt 0)
+    $ownedByUnrelatedContainer = [bool](@($owners | Where-Object { $_ -notin $knownDevDeployContainers }).Count -gt 0)
+    $expectedOwnershipAccepted = [bool](
+        $AllowExpectedContainerOwnership -and
+        $ownedByExpectedCluster -and
+        -not $ownedByOtherDevDeployCluster -and
+        -not $ownedByUnrelatedContainer
+    )
+    $reservedCollision = [bool](@($ReservedDevDeployPorts) -contains $Port)
+    $bindResult = Test-HostPortBindAvailable -Port $Port
+    $bindAvailable = [bool]$bindResult["available"]
+    $dockerOwnershipSafe = [bool](-not $dockerPublished -or $expectedOwnershipAccepted)
+    $bindSafe = [bool]($bindAvailable -or $expectedOwnershipAccepted)
+    $safe = [bool](-not $excluded -and $dockerOwnershipSafe -and -not $reservedCollision -and $bindSafe)
+
+    return [ordered]@{
+        port                  = $Port
+        address               = "127.0.0.1"
+        safe                  = $safe
+        excluded_by_windows   = $excluded
+        docker_published      = $dockerPublished
+        docker_port_owner     = if ($owners.Count -eq 1) { [string]$owners[0] } elseif ($owners.Count -gt 1) { [string]($owners -join ",") } else { "" }
+        docker_port_owners    = [string[]]@($owners)
+        owned_by_expected_cluster       = $ownedByExpectedCluster
+        owned_by_other_devdeploy_cluster = $ownedByOtherDevDeployCluster
+        owned_by_unrelated_container    = $ownedByUnrelatedContainer
+        collides_with_devdeploy_port = $reservedCollision
+        bind_available        = $bindAvailable
+        bind_error            = [string]$bindResult["error"]
+    }
+}
+
+function Resolve-HttpsPortSelection {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PortKey,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ClusterName,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ControlPlaneContainer,
+
+        [int[]]$CandidatePorts = @(),
+
+        [object[]]$ExcludedRanges = @(),
+
+        [int[]]$DockerPublishedPorts = @(),
+
+        [object[]]$DockerPortOwnership = @(),
+
+        [int[]]$ReservedDevDeployPorts = @(),
+
+        [bool]$DockerAvailable,
+
+        [bool]$DockerDaemonReachable,
+
+        [bool]$ClusterExists
+    )
+
+    $uniqueCandidatePorts = [int[]]@($CandidatePorts | ForEach-Object { [int]$_ } | Select-Object -Unique)
+    $selectedPort = [int]$DefaultPortPlan[$PortKey]
+    $selectionReason = "default_safe"
+    $candidateResults = New-Object System.Collections.Generic.List[object]
+    $evaluatedPorts = New-Object System.Collections.Generic.List[int]
+    $existingClusterPublishedHttps = $null
+    $existingClusterConfiguredHttps = $null
+    $selectedSafe = $false
+
+    if ($ClusterExists) {
+        $existingBindingState = Get-DockerContainerPortBindingState -ContainerName $ControlPlaneContainer -ContainerPort 443 -DockerAvailable $DockerAvailable -DockerDaemonReachable $DockerDaemonReachable
+        $existingClusterConfiguredHttps = $existingBindingState["configured_host_port"]
+        $existingClusterPublishedHttps = $existingBindingState["published_host_port"]
+        if ($null -ne $existingClusterPublishedHttps) {
+            $existingSafety = Test-HostPortSafety -Port ([int]$existingClusterPublishedHttps) -ExcludedRanges $ExcludedRanges -DockerPublishedPorts $DockerPublishedPorts -DockerPortOwnership $DockerPortOwnership -ExpectedControlPlaneContainer $ControlPlaneContainer -AllowExpectedContainerOwnership $true -ReservedDevDeployPorts $ReservedDevDeployPorts
+            $existingSafety["existing_binding_consistent"] = [bool]$existingBindingState["publication_consistent"]
+            $candidateResults.Add($existingSafety) | Out-Null
+            $evaluatedPorts.Add([int]$existingClusterPublishedHttps) | Out-Null
+            if ([bool]$existingSafety["safe"] -and [bool]$existingBindingState["publication_consistent"]) {
+                $selectedPort = [int]$existingClusterPublishedHttps
+                $selectionReason = "existing_cluster_binding"
+                $selectedSafe = $true
+            }
+        }
+    }
+
+    if (-not $selectedSafe) {
+        foreach ($candidate in @($uniqueCandidatePorts)) {
+            if (@($evaluatedPorts) -contains [int]$candidate) {
+                continue
+            }
+            $safety = Test-HostPortSafety -Port ([int]$candidate) -ExcludedRanges $ExcludedRanges -DockerPublishedPorts $DockerPublishedPorts -DockerPortOwnership $DockerPortOwnership -ExpectedControlPlaneContainer $ControlPlaneContainer -AllowExpectedContainerOwnership $false -ReservedDevDeployPorts $ReservedDevDeployPorts
+            $candidateResults.Add($safety) | Out-Null
+            $evaluatedPorts.Add([int]$candidate) | Out-Null
+            if ([bool]$safety["safe"]) {
+                $selectedPort = [int]$candidate
+                $selectedSafe = $true
+                if ($selectedPort -ne [int]$DefaultPortPlan[$PortKey]) {
+                    $selectionReason = "deterministic_safe_fallback"
+                }
+                break
+            }
+        }
+        if (-not $selectedSafe) {
+            $selectionReason = "no_safe_candidate"
+        }
+    }
+
+    $PortPlan[$PortKey] = [int]$selectedPort
+
+    $selection = [ordered]@{
+        default_port                     = [int]$DefaultPortPlan[$PortKey]
+        selected_port                    = [int]$selectedPort
+        selected_safe                    = $selectedSafe
+        candidate_ports                  = [int[]]@($uniqueCandidatePorts)
+        selection_reason                 = $selectionReason
+        existing_cluster                 = $ClusterExists
+        existing_cluster_configured_port = $existingClusterConfiguredHttps
+        existing_cluster_published_port  = $existingClusterPublishedHttps
+        windows_excluded_ranges_detected = @($ExcludedRanges)
+        candidates                       = @($candidateResults | ForEach-Object { $_ })
+    }
+
+    $selectionStatus = if ($selectedSafe) { "ok" } else { "failed" }
+    $selectionMessage = if ($selectedSafe) {
+        "Selected {0} HTTPS host port {1}." -f $ClusterName, $selectedPort
+    }
+    else {
+        "No safe HTTPS host port candidate is available for {0}. Free one candidate port before creating or recreating the cluster." -f $ClusterName
+    }
+    Add-Check -Id ("{0}_port_selection" -f $PortKey) -Label ("{0} HTTPS port selection" -f $ClusterName) -Status $selectionStatus -Message $selectionMessage -Details @{
+        required        = $true
+        default_port    = [int]$DefaultPortPlan[$PortKey]
+        selected_port   = [int]$selectedPort
+        selected_safe   = $selectedSafe
+        selection_reason = $selectionReason
+        candidate_ports = [int[]]@($uniqueCandidatePorts)
+        cluster_name    = $ClusterName
+    }
+
+    return $selection
+}
+
+function Resolve-LauncherPortPlan {
+    param(
+        [bool]$DockerAvailable,
+
+        [bool]$DockerDaemonReachable,
+
+        [bool]$ManagementClusterExists,
+
+        [bool]$WorkloadClusterExists
+    )
+
+    $excludedRanges = @(Get-WindowsExcludedTcpPortRanges)
+    $dockerPortOwnership = @(Get-DockerPublishedPortOwnership -DockerAvailable $DockerAvailable -DockerDaemonReachable $DockerDaemonReachable)
+    $dockerPublishedPorts = @($dockerPortOwnership | ForEach-Object { [int]$_['host_port'] } | Select-Object -Unique)
+    $reservedPorts = New-Object System.Collections.Generic.List[int]
+    foreach ($port in @($PortPlan["management_api"], $PortPlan["management_http"], $PortPlan["workload_api"], $PortPlan["workload_http"])) {
+        $reservedPorts.Add([int]$port) | Out-Null
+    }
+
+    $managementSelection = Resolve-HttpsPortSelection -PortKey "management_https" -ClusterName "devdeploy-mgmt" -ControlPlaneContainer "devdeploy-mgmt-control-plane" -CandidatePorts ([int[]]$ManagementHttpsCandidatePorts) -ExcludedRanges $excludedRanges -DockerPublishedPorts $dockerPublishedPorts -DockerPortOwnership $dockerPortOwnership -ReservedDevDeployPorts ([int[]]@($reservedPorts)) -DockerAvailable $DockerAvailable -DockerDaemonReachable $DockerDaemonReachable -ClusterExists $ManagementClusterExists
+    $reservedPorts.Add([int]$PortPlan["management_https"]) | Out-Null
+
+    $workloadSelection = Resolve-HttpsPortSelection -PortKey "workload_https" -ClusterName "devdeploy-workload" -ControlPlaneContainer "devdeploy-workload-control-plane" -CandidatePorts ([int[]]$WorkloadHttpsCandidatePorts) -ExcludedRanges $excludedRanges -DockerPublishedPorts $dockerPublishedPorts -DockerPortOwnership $dockerPortOwnership -ReservedDevDeployPorts ([int[]]@($reservedPorts)) -DockerAvailable $DockerAvailable -DockerDaemonReachable $DockerDaemonReachable -ClusterExists $WorkloadClusterExists
+
+    return [ordered]@{
+        management_https = $managementSelection
+        workload_https   = $workloadSelection
+    }
+}
+
 function Test-LocalPortAvailable {
     param(
         [Parameter(Mandatory = $true)]
@@ -4562,11 +5428,13 @@ function Test-LocalPortAvailable {
         [bool]$ExistingClusterDetected = $false
     )
 
-    $listener = $null
-    try {
-        $endpoint = New-Object System.Net.IPEndPoint ([System.Net.IPAddress]::Parse("127.0.0.1")), $Port
-        $listener = New-Object System.Net.Sockets.TcpListener $endpoint
-        $listener.Start()
+    $excludedRanges = @()
+    if ($PortSelection.Contains("management_https")) {
+        $excludedRanges = @($PortSelection["management_https"]["windows_excluded_ranges_detected"])
+    }
+    $dockerPublishedPorts = @(Get-DockerPublishedHostPorts -DockerAvailable $dockerAvailable -DockerDaemonReachable $dockerDaemonReachable)
+    $safety = Test-HostPortSafety -Port $Port -ExcludedRanges $excludedRanges -DockerPublishedPorts $dockerPublishedPorts
+    if ([bool]$safety["safe"]) {
         Add-Check -Id ("port_{0}" -f $Port) -Label ("Port {0}" -f $Port) -Status "ok" -Message ("Port {0} is available on 127.0.0.1." -f $Port) -Details @{
             port                      = $Port
             address                   = "127.0.0.1"
@@ -4574,35 +5442,39 @@ function Test-LocalPortAvailable {
             expected_cluster          = $ExpectedCluster
             existing_cluster_detected = $ExistingClusterDetected
             blocking                  = $false
+            excluded_by_windows       = [bool]$safety["excluded_by_windows"]
+            docker_published          = [bool]$safety["docker_published"]
+            bind_available            = [bool]$safety["bind_available"]
         }
+        return
     }
-    catch {
-        $status = if ($AllowBusyAsOk) { "ok" } elseif ($Required) { "failed" } else { "warning" }
-        $message = if ($AllowBusyAsOk) {
-            "Port {0} is in use and {1} exists; treating this as expected for the cluster." -f $Port, $ExpectedCluster
-        }
-        elseif ($Required) {
-            "Port {0} is already in use. Free this port before creating DevDeploy local clusters." -f $Port
-        }
-        else {
-            "Port {0} is already in use. This is not blocking for the current mode, but review it before later setup steps." -f $Port
-        }
 
-        Add-Check -Id ("port_{0}" -f $Port) -Label ("Port {0}" -f $Port) -Status $status -Message $message -Details @{
-            port                      = $Port
-            address                   = "127.0.0.1"
-            required                  = $Required
-            expected_cluster          = $ExpectedCluster
-            existing_cluster_detected = $ExistingClusterDetected
-            blocking                  = [bool]($Required -and -not $AllowBusyAsOk)
-            busy_ok                   = $AllowBusyAsOk
-            error                     = Protect-LogText $_.Exception.Message
-        }
+    $status = if ($AllowBusyAsOk) { "ok" } elseif ($Required) { "failed" } else { "warning" }
+    $message = if ($AllowBusyAsOk) {
+        "Port {0} is in use and {1} exists; treating this as expected for the cluster." -f $Port, $ExpectedCluster
     }
-    finally {
-        if ($null -ne $listener) {
-            $listener.Stop()
-        }
+    elseif ([bool]$safety["excluded_by_windows"]) {
+        "Port {0} is reserved by Windows excluded TCP port ranges. Use a safe fallback before creating DevDeploy local clusters." -f $Port
+    }
+    elseif ($Required) {
+        "Port {0} is unavailable. Free this port before creating DevDeploy local clusters." -f $Port
+    }
+    else {
+        "Port {0} is unavailable. This is not blocking for the current mode, but review it before later setup steps." -f $Port
+    }
+
+    Add-Check -Id ("port_{0}" -f $Port) -Label ("Port {0}" -f $Port) -Status $status -Message $message -Details @{
+        port                      = $Port
+        address                   = "127.0.0.1"
+        required                  = $Required
+        expected_cluster          = $ExpectedCluster
+        existing_cluster_detected = $ExistingClusterDetected
+        blocking                  = [bool]($Required -and -not $AllowBusyAsOk)
+        busy_ok                   = $AllowBusyAsOk
+        excluded_by_windows       = [bool]$safety["excluded_by_windows"]
+        docker_published          = [bool]$safety["docker_published"]
+        bind_available            = [bool]$safety["bind_available"]
+        error                     = [string]$safety["bind_error"]
     }
 }
 
@@ -5014,7 +5886,7 @@ function Invoke-ManagementClusterCreate {
             config_path  = $MgmtKindConfigPath
             created      = $true
         }
-        return $true
+        return (Invoke-KindRestartPolicyReconcile -ClusterName "devdeploy-mgmt" -ControlPlaneContainer "devdeploy-mgmt-control-plane" -DockerAvailable $dockerAvailable -DockerDaemonReachable $dockerDaemonReachable)
     }
 
     $message = "kind failed to create devdeploy-mgmt. No automatic cleanup was performed."
@@ -5205,7 +6077,7 @@ function Invoke-WorkloadClusterCreate {
             config_path  = $WorkloadKindConfigPath
             created      = $true
         }
-        return $true
+        return (Invoke-KindRestartPolicyReconcile -ClusterName "devdeploy-workload" -ControlPlaneContainer "devdeploy-workload-control-plane" -DockerAvailable $dockerAvailable -DockerDaemonReachable $dockerDaemonReachable)
     }
 
     $message = "kind failed to create devdeploy-workload. No automatic cleanup was performed."
@@ -5345,6 +6217,8 @@ function Test-ManagementClusterIntegrityRequired {
             $BuildManagementFrontendImage -or
             $ConfigureGitOpsRepository -or
             $PlanWorkloadRebootstrap -or
+            $PlanWorkloadPortRecovery -or
+            $PlanManagementPortRecovery -or
             $GenerateKindConfigs
         ))
 }
@@ -5369,6 +6243,8 @@ function Test-WorkloadClusterIntegrityRequired {
             $VerifyManagementArgoCD -or
             $ConfigureGitOpsRepository -or
             $PlanWorkloadRebootstrap -or
+            $PlanWorkloadPortRecovery -or
+            $PlanManagementPortRecovery -or
             $GenerateKindConfigs
         ))
 }
@@ -5401,6 +6277,12 @@ function Get-KindIntegrityRecommendedAction {
                 return "Try docker start devdeploy-workload-control-plane, rerun preflight, then restart Docker Desktop if needed. Recreate only devdeploy-workload if it remains unusable."
             }
             return "Try docker start devdeploy-mgmt-control-plane and rerun preflight. Restart Docker Desktop if needed; do not recreate management without protecting platform data."
+        }
+        "workload_cluster_recreation_required" {
+            return "Run -PlanWorkloadPortRecovery, then recreate only devdeploy-workload after explicit user confirmation. Do not recreate devdeploy-mgmt."
+        }
+        "management_cluster_recreation_required" {
+            return "Run -PlanManagementPortRecovery. Verify the PostgreSQL backup before any future management recreation; no automatic management recreation is available in this phase."
         }
         { $_ -in @("api_port_unpublished", "api_port_mismatch", "kubeconfig_unreachable") } {
             if ($isWorkload) {
@@ -5449,12 +6331,12 @@ function New-ClusterRecoveryPlan {
             "If the workload cluster is recreated, Kubernetes runtime resources in that cluster may be lost; DevDeploy records and GitOps manifests remain."
         )
         $steps = switch ($integrityStatus) {
-            { $_ -in @("api_port_unpublished", "api_port_mismatch", "kubeconfig_unreachable") } {
+            { $_ -in @("api_port_unpublished", "api_port_mismatch", "kubeconfig_unreachable", "workload_cluster_recreation_required") } {
                 [string[]]@(
                     "Run wsl --shutdown.",
                     "Fully quit and restart Docker Desktop.",
                     "Rerun launcher preflight.",
-                    "If the issue remains, recreate only devdeploy-workload through its explicit launcher mode.",
+                    "If the issue remains, review -PlanWorkloadPortRecovery and recreate only devdeploy-workload after explicit confirmation.",
                     "Rebootstrap workload cluster access from management and Argo CD.",
                     "Use Recover or Redeploy for managed deployments if runtime resources were lost."
                 )
@@ -5519,7 +6401,7 @@ function New-ClusterRecoveryPlan {
         required                     = $true
         affected_cluster             = $clusterName
         severity                     = "blocking_platform"
-        summary                      = "Management cluster health is degraded or unknown. Platform services may be unavailable."
+        summary                      = if ($integrityStatus -eq "management_cluster_recreation_required") { "Management cluster host port recovery may require future explicit recreation after backup verification." } else { "Management cluster health is degraded or unknown. Platform services may be unavailable." }
         impact                       = [string[]]@(
             "DevDeploy backend, frontend, PostgreSQL, and Argo CD may be unavailable.",
             "Recreating the management cluster may remove local platform data, including the platform database."
@@ -5569,6 +6451,8 @@ function New-WorkloadRebootstrapPlan {
         diagnosis                       = $diagnosis
         diagnosis_reason                = $workloadIntegrity
         workload_status                 = $workloadStatus
+        selected_workload_https_port    = [int]$PortPlan["workload_https"]
+        workload_https_selection_reason = [string]$PortSelection["workload_https"]["selection_reason"]
         management_status               = $managementStatus
         management_healthy              = $managementHealthy
         management_warning              = $managementWarning
@@ -5587,18 +6471,91 @@ function New-WorkloadRebootstrapPlan {
         )
         planned_rebootstrap_steps        = [string[]]@(
             "USER CONFIRMATION REQUIRED: kind delete cluster --name devdeploy-workload",
+            "Run .\scripts\launcher\devdeploy-launcher.ps1 -GenerateKindConfigs to write a workload kind config with the selected safe HTTPS port.",
             "Run .\scripts\launcher\devdeploy-launcher.ps1 -CreateWorkloadCluster.",
+            "Run .\scripts\launcher\devdeploy-launcher.ps1 -GrantWorkloadDeployPermissions to recreate devdeploy-apps and namespace-scoped deploy access.",
             "Run .\scripts\launcher\devdeploy-launcher.ps1 -DiscoverWorkloadClusterEndpoint.",
             "Run .\scripts\launcher\devdeploy-launcher.ps1 -RegisterWorkloadClusterWithArgoCD.",
-            "Run .\scripts\launcher\devdeploy-launcher.ps1 -GrantWorkloadDeployPermissions to restore devdeploy-apps and namespace-scoped deploy access."
+            "Run .\scripts\launcher\devdeploy-launcher.ps1 -BootstrapGitOpsRootApplication.",
+            "Run .\scripts\launcher\devdeploy-launcher.ps1 -BootstrapWorkloadObservability to restore workload telemetry transport and regenerate the host-local narrow observability kubeconfig."
         )
         post_rebootstrap_validation      = [string[]]@(
             "Verify docker port devdeploy-workload-control-plane 6443/tcp reports 127.0.0.1:58081.",
+            ("Verify docker port devdeploy-workload-control-plane 443/tcp reports 127.0.0.1:{0}." -f [int]$PortPlan["workload_https"]),
             "Verify kubectl --context kind-devdeploy-workload get nodes reports a Ready node.",
             "Run .\scripts\launcher\devdeploy-launcher.ps1 -VerifyWorkloadClusterRegistration.",
             "Run .\scripts\launcher\devdeploy-launcher.ps1 -VerifyWorkloadDeployPermissions.",
             "Run .\scripts\launcher\devdeploy-launcher.ps1 -VerifyGitOpsRootApplication.",
+            "Run .\scripts\launcher\devdeploy-launcher.ps1 -VerifyWorkloadObservability.",
             "Wait for Argo CD workloads to converge, then use Recover, Redeploy, or Reconcile where runtime resources remain missing."
+        )
+        checked_at                       = [string](Get-Timestamp)
+    }
+}
+
+function New-ManagementPortRecoveryPlan {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ManagementCluster
+    )
+
+    $managementStatus = [string]$ManagementCluster["status"]
+    $managementIntegrity = [string]$ManagementCluster["integrity_status"]
+    $recreationRequired = [bool]($ManagementCluster["recreation_required"] -eq $true -or $ManagementCluster["management_cluster_recreation_required"] -eq $true)
+    $diagnosis = "Management cluster status is $managementStatus with integrity status $managementIntegrity."
+    if ($recreationRequired) {
+        $diagnosis = "devdeploy-mgmt may be internally Ready, but host access is unhealthy. Management recreation is required after the verified PostgreSQL backup prerequisite is confirmed."
+    }
+    elseif ($managementStatus -eq "ready" -and $managementIntegrity -eq "ok") {
+        $diagnosis = "devdeploy-mgmt is currently ready. This plan is available for review but management recreation is not indicated by current diagnostics."
+    }
+
+    return [ordered]@{
+        available                       = $true
+        mode                            = "plan_only"
+        affected_cluster                = "devdeploy-mgmt"
+        management_preserved            = $true
+        workload_cluster_preserved      = $true
+        destructive_commands_executed   = $false
+        docker_update_executed          = $false
+        kubernetes_mutation_executed    = $false
+        gitops_mutation_executed        = $false
+        automatic_recreation_available  = $false
+        requires_user_confirmation      = $true
+        backup_verification_required    = $true
+        selected_management_https_port  = [int]$PortPlan["management_https"]
+        management_https_selection_reason = [string]$PortSelection["management_https"]["selection_reason"]
+        diagnosis                       = $diagnosis
+        diagnosis_reason                = $managementIntegrity
+        management_status               = $managementStatus
+        internal_cluster_ready          = $ManagementCluster["internal_cluster_ready"]
+        host_access_healthy             = [bool]($ManagementCluster["host_access_healthy"] -eq $true)
+        recreation_required             = $recreationRequired
+        recreation_reason               = [string]$ManagementCluster["recreation_reason"]
+        impact                          = [string[]]@(
+            "devdeploy-mgmt hosts PostgreSQL, backend, frontend, and Argo CD.",
+            "Future management recreation can remove local platform data unless a verified backup is restored.",
+            "A verified PostgreSQL backup must be confirmed before any destructive management recovery is attempted.",
+            "This plan does not delete, recreate, start, stop, or update Docker containers."
+        )
+        non_destructive_steps            = [string[]]@(
+            "Review launcher-status.json for management_cluster_recreation_required and selected_management_https_port.",
+            "Verify the existing PostgreSQL backup outside the cluster.",
+            "Rerun .\scripts\launcher\devdeploy-launcher.ps1 -GenerateKindConfigs to preview config with the selected management HTTPS port.",
+            "Do not recreate devdeploy-mgmt until the backup is verified and explicit user confirmation is given in a future recovery phase."
+        )
+        planned_future_recovery_steps    = [string[]]@(
+            "FUTURE USER CONFIRMATION REQUIRED: delete only devdeploy-mgmt after backup verification.",
+            "Recreate devdeploy-mgmt from generated kind config using the selected safe management HTTPS port.",
+            "Restore PostgreSQL data from the verified backup.",
+            "Reinstall platform components and reconnect Argo CD to devdeploy-workload.",
+            "Verify backend, frontend, PostgreSQL, Argo CD, Root Application, and workload observability."
+        )
+        post_recovery_validation          = [string[]]@(
+            ("Verify docker port devdeploy-mgmt-control-plane 443/tcp reports 127.0.0.1:{0}." -f [int]$PortPlan["management_https"]),
+            "Verify kubectl --context kind-devdeploy-mgmt get nodes reports a Ready node.",
+            "Verify PostgreSQL restore before allowing product operations.",
+            "Run read-only platform verification modes after the future recovery is complete."
         )
         checked_at                       = [string](Get-Timestamp)
     }
@@ -5635,6 +6592,35 @@ function Write-WorkloadRebootstrapPlanConsole {
     Write-Host "Runtime impact: a user-confirmed workload cluster recreation may remove runtime resources in devdeploy-workload."
 }
 
+function Write-ManagementPortRecoveryPlanConsole {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Plan
+    )
+
+    Write-Host "PLAN ONLY - no commands were executed."
+    Write-Host ("Diagnosis: {0}" -f [string]$Plan["diagnosis"])
+    Write-Host ("Selected management HTTPS port: {0}" -f [string]$Plan["selected_management_https_port"])
+    Write-Host "Backup requirement: verify the PostgreSQL backup before any future management recreation."
+
+    foreach ($section in @(
+            @{ label = "Impact"; field = "impact" },
+            @{ label = "Non-destructive first steps"; field = "non_destructive_steps" },
+            @{ label = "Future recovery outline"; field = "planned_future_recovery_steps" },
+            @{ label = "Post-recovery validation"; field = "post_recovery_validation" }
+        )) {
+        Write-Host ("{0}:" -f [string]$section.label)
+        $fieldName = [string]$section.field
+        $stepNumber = 1
+        foreach ($item in @($Plan[$fieldName])) {
+            Write-Host ("  {0}. {1}" -f $stepNumber, [string]$item)
+            $stepNumber++
+        }
+    }
+
+    Write-Host "No automatic management delete or recreate action exists in this phase."
+}
+
 function Get-KindClusterIntegrity {
     param(
         [Parameter(Mandatory = $true)]
@@ -5665,6 +6651,14 @@ function Get-KindClusterIntegrity {
         api_port_published      = $null
         expected_api_port       = $ExpectedApiPort
         actual_api_port         = $null
+        restart_policy_name     = ""
+        restart_policy_maximum_retry_count = $null
+        restart_policy_healthy  = $null
+        restart_policy_reconciliation_needed = $null
+        expected_https_port     = [int]$PortPlan["management_https"]
+        actual_https_port       = $null
+        management_cluster_recreation_required = $false
+        management_cluster_recreation_reason   = ""
         kubeconfig_reachable    = $null
         integrity_status        = "unknown"
         message                 = "kind cluster integrity could not be determined safely."
@@ -5732,6 +6726,13 @@ function Get-KindClusterIntegrity {
         return $result
     }
 
+    $restartPolicy = Get-DockerContainerRestartPolicy -ClusterName $ClusterName -ControlPlaneContainer $ControlPlaneContainer -DockerAvailable $dockerAvailable -DockerDaemonReachable $dockerDaemonReachable
+    $result["restart_policy_name"] = [string]$restartPolicy["policy_name"]
+    $result["restart_policy_maximum_retry_count"] = $restartPolicy["maximum_retry_count"]
+    $result["restart_policy_healthy"] = if ([bool]$restartPolicy["known"]) { [bool]$restartPolicy["healthy"] } else { $null }
+    $result["restart_policy_reconciliation_needed"] = $restartPolicy["reconciliation_needed"]
+    Add-KindRestartPolicyCheck -ClusterName $ClusterName -ControlPlaneContainer $ControlPlaneContainer -RestartPolicy $restartPolicy
+
     $runningResult = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @("inspect", "--format={{.State.Running}}", $ControlPlaneContainer) -TimeoutSeconds 10
     $containerRunning = [bool]($runningResult.exit_code -eq 0 -and -not $runningResult.timed_out -and (([string]$runningResult.stdout).Trim().ToLowerInvariant() -eq "true"))
     $result["container_running"] = $containerRunning
@@ -5747,6 +6748,8 @@ function Get-KindClusterIntegrity {
             control_plane_container = $ControlPlaneContainer
             container_running       = $false
             expected_api_port       = $ExpectedApiPort
+            restart_policy_name     = [string]$result["restart_policy_name"]
+            restart_policy_reconciliation_needed = $result["restart_policy_reconciliation_needed"]
         }
         return $result
     }
@@ -5917,6 +6920,194 @@ function Set-KindIntegrityFields {
     foreach ($field in @("control_plane_container", "container_running", "api_port_published", "expected_api_port", "actual_api_port", "kubeconfig_reachable", "integrity_status", "recommended_action")) {
         $ClusterStatus[$field] = $Integrity[$field]
     }
+    foreach ($field in @("restart_policy_name", "restart_policy_maximum_retry_count", "restart_policy_healthy", "restart_policy_reconciliation_needed")) {
+        $ClusterStatus[$field] = $Integrity[$field]
+    }
+}
+
+function Get-ClusterHttpsPortRecreationRequirement {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ClusterName,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ControlPlaneContainer,
+
+        [Parameter(Mandatory = $true)]
+        [string]$PortKey,
+
+        [Parameter(Mandatory = $true)]
+        [string]$RecreationReason,
+
+        [Parameter(Mandatory = $true)]
+        [object]$Integrity,
+
+        [bool]$DockerAvailable,
+
+        [bool]$DockerDaemonReachable
+    )
+
+    $requiredHostPorts = if ($ClusterName -eq "devdeploy-mgmt") {
+        [ordered]@{ "6443" = [int]$PortPlan["management_api"]; "80" = [int]$PortPlan["management_http"]; "443" = $null }
+    }
+    else {
+        [ordered]@{ "6443" = [int]$PortPlan["workload_api"]; "80" = [int]$PortPlan["workload_http"]; "443" = $null }
+    }
+    $bindingStates = New-Object System.Collections.Generic.List[object]
+    foreach ($containerPort in @(6443, 80, 443)) {
+        $bindingState = Get-DockerContainerPortBindingState -ContainerName $ControlPlaneContainer -ContainerPort $containerPort -DockerAvailable $DockerAvailable -DockerDaemonReachable $DockerDaemonReachable
+        if ($containerPort -eq 443 -and $null -ne $bindingState["configured_host_port"]) {
+            $requiredHostPorts["443"] = [int]$bindingState["configured_host_port"]
+        }
+        $expectedHostPort = $requiredHostPorts[[string]$containerPort]
+        $configuredMatches = [bool]($bindingState["configured"] -and $null -ne $expectedHostPort -and [int]$bindingState["configured_host_port"] -eq [int]$expectedHostPort)
+        $publicationHealthy = [bool]($bindingState["publication_consistent"] -and $configuredMatches)
+        $bindingStates.Add([ordered]@{
+                container_port       = $containerPort
+                expected_host_port   = $expectedHostPort
+                configured_host_port = $bindingState["configured_host_port"]
+                published_host_port  = $bindingState["published_host_port"]
+                docker_port_host_port = $bindingState["docker_port_host_port"]
+                docker_port_owner    = if ($null -ne $bindingState["docker_port_host_port"]) { [string]$ControlPlaneContainer } else { "" }
+                configured           = [bool]$bindingState["configured"]
+                published            = [bool]$bindingState["published"]
+                publication_consistent = [bool]$bindingState["publication_consistent"]
+                healthy              = $publicationHealthy
+            }) | Out-Null
+    }
+
+    $httpsBinding = @($bindingStates | Where-Object { [int]$_['container_port'] -eq 443 } | Select-Object -First 1)
+    $apiBinding = @($bindingStates | Where-Object { [int]$_['container_port'] -eq 6443 } | Select-Object -First 1)
+    $httpBinding = @($bindingStates | Where-Object { [int]$_['container_port'] -eq 80 } | Select-Object -First 1)
+    $actualHttpsPort = if ($httpsBinding.Count -gt 0) { $httpsBinding[0]["configured_host_port"] } else { $null }
+    $excludedRanges = @()
+    if ($PortSelection.Contains($PortKey)) {
+        $excludedRanges = @($PortSelection[$PortKey]["windows_excluded_ranges_detected"])
+    }
+    $safety = $null
+    if ($null -ne $actualHttpsPort) {
+        $safety = Test-HostPortSafety -Port ([int]$actualHttpsPort) -ExcludedRanges $excludedRanges
+    }
+
+    $missingHostPublications = @($bindingStates | Where-Object { -not [bool]$_['published'] })
+    $mismatchedHostPublications = @($bindingStates | Where-Object {
+            ([bool]$_['configured'] -or [bool]$_['published'] -or $null -ne $_['docker_port_host_port']) -and
+            -not [bool]$_['healthy']
+        })
+    $httpsPublished = [bool]($httpsBinding.Count -gt 0 -and [bool]$httpsBinding[0]["healthy"])
+    $bindingUnsafe = [bool](
+        $null -ne $safety -and (
+            [bool]$safety["excluded_by_windows"] -or
+            (-not $httpsPublished -and -not [bool]$safety["bind_available"])
+        )
+    )
+    $publicationMismatch = [bool]($mismatchedHostPublications.Count -gt 0)
+    $recreationRequired = [bool]($bindingUnsafe -or $publicationMismatch -or $missingHostPublications.Count -gt 0)
+    $diagnosisReason = if ($bindingUnsafe) { "unusable_immutable_host_binding" } elseif ($publicationMismatch) { "host_publication_mismatch" } elseif ($missingHostPublications.Count -gt 0) { "missing_host_publication" } else { "" }
+    $workloadRecreationRequired = [bool]($recreationRequired -and $ClusterName -eq "devdeploy-workload")
+    $managementRecreationRequired = [bool]($recreationRequired -and $ClusterName -eq "devdeploy-mgmt")
+
+    return [ordered]@{
+        selected_https_port                    = [int]$PortPlan[$PortKey]
+        configured_https_port                  = $actualHttpsPort
+        host_config_https_port                 = if ($httpsBinding.Count -gt 0) { $httpsBinding[0]["configured_host_port"] } else { $null }
+        network_settings_https_port            = if ($httpsBinding.Count -gt 0) { $httpsBinding[0]["published_host_port"] } else { $null }
+        docker_port_https_port                 = if ($httpsBinding.Count -gt 0) { $httpsBinding[0]["docker_port_host_port"] } else { $null }
+        docker_port_owner                      = if ($httpsBinding.Count -gt 0) { [string]$httpsBinding[0]["docker_port_owner"] } else { "" }
+        api_publication                        = [bool]($apiBinding.Count -gt 0 -and [bool]$apiBinding[0]["healthy"])
+        http_publication                       = [bool]($httpBinding.Count -gt 0 -and [bool]$httpBinding[0]["healthy"])
+        https_publication                      = $httpsPublished
+        actual_https_port                      = $actualHttpsPort
+        published_https_port                   = if ($httpsBinding.Count -gt 0) { $httpsBinding[0]["published_host_port"] } else { $null }
+        expected_https_port                    = [int]$PortPlan[$PortKey]
+        https_port_safe_for_new_cluster        = if ($null -eq $safety) { $null } else { [bool]$safety["safe"] }
+        https_port_excluded_by_windows         = if ($null -eq $safety) { $null } else { [bool]$safety["excluded_by_windows"] }
+        https_port_docker_published            = $httpsPublished
+        https_port_bind_available              = if ($null -eq $safety) { $null } else { [bool]$safety["bind_available"] }
+        required_host_publications             = @($bindingStates | ForEach-Object { $_ })
+        missing_host_publication                = [bool]($missingHostPublications.Count -gt 0)
+        host_publication_mismatch               = $publicationMismatch
+        host_access_healthy                     = [bool](-not $recreationRequired -and [string]$Integrity["integrity_status"] -eq "ok")
+        recreation_required                     = $recreationRequired
+        recreation_reason                       = $diagnosisReason
+        workload_cluster_recreation_required   = $workloadRecreationRequired
+        workload_cluster_recreation_reason     = if ($workloadRecreationRequired) { $diagnosisReason } else { "" }
+        management_cluster_recreation_required = $managementRecreationRequired
+        management_cluster_recreation_reason   = if ($managementRecreationRequired) { $diagnosisReason } else { "" }
+    }
+}
+
+function Get-KindContainerInternalReadiness {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("devdeploy-mgmt-control-plane", "devdeploy-workload-control-plane")]
+        [string]$ControlPlaneContainer,
+
+        [bool]$DockerAvailable,
+
+        [bool]$DockerDaemonReachable,
+
+        [bool]$ContainerRunning
+    )
+
+    $result = [ordered]@{
+        internal_cluster_ready = $null
+        ready_nodes            = 0
+        total_nodes            = 0
+        message                = "Internal Kubernetes readiness could not be determined safely."
+    }
+    if (-not $DockerAvailable -or -not $ContainerRunning) {
+        return $result
+    }
+
+    $nodesResult = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @("exec", $ControlPlaneContainer, "kubectl", "get", "nodes", "--no-headers") -TimeoutSeconds 20 -PreserveStandardOutput $true
+    if ($nodesResult.exit_code -ne 0 -or $nodesResult.timed_out -or [string]::IsNullOrWhiteSpace($nodesResult.stdout)) {
+        $result["internal_cluster_ready"] = $false
+        $result["message"] = "The internal Kubernetes node readiness check did not succeed."
+        return $result
+    }
+
+    $nodes = @(([string]$nodesResult.stdout) -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $readyNodes = @($nodes | Where-Object {
+            $columns = @($_ -split "\s+" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            $columns.Count -ge 2 -and $columns[1] -eq "Ready"
+        })
+    $result["ready_nodes"] = [int]$readyNodes.Count
+    $result["total_nodes"] = [int]$nodes.Count
+    $result["internal_cluster_ready"] = [bool]($nodes.Count -gt 0 -and $readyNodes.Count -gt 0)
+    $result["message"] = if ([bool]$result["internal_cluster_ready"]) {
+        "Kubernetes is internally Ready inside the kind control-plane container."
+    }
+    else {
+        "The kind control-plane container is running, but no internal Kubernetes node is Ready."
+    }
+    return $result
+}
+
+function Get-WorkloadClusterRecreationRequirement {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Integrity,
+
+        [bool]$DockerAvailable,
+
+        [bool]$DockerDaemonReachable
+    )
+
+    return Get-ClusterHttpsPortRecreationRequirement -ClusterName "devdeploy-workload" -ControlPlaneContainer "devdeploy-workload-control-plane" -PortKey "workload_https" -RecreationReason "workload_cluster_recreation_required" -Integrity $Integrity -DockerAvailable $DockerAvailable -DockerDaemonReachable $DockerDaemonReachable
+}
+
+function Get-ManagementClusterRecreationRequirement {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Integrity,
+
+        [bool]$DockerAvailable,
+
+        [bool]$DockerDaemonReachable
+    )
+
+    return Get-ClusterHttpsPortRecreationRequirement -ClusterName "devdeploy-mgmt" -ControlPlaneContainer "devdeploy-mgmt-control-plane" -PortKey "management_https" -RecreationReason "management_cluster_recreation_required" -Integrity $Integrity -DockerAvailable $DockerAvailable -DockerDaemonReachable $DockerDaemonReachable
 }
 
 function Write-KindIntegrityConsole {
@@ -5960,7 +7151,7 @@ function Write-ClusterRecoveryPlanConsole {
     Write-Host "           Guidance only: no automatic recovery or destructive action was performed."
 }
 
-function New-ManagementClusterStatus {
+function New-ManagementClusterStatusSnapshot {
     param(
         [bool]$KindAvailable,
 
@@ -5974,6 +7165,19 @@ function New-ManagementClusterStatus {
         exists                  = $false
         api_reachable           = $null
         node_ready              = $null
+        internal_cluster_ready  = $null
+        host_access_healthy     = $false
+        recreation_required     = $false
+        recreation_reason       = ""
+        selected_https_port     = [int]$PortPlan["management_https"]
+        configured_https_port   = $null
+        host_config_https_port  = $null
+        network_settings_https_port = $null
+        docker_port_https_port  = $null
+        docker_port_owner       = ""
+        api_publication         = $false
+        http_publication        = $false
+        https_publication       = $false
         ready_nodes             = 0
         total_nodes             = 0
         control_plane_container = "devdeploy-mgmt-control-plane"
@@ -5981,6 +7185,10 @@ function New-ManagementClusterStatus {
         api_port_published      = $null
         expected_api_port       = 58080
         actual_api_port         = $null
+        restart_policy_name     = ""
+        restart_policy_maximum_retry_count = $null
+        restart_policy_healthy  = $null
+        restart_policy_reconciliation_needed = $null
         kubeconfig_reachable    = $null
         integrity_status        = "unknown"
         recommended_action      = "Review the sanitized launcher log and rerun preflight."
@@ -6014,6 +7222,15 @@ function New-ManagementClusterStatus {
     $exists = @($clusterResult.clusters) -contains "devdeploy-mgmt"
     $integrity = Get-KindClusterIntegrity -ClusterName "devdeploy-mgmt" -Context "kind-devdeploy-mgmt" -ControlPlaneContainer "devdeploy-mgmt-control-plane" -ExpectedApiPort 58080 -ClusterExists $exists -KubectlAvailable $KubectlAvailable -Required (Test-ManagementClusterIntegrityRequired)
     Set-KindIntegrityFields -ClusterStatus $base -Integrity $integrity
+    $internalReadiness = Get-KindContainerInternalReadiness -ControlPlaneContainer "devdeploy-mgmt-control-plane" -DockerAvailable $dockerAvailable -DockerDaemonReachable $dockerDaemonReachable -ContainerRunning ([bool]($integrity["container_running"] -eq $true))
+    $base["internal_cluster_ready"] = $internalReadiness["internal_cluster_ready"]
+    $base["ready_nodes"] = [int]$internalReadiness["ready_nodes"]
+    $base["total_nodes"] = [int]$internalReadiness["total_nodes"]
+    $base["node_ready"] = $internalReadiness["internal_cluster_ready"]
+    $recreationRequirement = Get-ManagementClusterRecreationRequirement -Integrity $integrity -DockerAvailable $dockerAvailable -DockerDaemonReachable $dockerDaemonReachable
+    foreach ($field in @("selected_https_port", "configured_https_port", "host_config_https_port", "network_settings_https_port", "docker_port_https_port", "docker_port_owner", "api_publication", "http_publication", "https_publication", "expected_https_port", "actual_https_port", "published_https_port", "required_host_publications", "missing_host_publication", "host_publication_mismatch", "host_access_healthy", "recreation_required", "recreation_reason", "management_cluster_recreation_required", "management_cluster_recreation_reason")) {
+        $base[$field] = $recreationRequirement[$field]
+    }
     if (-not $exists) {
         $base["status"] = "missing"
         $base["message"] = "Management cluster devdeploy-mgmt does not exist yet."
@@ -6027,9 +7244,47 @@ function New-ManagementClusterStatus {
 
     $base["exists"] = $true
 
+    if ([bool]$recreationRequirement["management_cluster_recreation_required"]) {
+        $base["api_reachable"] = $false
+        $base["status"] = "degraded"
+        $base["integrity_status"] = "management_cluster_recreation_required"
+        $base["message"] = switch ([string]$recreationRequirement["recreation_reason"]) {
+            "unusable_immutable_host_binding" {
+                "devdeploy-mgmt may be internally Ready, but its immutable HTTPS host binding is unusable and host access is unhealthy. Management cluster recreation is required after backup verification."
+                break
+            }
+            "host_publication_mismatch" {
+                "devdeploy-mgmt may be internally Ready, but its configured and published Docker host ports do not agree. Management cluster recreation is required after backup verification."
+                break
+            }
+            default {
+                "devdeploy-mgmt may be internally Ready, but one or more required host ports are not published. Management cluster recreation is required after backup verification."
+            }
+        }
+        $base["recommended_action"] = "Review -PlanManagementPortRecovery. Verify the PostgreSQL backup before any future management recreation; no automatic management delete or recreate action exists in this phase."
+        $integrityCheckRequired = [bool](Test-ManagementClusterIntegrityRequired)
+        $integrityCheckStatus = if ($integrityCheckRequired) { "failed" } else { "warning" }
+        $integrityCheckDetails = New-ManagementIntegrityCheckDetails -Required $integrityCheckRequired -IntegrityStatus "management_cluster_recreation_required" -InternalClusterReady $base["internal_cluster_ready"] -HostAccessHealthy $false -RecreationRequired $true -RecreationReason ([string]$recreationRequirement["recreation_reason"]) -RequiredHostPublications $recreationRequirement["required_host_publications"]
+        Set-CheckResult -Id "kind_integrity_devdeploy-mgmt" -Status $integrityCheckStatus -Message ([string]$base["message"]) -Details $integrityCheckDetails | Out-Null
+
+        $recreationCheckDetails = New-ManagementIntegrityCheckDetails -Required $integrityCheckRequired -IntegrityStatus "management_cluster_recreation_required" -InternalClusterReady $base["internal_cluster_ready"] -HostAccessHealthy $false -RecreationRequired $true -RecreationReason ([string]$recreationRequirement["recreation_reason"]) -RequiredHostPublications $recreationRequirement["required_host_publications"]
+        $recreationCheckDetails["control_plane_container"] = [string]"devdeploy-mgmt-control-plane"
+        $recreationCheckDetails["expected_https_port"] = [int]$recreationRequirement["expected_https_port"]
+        $recreationCheckDetails["actual_https_port"] = if ($null -eq $recreationRequirement["actual_https_port"]) { $null } else { [int]$recreationRequirement["actual_https_port"] }
+        $recreationCheckDetails["excluded_by_windows"] = if ($null -eq $recreationRequirement["https_port_excluded_by_windows"]) { $null } else { [bool]$recreationRequirement["https_port_excluded_by_windows"] }
+        $recreationCheckDetails["bind_available"] = if ($null -eq $recreationRequirement["https_port_bind_available"]) { $null } else { [bool]$recreationRequirement["https_port_bind_available"] }
+        $recreationCheckDetails["backup_verification_required"] = $true
+        Add-Check -Id "management_cluster_recreation_required" -Label "Management cluster port recovery required" -Status $integrityCheckStatus -Message ([string]$base["message"]) -Details $recreationCheckDetails
+        return $base
+    }
+
+    if ([string]$base["integrity_status"] -eq "ok") {
+        $healthyIntegrityDetails = New-ManagementIntegrityCheckDetails -Required (Test-ManagementClusterIntegrityRequired) -IntegrityStatus "ok" -InternalClusterReady $base["internal_cluster_ready"] -HostAccessHealthy ([bool]$base["host_access_healthy"]) -RecreationRequired $false -RecreationReason "" -RequiredHostPublications $recreationRequirement["required_host_publications"]
+        Set-CheckResult -Id "kind_integrity_devdeploy-mgmt" -Status "ok" -Message ([string]$integrity["message"]) -Details $healthyIntegrityDetails | Out-Null
+    }
+
     if ([string]$base["integrity_status"] -ne "ok") {
         $base["api_reachable"] = if ($base["kubeconfig_reachable"] -eq $true) { $true } else { $false }
-        $base["node_ready"] = $null
         $base["status"] = "degraded"
         $base["message"] = [string]$integrity["message"]
         Add-Check -Id "management_cluster_status" -Label "Management cluster status" -Status "warning" -Message ([string]$base["message"]) -Details @{
@@ -6082,6 +7337,7 @@ function New-ManagementClusterStatus {
             })
 
         $base["api_reachable"] = $true
+        $base["host_access_healthy"] = $true
         $base["ready_nodes"] = [int]$readyNodes.Count
         $base["total_nodes"] = [int]$nodes.Count
         $base["node_ready"] = [bool]($readyNodes.Count -gt 0)
@@ -6128,6 +7384,23 @@ function New-ManagementClusterStatus {
     }
 }
 
+function New-ManagementClusterStatus {
+    param(
+        [bool]$KindAvailable,
+
+        [bool]$KubectlAvailable
+    )
+
+    if ($null -eq $script:ManagementClusterStatusCache) {
+        $script:ManagementClusterStatusCache = New-ManagementClusterStatusSnapshot -KindAvailable $KindAvailable -KubectlAvailable $KubectlAvailable
+    }
+    return $script:ManagementClusterStatusCache
+}
+
+function Reset-CanonicalManagementClusterStatus {
+    $script:ManagementClusterStatusCache = $null
+}
+
 function New-WorkloadClusterStatus {
     param(
         [bool]$KindAvailable,
@@ -6149,6 +7422,14 @@ function New-WorkloadClusterStatus {
         api_port_published      = $null
         expected_api_port       = 58081
         actual_api_port         = $null
+        restart_policy_name     = ""
+        restart_policy_maximum_retry_count = $null
+        restart_policy_healthy  = $null
+        restart_policy_reconciliation_needed = $null
+        expected_https_port     = [int]$PortPlan["workload_https"]
+        actual_https_port       = $null
+        workload_cluster_recreation_required = $false
+        workload_cluster_recreation_reason   = ""
         kubeconfig_reachable    = $null
         integrity_status        = "unknown"
         recommended_action      = "Review the sanitized launcher log and rerun preflight."
@@ -6182,6 +7463,10 @@ function New-WorkloadClusterStatus {
     $exists = @($clusterResult.clusters) -contains "devdeploy-workload"
     $integrity = Get-KindClusterIntegrity -ClusterName "devdeploy-workload" -Context "kind-devdeploy-workload" -ControlPlaneContainer "devdeploy-workload-control-plane" -ExpectedApiPort 58081 -ClusterExists $exists -KubectlAvailable $KubectlAvailable -Required (Test-WorkloadClusterIntegrityRequired)
     Set-KindIntegrityFields -ClusterStatus $base -Integrity $integrity
+    $recreationRequirement = Get-WorkloadClusterRecreationRequirement -Integrity $integrity -DockerAvailable $dockerAvailable -DockerDaemonReachable $dockerDaemonReachable
+    foreach ($field in @("expected_https_port", "actual_https_port", "workload_cluster_recreation_required", "workload_cluster_recreation_reason")) {
+        $base[$field] = $recreationRequirement[$field]
+    }
     if (-not $exists) {
         $base["status"] = "missing"
         $base["message"] = "Workload cluster devdeploy-workload does not exist yet."
@@ -6194,6 +7479,27 @@ function New-WorkloadClusterStatus {
     }
 
     $base["exists"] = $true
+
+    if ([bool]$recreationRequirement["workload_cluster_recreation_required"]) {
+        $base["api_reachable"] = $false
+        $base["node_ready"] = $null
+        $base["status"] = "degraded"
+        $base["integrity_status"] = "workload_cluster_recreation_required"
+        $base["message"] = "devdeploy-workload is stopped and its immutable HTTPS host port binding is no longer usable on this Windows host."
+        $base["recommended_action"] = "Review -PlanWorkloadPortRecovery. Recreate only devdeploy-workload after explicit user confirmation; never recreate devdeploy-mgmt for this workload-only port issue."
+        Add-Check -Id "workload_cluster_recreation_required" -Label "Workload cluster port recovery required" -Status $(if (Test-WorkloadClusterIntegrityRequired) { "failed" } else { "warning" }) -Message ([string]$base["message"]) -Details @{
+            required                    = (Test-WorkloadClusterIntegrityRequired)
+            cluster_name                = "devdeploy-workload"
+            integrity_status            = "workload_cluster_recreation_required"
+            control_plane_container     = "devdeploy-workload-control-plane"
+            expected_https_port         = [int]$recreationRequirement["expected_https_port"]
+            actual_https_port           = $recreationRequirement["actual_https_port"]
+            excluded_by_windows         = $recreationRequirement["https_port_excluded_by_windows"]
+            bind_available              = $recreationRequirement["https_port_bind_available"]
+            management_cluster_targeted = $false
+        }
+        return $base
+    }
 
     if ([string]$base["integrity_status"] -ne "ok") {
         $base["api_reachable"] = if ($base["kubeconfig_reachable"] -eq $true) { $true } else { $false }
@@ -6628,8 +7934,8 @@ function Get-ManagementArgoCDRuntimeStatus {
 
     $namespaceResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "get", "namespace", $ArgoCDNamespace, "--output", "name") -TimeoutSeconds 20
     if ($namespaceResult.exit_code -ne 0 -or $namespaceResult.timed_out) {
-        $status["status"] = "not_started"
-        $status["message"] = "Management Argo CD namespace is not present."
+        $status["status"] = "absent"
+        $status["message"] = "Management Argo CD namespace is absent."
         return $status
     }
 
@@ -8378,6 +9684,13 @@ function New-GitOpsRepositoryStatus {
         repo_path                 = [string]$RepoPath
         repo_url_sanitized        = [string]$RepoUrlSanitized
         source_path               = $GitOpsSourcePath
+        repository_mode           = "unknown"
+        source_present            = $false
+        kustomization_valid       = $false
+        app_directory_count       = 0
+        resource_count            = 0
+        empty_resources           = $false
+        managed_tree_valid        = $false
         path_initialized          = $false
         kustomization_present     = $false
         apps_directory_present    = $false
@@ -8404,6 +9717,355 @@ function Test-GitOpsKustomizationContent {
     $hasKind = $Content -match '(?m)^\s*kind\s*:\s*Kustomization\s*(?:#.*)?$'
     $hasResources = $Content -match '(?m)^\s*resources\s*:'
     return [bool]($hasApiVersion -and $hasKind -and $hasResources)
+}
+
+function Get-GitOpsKustomizationResourceEntries {
+    param(
+        [AllowNull()]
+        [string]$Content
+    )
+
+    $result = [ordered]@{
+        valid           = $false
+        resources       = [string[]]@()
+        empty_resources = $false
+        error_category  = "malformed_kustomization"
+    }
+    if (-not (Test-GitOpsKustomizationContent -Content $Content)) {
+        return $result
+    }
+
+    $lines = @(([string]$Content) -split "\r?\n")
+    $resourceLineIndexes = New-Object System.Collections.Generic.List[int]
+    for ($index = 0; $index -lt $lines.Count; $index++) {
+        if ([string]$lines[$index] -match '^resources\s*:') {
+            $resourceLineIndexes.Add($index) | Out-Null
+        }
+    }
+    if ($resourceLineIndexes.Count -ne 1) {
+        $result["error_category"] = "resources_key_count"
+        return $result
+    }
+
+    $resourceLineIndex = [int]$resourceLineIndexes[0]
+    $resourceLine = [string]$lines[$resourceLineIndex]
+    $inlineValue = [string]([System.Text.RegularExpressions.Regex]::Match($resourceLine, '^resources\s*:\s*(.*?)\s*(?:#.*)?$').Groups[1].Value)
+    if (-not [string]::IsNullOrWhiteSpace($inlineValue)) {
+        if ($inlineValue -eq "[]") {
+            $result["valid"] = $true
+            $result["empty_resources"] = $true
+            $result["error_category"] = ""
+        }
+        else {
+            $result["error_category"] = "unsupported_inline_resources"
+        }
+        return $result
+    }
+
+    $resources = New-Object System.Collections.Generic.List[string]
+    for ($index = $resourceLineIndex + 1; $index -lt $lines.Count; $index++) {
+        $line = [string]$lines[$index]
+        if ([string]::IsNullOrWhiteSpace($line) -or $line -match '^\s*#') {
+            continue
+        }
+        if ($line -match '^\S') {
+            break
+        }
+        $itemMatch = [System.Text.RegularExpressions.Regex]::Match($line, '^\s+-\s+(.+?)\s*$')
+        if (-not $itemMatch.Success) {
+            $result["error_category"] = "malformed_resource_entry"
+            return $result
+        }
+        $resource = [string]$itemMatch.Groups[1].Value.Trim()
+        if (($resource.StartsWith('"') -and $resource.EndsWith('"')) -or ($resource.StartsWith("'") -and $resource.EndsWith("'"))) {
+            $resource = [string]$resource.Substring(1, $resource.Length - 2).Trim()
+        }
+        if ([string]::IsNullOrWhiteSpace($resource) -or $resource.Contains("#")) {
+            $result["error_category"] = "invalid_resource_entry"
+            return $result
+        }
+        $resources.Add($resource) | Out-Null
+    }
+
+    $result["valid"] = $true
+    $result["resources"] = [string[]]$resources.ToArray()
+    $result["empty_resources"] = [bool]($resources.Count -eq 0)
+    $result["error_category"] = ""
+    return $result
+}
+
+function Test-GitOpsManagedPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ResourcePath
+    )
+
+    $result = [ordered]@{
+        valid          = $false
+        full_path      = ""
+        error_category = "invalid_resource_path"
+    }
+    if ([string]::IsNullOrWhiteSpace($ResourcePath) -or $ResourcePath.Contains("%") -or [System.IO.Path]::IsPathRooted($ResourcePath) -or $ResourcePath -match '^[A-Za-z][A-Za-z0-9+.-]*:') {
+        $result["error_category"] = "absolute_or_encoded_resource_path"
+        return $result
+    }
+
+    $normalizedResource = [string]($ResourcePath -replace '\\', '/')
+    $segments = @($normalizedResource -split '/')
+    if ($segments.Count -eq 0 -or @($segments | Where-Object { [string]::IsNullOrWhiteSpace($_) -or $_ -in @(".", "..") }).Count -gt 0) {
+        $result["error_category"] = "resource_path_traversal"
+        return $result
+    }
+
+    try {
+        $resolvedSourceRoot = [string](Resolve-Path -LiteralPath $SourceRoot).Path
+        $candidatePath = [string][System.IO.Path]::GetFullPath((Join-Path $resolvedSourceRoot ($segments -join [System.IO.Path]::DirectorySeparatorChar)))
+        $sourcePrefix = [string]($resolvedSourceRoot.TrimEnd([char[]]"\/") + [System.IO.Path]::DirectorySeparatorChar)
+        if (-not $candidatePath.StartsWith($sourcePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $result["error_category"] = "resource_path_escape"
+            return $result
+        }
+
+        $currentPath = $resolvedSourceRoot
+        foreach ($segment in $segments) {
+            $currentPath = Join-Path $currentPath $segment
+            if (-not (Test-Path -LiteralPath $currentPath)) {
+                $result["error_category"] = "referenced_resource_missing"
+                return $result
+            }
+            $item = Get-Item -LiteralPath $currentPath -Force -ErrorAction Stop
+            if ([bool]($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+                $result["error_category"] = "resource_symlink_not_allowed"
+                return $result
+            }
+        }
+
+        $result["valid"] = $true
+        $result["full_path"] = $candidatePath
+        $result["error_category"] = ""
+        return $result
+    }
+    catch {
+        $result["error_category"] = "resource_path_resolution_failed"
+        return $result
+    }
+}
+
+function Test-GitOpsManagedKustomizationTree {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$KustomizationPath,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [System.Collections.Generic.HashSet[string]]$VisitedKustomizations
+    )
+
+    $result = [ordered]@{
+        valid                 = $false
+        resource_count        = 0
+        error_category        = "malformed_kustomization"
+        normalized_resources  = [string[]]@()
+    }
+    try {
+        $resolvedKustomization = [string](Resolve-Path -LiteralPath $KustomizationPath).Path
+        if (-not $VisitedKustomizations.Add($resolvedKustomization)) {
+            $result["error_category"] = "duplicate_or_cyclic_kustomization"
+            return $result
+        }
+        $content = [string](Get-Content -LiteralPath $resolvedKustomization -Raw -ErrorAction Stop)
+    }
+    catch {
+        $result["error_category"] = "kustomization_read_failed"
+        return $result
+    }
+
+    $parsed = Get-GitOpsKustomizationResourceEntries -Content $content
+    if (-not [bool]$parsed["valid"]) {
+        $result["error_category"] = [string]$parsed["error_category"]
+        return $result
+    }
+
+    $seenResources = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $normalizedResources = New-Object System.Collections.Generic.List[string]
+    $kustomizationDirectory = [string](Split-Path -Parent $resolvedKustomization)
+    foreach ($resource in @($parsed["resources"])) {
+        $normalizedResource = [string](([string]$resource -replace '\\', '/').Trim())
+        if (-not $seenResources.Add($normalizedResource)) {
+            $result["error_category"] = "duplicate_resource_entry"
+            return $result
+        }
+        $relativeFromSource = if ([string]::Equals($kustomizationDirectory.TrimEnd([char[]]"\/"), $SourceRoot.TrimEnd([char[]]"\/"), [System.StringComparison]::OrdinalIgnoreCase)) {
+            $normalizedResource
+        }
+        else {
+            $relativeDirectory = [string]$kustomizationDirectory.Substring($SourceRoot.TrimEnd([char[]]"\/").Length).TrimStart([char[]]"\/")
+            [string](Join-Path $relativeDirectory $normalizedResource)
+        }
+        $pathStatus = Test-GitOpsManagedPath -SourceRoot $SourceRoot -ResourcePath $relativeFromSource
+        if (-not [bool]$pathStatus["valid"]) {
+            $result["error_category"] = [string]$pathStatus["error_category"]
+            return $result
+        }
+
+        $fullPath = [string]$pathStatus["full_path"]
+        if (Test-Path -LiteralPath $fullPath -PathType Container) {
+            $childKustomization = Join-Path $fullPath "kustomization.yaml"
+            if (-not (Test-Path -LiteralPath $childKustomization -PathType Leaf)) {
+                $result["error_category"] = "referenced_kustomization_missing"
+                return $result
+            }
+            $childResult = Test-GitOpsManagedKustomizationTree -SourceRoot $SourceRoot -KustomizationPath $childKustomization -VisitedKustomizations $VisitedKustomizations
+            if (-not [bool]$childResult["valid"]) {
+                $result["error_category"] = [string]$childResult["error_category"]
+                return $result
+            }
+            $result["resource_count"] = [int]$result["resource_count"] + [int]$childResult["resource_count"]
+        }
+        elseif (Test-Path -LiteralPath $fullPath -PathType Leaf) {
+            $extension = [string][System.IO.Path]::GetExtension($fullPath)
+            if ($extension -notin @(".yaml", ".yml")) {
+                $result["error_category"] = "unsupported_resource_file"
+                return $result
+            }
+            try {
+                if ([string]::IsNullOrWhiteSpace([string](Get-Content -LiteralPath $fullPath -Raw -ErrorAction Stop))) {
+                    $result["error_category"] = "empty_resource_file"
+                    return $result
+                }
+            }
+            catch {
+                $result["error_category"] = "resource_file_read_failed"
+                return $result
+            }
+            $result["resource_count"] = [int]$result["resource_count"] + 1
+        }
+        else {
+            $result["error_category"] = "referenced_resource_missing"
+            return $result
+        }
+        $normalizedResources.Add($normalizedResource) | Out-Null
+    }
+
+    $result["valid"] = $true
+    $result["normalized_resources"] = [string[]]$normalizedResources.ToArray()
+    $result["error_category"] = ""
+    return $result
+}
+
+function Test-GitOpsManagedSourceTree {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceRoot,
+
+        [bool]$KubectlAvailable
+    )
+
+    $result = [ordered]@{
+        ready                       = $false
+        repository_mode             = "unknown"
+        source_present              = $false
+        apps_directory_present      = $false
+        kustomization_present       = $false
+        kustomization_valid         = $false
+        app_directory_count         = 0
+        resource_count              = 0
+        empty_resources             = $false
+        referenced_apps_valid       = $false
+        kustomize_render_succeeded  = $false
+        files_changed               = $false
+        error_category              = "source_missing"
+    }
+    if (-not (Test-Path -LiteralPath $SourceRoot -PathType Container)) {
+        return $result
+    }
+
+    try {
+        $resolvedSourceRoot = [string](Resolve-Path -LiteralPath $SourceRoot).Path
+        $sourceItem = Get-Item -LiteralPath $resolvedSourceRoot -Force -ErrorAction Stop
+        if ([bool]($sourceItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+            $result["error_category"] = "source_symlink_not_allowed"
+            return $result
+        }
+    }
+    catch {
+        $result["error_category"] = "source_resolution_failed"
+        return $result
+    }
+
+    $result["source_present"] = $true
+    $appsPath = Join-Path $resolvedSourceRoot "apps"
+    $kustomizationPath = Join-Path $resolvedSourceRoot "kustomization.yaml"
+    $result["apps_directory_present"] = [bool](Test-Path -LiteralPath $appsPath -PathType Container)
+    $result["kustomization_present"] = [bool](Test-Path -LiteralPath $kustomizationPath -PathType Leaf)
+    if (-not $result["apps_directory_present"] -or -not $result["kustomization_present"]) {
+        $result["error_category"] = "managed_source_structure_missing"
+        return $result
+    }
+
+    $appDirectories = @(Get-ChildItem -LiteralPath $appsPath -Directory -Force -ErrorAction SilentlyContinue | Sort-Object -Property Name)
+    $result["app_directory_count"] = [int]$appDirectories.Count
+    $visited = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $treeResult = Test-GitOpsManagedKustomizationTree -SourceRoot $resolvedSourceRoot -KustomizationPath $kustomizationPath -VisitedKustomizations $visited
+    $result["kustomization_valid"] = [bool]$treeResult["valid"]
+    $result["resource_count"] = [int]$treeResult["resource_count"]
+    if (-not [bool]$treeResult["valid"]) {
+        $result["error_category"] = [string]$treeResult["error_category"]
+        return $result
+    }
+
+    $rootContent = [string](Get-Content -LiteralPath $kustomizationPath -Raw)
+    $rootResources = Get-GitOpsKustomizationResourceEntries -Content $rootContent
+    $result["empty_resources"] = [bool]$rootResources["empty_resources"]
+    $referencedAppNames = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($resource in @($rootResources["resources"])) {
+        $normalized = [string](([string]$resource -replace '\\', '/').Trim('/'))
+        if ($normalized -notmatch '^apps/([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)$') {
+            $result["error_category"] = "unsupported_root_resource"
+            return $result
+        }
+        $referencedAppNames.Add([string]$Matches[1]) | Out-Null
+    }
+
+    $directoryNames = [string[]]@($appDirectories | ForEach-Object { [string]$_.Name })
+    $unreferencedDirectories = @($directoryNames | Where-Object { -not $referencedAppNames.Contains($_) })
+    if ($unreferencedDirectories.Count -gt 0 -or $referencedAppNames.Count -ne $appDirectories.Count) {
+        $result["error_category"] = "app_directory_reference_mismatch"
+        return $result
+    }
+    $result["referenced_apps_valid"] = $true
+
+    if (-not $KubectlAvailable) {
+        $result["error_category"] = "kustomize_renderer_unavailable"
+        return $result
+    }
+    $renderResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("kustomize", $resolvedSourceRoot) -TimeoutSeconds 45
+    $result["kustomize_render_succeeded"] = [bool]($renderResult.exit_code -eq 0 -and -not $renderResult.timed_out)
+    if (-not $result["kustomize_render_succeeded"]) {
+        $result["error_category"] = "kustomize_render_failed"
+        return $result
+    }
+
+    if ($appDirectories.Count -eq 0 -and [bool]$rootResources["empty_resources"]) {
+        $result["repository_mode"] = "initial_empty_bootstrap"
+    }
+    elseif ($appDirectories.Count -gt 0 -and $referencedAppNames.Count -eq $appDirectories.Count) {
+        $result["repository_mode"] = "existing_repository_recovery"
+    }
+    else {
+        $result["error_category"] = "repository_mode_invalid"
+        return $result
+    }
+
+    $result["ready"] = $true
+    $result["error_category"] = ""
+    return $result
 }
 
 function Invoke-ConfigureGitOpsRepository {
@@ -8715,6 +10377,7 @@ function New-GitOpsRootApplicationStatus {
         source_repo_url_sanitized     = $GitOpsExpectedRepositoryUrl
         source_target_revision        = $GitOpsTargetRevision
         source_path                   = $GitOpsSourcePath
+        repository_mode               = "unknown"
         destination_cluster           = "devdeploy-workload"
         destination_server            = $ExpectedWorkloadArgoCDEndpoint
         destination_namespace         = $WorkloadManagedNamespace
@@ -8766,7 +10429,9 @@ function New-GitOpsRootApplicationStatus {
 
 function Get-PersistedGitOpsRepositoryStatus {
     param(
-        [bool]$GitAvailable
+        [bool]$GitAvailable,
+
+        [bool]$KubectlAvailable
     )
 
     $repoPath = [string]$RepoRoot
@@ -8893,47 +10558,41 @@ function Get-PersistedGitOpsRepositoryStatus {
     }
 
     $sourceRoot = Join-Path $repoPath $GitOpsSourceRelativeWindowsPath
-    $appsPath = Join-Path $sourceRoot "apps"
-    $kustomizationPath = Join-Path $sourceRoot "kustomization.yaml"
-    $sourcePresent = Test-Path -LiteralPath $sourceRoot -PathType Container
-    $appsPresent = Test-Path -LiteralPath $appsPath -PathType Container
-    $kustomizationPresent = Test-Path -LiteralPath $kustomizationPath -PathType Leaf
-    $kustomizationValid = $false
-    $emptyResources = $false
-    if ($kustomizationPresent) {
-        try {
-            $content = [string](Get-Content -LiteralPath $kustomizationPath -Raw)
-            $kustomizationValid = Test-GitOpsKustomizationContent -Content $content
-            $emptyResources = [bool]($content -match '(?m)^\s*resources\s*:\s*\[\s*\]\s*(?:#.*)?$')
-        }
-        catch {
-            $kustomizationValid = $false
-            $emptyResources = $false
-        }
-    }
+    $sourceValidation = Test-GitOpsManagedSourceTree -SourceRoot $sourceRoot -KubectlAvailable $KubectlAvailable
+    $sourceReady = [bool]$sourceValidation["ready"]
 
-    $appDirectories = @(if ($appsPresent) { Get-ChildItem -LiteralPath $appsPath -Directory -ErrorAction SilentlyContinue })
-    $emptyAppTree = [bool]($appDirectories.Count -eq 0 -and $emptyResources)
-    $sourceReady = [bool]($sourcePresent -and $appsPresent -and $kustomizationPresent -and $kustomizationValid -and $emptyAppTree)
-
-    Add-Check -Id "gitops_root_repository_source" -Label "GitOps Root Application source path" -Status $(if ($sourceReady) { "ok" } else { "failed" }) -Message $(if ($sourceReady) { "The configured GitOps source path is present, structurally valid, and contains no application manifests." } else { "The GitOps source path must exist with a valid empty root kustomization and no app directories for this bootstrap phase." }) -Details @{
-        required = $true
-        source_path = $GitOpsSourcePath
-        source_present = $sourcePresent
-        apps_directory_present = $appsPresent
-        kustomization_present = $kustomizationPresent
-        kustomization_valid = $kustomizationValid
-        app_directory_count = [int]$appDirectories.Count
-        empty_resources = $emptyResources
+    Add-Check -Id "gitops_root_repository_source" -Label "GitOps Root Application source path" -Status $(if ($sourceReady) { "ok" } else { "failed" }) -Message $(if ($sourceReady -and [string]$sourceValidation["repository_mode"] -eq "existing_repository_recovery") { "The existing populated DevDeploy-managed GitOps source passed containment, structure, and Kustomize render validation for recovery." } elseif ($sourceReady) { "The empty DevDeploy-managed GitOps source passed structure and Kustomize render validation for initial bootstrap." } else { "The DevDeploy-managed GitOps source failed strict containment, structure, reference, or Kustomize render validation." }) -Details @{
+        required                      = $true
+        source_path                   = $GitOpsSourcePath
+        repository_mode               = [string]$sourceValidation["repository_mode"]
+        source_present                = [bool]$sourceValidation["source_present"]
+        apps_directory_present        = [bool]$sourceValidation["apps_directory_present"]
+        kustomization_present         = [bool]$sourceValidation["kustomization_present"]
+        kustomization_valid           = [bool]$sourceValidation["kustomization_valid"]
+        app_directory_count           = [int]$sourceValidation["app_directory_count"]
+        resource_count                = [int]$sourceValidation["resource_count"]
+        empty_resources               = [bool]$sourceValidation["empty_resources"]
+        referenced_apps_valid         = [bool]$sourceValidation["referenced_apps_valid"]
+        kustomize_render_succeeded    = [bool]$sourceValidation["kustomize_render_succeeded"]
+        files_changed                 = $false
+        error_category                = [string]$sourceValidation["error_category"]
     }
 
     $status["configured"] = $sourceReady
     $status["ready"] = $sourceReady
-    $status["path_initialized"] = $sourcePresent
-    $status["kustomization_present"] = $kustomizationPresent
-    $status["apps_directory_present"] = $appsPresent
+    $status["repository_mode"] = [string]$sourceValidation["repository_mode"]
+    $status["source_present"] = [bool]$sourceValidation["source_present"]
+    $status["kustomization_valid"] = [bool]$sourceValidation["kustomization_valid"]
+    $status["app_directory_count"] = [int]$sourceValidation["app_directory_count"]
+    $status["resource_count"] = [int]$sourceValidation["resource_count"]
+    $status["empty_resources"] = [bool]$sourceValidation["empty_resources"]
+    $status["managed_tree_valid"] = $sourceReady
+    $status["kustomize_render_succeeded"] = [bool]$sourceValidation["kustomize_render_succeeded"]
+    $status["path_initialized"] = [bool]$sourceValidation["source_present"]
+    $status["kustomization_present"] = [bool]$sourceValidation["kustomization_present"]
+    $status["apps_directory_present"] = [bool]$sourceValidation["apps_directory_present"]
     $status["status"] = if ($sourceReady) { "ready" } else { "error" }
-    $status["message"] = if ($sourceReady) { "The local GitOps repository is ready for Root Application bootstrap." } else { "The local GitOps repository did not pass Root Application prerequisites." }
+    $status["message"] = if ($sourceReady -and [string]$status["repository_mode"] -eq "existing_repository_recovery") { "The existing DevDeploy-managed GitOps repository is ready for Root Application recovery without changing workload files." } elseif ($sourceReady) { "The empty DevDeploy-managed GitOps repository is ready for initial Root Application bootstrap." } else { "The local GitOps repository did not pass Root Application prerequisites." }
     $status["checked_at"] = [string](Get-Timestamp)
     return $status
 }
@@ -8996,6 +10655,7 @@ function Invoke-BootstrapGitOpsRootApplication {
 
     $status = New-GitOpsRootApplicationStatus
     $status["source_repo_url_sanitized"] = [string](Protect-GitRepositoryUrl -Url ([string]$RepositoryStatus["repo_url_sanitized"]))
+    $status["repository_mode"] = [string]$RepositoryStatus["repository_mode"]
 
     $basePrerequisitesReady = [bool]($KindAvailable -and $KubectlAvailable -and [string]$ManagementCluster["status"] -eq "ready" -and [string]$WorkloadCluster["status"] -eq "ready" -and [bool]$ArgoCDStatus["ready"] -and [bool]$RegistrationStatus["ready"] -and [bool]$PermissionStatus["ready"] -and [bool]$RepositoryStatus["ready"])
     if (-not $basePrerequisitesReady) {
@@ -9011,6 +10671,7 @@ function Invoke-BootstrapGitOpsRootApplication {
             registration_ready = [bool]$RegistrationStatus["ready"]
             workload_permissions_ready = [bool]$PermissionStatus["ready"]
             gitops_repository_ready = [bool]$RepositoryStatus["ready"]
+            repository_mode = [string]$RepositoryStatus["repository_mode"]
         }
         return $status
     }
@@ -9167,15 +10828,19 @@ function Invoke-BootstrapGitOpsRootApplication {
         $status["workload_objects_created"] = [bool]($newObjectKeys.Count -gt 0)
     }
     $noWorkloadCreated = [bool]($workloadInventoryKnown -and $newObjectKeys.Count -eq 0)
-    Add-Check -Id "gitops_root_workload_inventory_after" -Label "Workload object inventory after Root Application" -Status $(if ($noWorkloadCreated) { "ok" } else { "failed" }) -Message $(if ($noWorkloadCreated) { "No Deployment, Service, or Ingress was created by Root Application bootstrap." } elseif ($workloadInventoryKnown) { "Unexpected workload objects appeared during Root Application bootstrap." } else { "Workload object inventory could not be verified after Root Application bootstrap." }) -Details @{
+    $repositoryRecoveryMode = [bool]([string]$status["repository_mode"] -eq "existing_repository_recovery")
+    $workloadInventorySafe = [bool]($workloadInventoryKnown -and ($repositoryRecoveryMode -or $noWorkloadCreated))
+    Add-Check -Id "gitops_root_workload_inventory_after" -Label "Workload object inventory after Root Application" -Status $(if ($workloadInventorySafe) { "ok" } else { "failed" }) -Message $(if ($repositoryRecoveryMode -and $workloadInventoryKnown) { "Workload inventory remained readable. In recovery mode Argo CD may reconcile existing Git desired state; the launcher applied only the Root Application." } elseif ($noWorkloadCreated) { "No Deployment, Service, or Ingress was created during empty Root Application bootstrap." } elseif ($workloadInventoryKnown) { "Unexpected workload objects appeared during empty Root Application bootstrap." } else { "Workload object inventory could not be verified after Root Application bootstrap." }) -Details @{
         required = $true
+        repository_mode = [string]$status["repository_mode"]
         before_count = $beforeInventory["count"]
         after_count = $afterInventory["count"]
         new_object_count = [int]$newObjectKeys.Count
+        launcher_applied_workload = $false
         secret_data_read = $false
     }
 
-    $contractReady = [bool]($applicationPresent -and $specMatches -and $applicationCountExpected -and $noWorkloadCreated)
+    $contractReady = [bool]($applicationPresent -and $specMatches -and $applicationCountExpected -and $workloadInventorySafe)
     $status["bootstrapped"] = [bool]($applicationPresent -and $specMatches)
     $status["ready"] = $contractReady
     $status["checked_at"] = [string](Get-Timestamp)
@@ -9186,11 +10851,11 @@ function Invoke-BootstrapGitOpsRootApplication {
     }
     elseif ($syncHealthy -and $conditionTypes.Count -eq 0) {
         $status["status"] = "ready"
-        $status["message"] = "The GitOps Root Application is configured, Synced, and Healthy. No user workload was created."
+        $status["message"] = if ($repositoryRecoveryMode) { "The GitOps Root Application was recovered and is Synced and Healthy. Existing workload manifests were preserved and only the Application object was reconciled by the launcher." } else { "The GitOps Root Application is configured, Synced, and Healthy. No user workload was created during empty bootstrap." }
     }
     else {
         $status["status"] = "warning"
-        $status["message"] = "The GitOps Root Application is configured correctly, but repository access, destination access, sync, or health is not fully ready yet. No user workload was created."
+        $status["message"] = if ($repositoryRecoveryMode) { "The GitOps Root Application was recovered correctly, but repository access, destination access, sync, or health is not fully ready yet. Existing workload manifests were preserved." } else { "The GitOps Root Application is configured correctly, but repository access, destination access, sync, or health is not fully ready yet. No user workload was created during empty bootstrap." }
     }
 
     Add-Check -Id "gitops_root_application_ready" -Label "GitOps Root Application readiness" -Status $(if ([string]$status["status"] -eq "ready") { "ok" } elseif ([string]$status["status"] -eq "warning") { "warning" } else { "failed" }) -Message ([string]$status["message"]) -Details @{
@@ -9202,6 +10867,8 @@ function Invoke-BootstrapGitOpsRootApplication {
         condition_types = @($conditionTypes)
         application_count = $status["application_count"]
         workload_objects_created = $status["workload_objects_created"]
+        repository_mode = [string]$status["repository_mode"]
+        launcher_applied_workload = $false
     }
 
     return $status
@@ -9914,6 +11581,7 @@ function Invoke-EnsureManagementBackendWorkloadKubeconfigSecret {
         Add-Check -Id "workload_observability_host_kubeconfig_endpoint" -Label "Local observability kubeconfig endpoint" -Status "failed" -Message ([string]$hostCluster["message"]) -Details @{
             required = $true
             context = [string]$hostCluster["context"]
+            source = [string]$hostCluster["source"]
             kubeconfig_path_set = [bool]$hostCluster["kubeconfig_path_set"]
             kubectl_exit_code = $hostCluster["kubectl_exit_code"]
             kubectl_timed_out = $hostCluster["kubectl_timed_out"]
@@ -9928,6 +11596,7 @@ function Invoke-EnsureManagementBackendWorkloadKubeconfigSecret {
     Add-Check -Id "workload_observability_host_kubeconfig_endpoint" -Label "Local observability kubeconfig endpoint" -Status "ok" -Message "The local observability kubeconfig will use the host-reachable API endpoint from the selected workload kubeconfig context." -Details @{
         required = $true
         context = [string]$hostCluster["context"]
+        source = [string]$hostCluster["source"]
         kubeconfig_path_set = [bool]$hostCluster["kubeconfig_path_set"]
         server = [string]$hostCluster["server"]
         certificate_authority_data_present = [bool]$hostCluster["certificate_authority_data_present"]
@@ -10010,7 +11679,7 @@ function Invoke-EnsureManagementBackendWorkloadKubeconfigSecret {
         context = $ObservabilityKubeconfigContext
         service_account = $ObservabilityReaderServiceAccountName
         server = [string]$hostCluster["server"]
-        endpoint_source = "selected_workload_kubeconfig_context"
+        endpoint_source = [string]$hostCluster["source"]
         in_cluster_endpoint = $false
         certificate_authority_data_present = $true
         secret_values_logged = $false
@@ -10143,10 +11812,262 @@ function Invoke-VerifyWorkloadObservability {
     return $status
 }
 
+function ConvertTo-PlatformStatusValue {
+    param(
+        [AllowNull()]
+        [object]$Value
+    )
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    if ($Value -is [string] -or $Value.GetType().IsValueType) {
+        return $Value
+    }
+
+    if ($Value -is [System.Collections.IDictionary]) {
+        $copy = [ordered]@{}
+        foreach ($key in $Value.Keys) {
+            $copy[[string]$key] = ConvertTo-PlatformStatusValue -Value $Value[$key]
+        }
+        return $copy
+    }
+
+    if ($Value -is [System.Management.Automation.PSCustomObject]) {
+        $copy = [ordered]@{}
+        foreach ($property in $Value.PSObject.Properties) {
+            $copy[[string]$property.Name] = ConvertTo-PlatformStatusValue -Value $property.Value
+        }
+        return $copy
+    }
+
+    if ($Value -is [System.Collections.IEnumerable]) {
+        $items = New-Object System.Collections.Generic.List[object]
+        foreach ($item in $Value) {
+            $items.Add((ConvertTo-PlatformStatusValue -Value $item)) | Out-Null
+        }
+        return ,([object[]]$items.ToArray())
+    }
+
+    return $Value
+}
+
+function Get-PersistedPlatformBootstrapStatus {
+    if (-not (Test-Path -LiteralPath $StatusPath -PathType Leaf)) {
+        return $null
+    }
+
+    try {
+        $document = Get-Content -LiteralPath $StatusPath -Raw | ConvertFrom-Json
+        $contract = [string](Get-NamedObjectValue -InputObject $document -Name "contract")
+        $platform = Get-NamedObjectValue -InputObject $document -Name "platform_bootstrap"
+        $components = Get-NamedObjectValue -InputObject $platform -Name "components"
+        if ($contract -ne "devdeploy-launcher-status" -or $null -eq $platform -or $null -eq $components) {
+            Write-LauncherLog "Ignoring the prior launcher status because it does not contain a compatible platform snapshot."
+            return $null
+        }
+
+        return (ConvertTo-PlatformStatusValue -Value $platform)
+    }
+    catch {
+        Write-LauncherLog "Ignoring the prior launcher status because it could not be parsed safely."
+        return $null
+    }
+}
+
+function Get-PersistedPlatformComponent {
+    param(
+        [AllowNull()]
+        [object]$PlatformBootstrap,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    if ($null -eq $PlatformBootstrap) {
+        return $null
+    }
+
+    $components = Get-NamedObjectValue -InputObject $PlatformBootstrap -Name "components"
+    if ($null -eq $components) {
+        return $null
+    }
+
+    return (Get-NamedObjectValue -InputObject $components -Name $Name)
+}
+
+function Test-PersistedPlatformComponentVerified {
+    param(
+        [AllowNull()]
+        [object]$Component
+    )
+
+    if ($null -eq $Component) {
+        return $false
+    }
+
+    $status = [string](Get-NamedObjectValue -InputObject $Component -Name "status")
+    if ($status -eq "ready") {
+        return $true
+    }
+
+    if ($status -ne "warning") {
+        return $false
+    }
+
+    foreach ($evidenceField in @("ready", "verified", "installed", "configured", "application_present", "exists")) {
+        $value = Get-NamedObjectValue -InputObject $Component -Name $evidenceField
+        if ($null -ne $value -and [bool]$value) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Resolve-PlatformComponentStatus {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Current,
+
+        [AllowNull()]
+        [object]$Persisted,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $true)]
+        [string]$LauncherMode,
+
+        [bool]$CurrentInspected,
+
+        [ValidateSet("current_run", "current_live_discovery")]
+        [string]$CurrentSource = "current_run"
+    )
+
+    $resolved = ConvertTo-PlatformStatusValue -Value $Current
+    if ($CurrentInspected) {
+        $resolved["status_source"] = $CurrentSource
+        $resolved["observed_in_mode"] = $LauncherMode
+        $resolved["carried_forward"] = $false
+        return $resolved
+    }
+
+    if (Test-PersistedPlatformComponentVerified -Component $Persisted) {
+        $resolved = ConvertTo-PlatformStatusValue -Value $Persisted
+        $resolved["status_source"] = "persisted_prior_verified_state"
+        $resolved["observed_in_mode"] = $LauncherMode
+        $resolved["carried_forward"] = $true
+        $resolved["carried_forward_at"] = [string](Get-Timestamp)
+        return $resolved
+    }
+
+    $resolved["status"] = "not_checked"
+    $resolved["message"] = "$Name was not checked by launcher mode $LauncherMode."
+    $resolved["status_source"] = "current_mode_not_checked"
+    $resolved["observed_in_mode"] = $LauncherMode
+    $resolved["carried_forward"] = $false
+    $resolved["checked_at"] = [string](Get-Timestamp)
+    if ($resolved.Contains("mode")) {
+        $resolved["mode"] = "not_checked"
+    }
+    foreach ($unknownField in @("installed", "ready", "verified", "configured", "exists", "application_present")) {
+        if ($resolved.Contains($unknownField)) {
+            $resolved[$unknownField] = $null
+        }
+    }
+    return $resolved
+}
+
+function Test-PlatformComponentCurrentEvidence {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Component
+    )
+
+    $status = [string](Get-NamedObjectValue -InputObject $Component -Name "status")
+    return [bool]($status -notin @("", "not_started", "not_checked", "unknown"))
+}
+
+function Get-GitOpsRootApplicationRuntimeStatus {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ManagementCluster,
+
+        [bool]$KubectlAvailable
+    )
+
+    $status = New-GitOpsRootApplicationStatus
+    $status["mode"] = "runtime_discovery"
+    if (-not $KubectlAvailable -or [string]$ManagementCluster["status"] -ne "ready") {
+        $status["status"] = "unknown"
+        $status["message"] = "GitOps Root Application live status requires kubectl and a Ready management cluster."
+        return $status
+    }
+
+    $result = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $ArgoCDNamespace, "get", "application", $GitOpsRootApplicationName, "--ignore-not-found=true", "--output", "json") -TimeoutSeconds 30 -PreserveStandardOutput $true
+    if ($result.exit_code -ne 0 -or $result.timed_out) {
+        $status["status"] = "unknown"
+        $status["message"] = "GitOps Root Application live status could not be read safely."
+        return $status
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$result.stdout)) {
+        $status["status"] = "absent"
+        $status["message"] = "GitOps Root Application devdeploy-workloads-root is absent."
+        return $status
+    }
+
+    try {
+        $application = [string]$result.stdout | ConvertFrom-Json
+        $metadata = Get-ObjectPropertyValue -InputObject $application -Name "metadata"
+        $spec = Get-ObjectPropertyValue -InputObject $application -Name "spec"
+        $source = Get-ObjectPropertyValue -InputObject $spec -Name "source"
+        $destination = Get-ObjectPropertyValue -InputObject $spec -Name "destination"
+        $runtime = Get-ObjectPropertyValue -InputObject $application -Name "status"
+        $sync = Get-ObjectPropertyValue -InputObject $runtime -Name "sync"
+        $health = Get-ObjectPropertyValue -InputObject $runtime -Name "health"
+
+        $syncStatus = [string](Get-ObjectPropertyValue -InputObject $sync -Name "status")
+        $healthStatus = [string](Get-ObjectPropertyValue -InputObject $health -Name "status")
+        $status["exists"] = $true
+        $status["application_present"] = $true
+        $status["bootstrapped"] = $true
+        $status["application_count"] = 1
+        $status["expected_application_count"] = 1
+        $status["actual"] = [ordered]@{
+            namespace                 = [string](Get-ObjectPropertyValue -InputObject $metadata -Name "namespace")
+            project                   = [string](Get-ObjectPropertyValue -InputObject $spec -Name "project")
+            source_repo_url_sanitized = [string](Protect-GitRepositoryUrl -Url ([string](Get-ObjectPropertyValue -InputObject $source -Name "repoURL")))
+            source_path               = [string](Get-ObjectPropertyValue -InputObject $source -Name "path")
+            target_revision           = [string](Get-ObjectPropertyValue -InputObject $source -Name "targetRevision")
+            destination_server        = [string](Get-ObjectPropertyValue -InputObject $destination -Name "server")
+            destination_namespace     = [string](Get-ObjectPropertyValue -InputObject $destination -Name "namespace")
+        }
+        $status["sync_status"] = $syncStatus
+        $status["health_status"] = $healthStatus
+        $status["synced"] = [bool]($syncStatus -eq "Synced")
+        $status["healthy"] = [bool]($healthStatus -eq "Healthy")
+        $status["ready"] = [bool]($status["synced"] -and $status["healthy"])
+        $status["status"] = if ([bool]$status["ready"]) { "ready" } else { "degraded" }
+        $status["message"] = if ([bool]$status["ready"]) { "GitOps Root Application is Synced and Healthy." } else { "GitOps Root Application exists but is not both Synced and Healthy." }
+        $status["checked_at"] = [string](Get-Timestamp)
+        return $status
+    }
+    catch {
+        $status["status"] = "unknown"
+        $status["message"] = "GitOps Root Application live status returned malformed data."
+        return $status
+    }
+}
+
 function New-PlatformBootstrapStatus {
     param(
         [Parameter(Mandatory = $true)]
         [object]$ManagementCluster,
+
+        [Parameter(Mandatory = $true)]
+        [object]$WorkloadCluster,
 
         [bool]$HelmAvailable,
 
@@ -10195,18 +12116,51 @@ function New-PlatformBootstrapStatus {
         [object]$GitOpsRootApplicationStatusOverride = $null,
 
         [AllowNull()]
-        [object]$WorkloadObservabilityStatusOverride = $null
+        [object]$WorkloadObservabilityStatusOverride = $null,
+
+        [AllowNull()]
+        [object]$PriorPlatformBootstrap = $null,
+
+        [Parameter(Mandatory = $true)]
+        [string]$LauncherMode
     )
 
-    $ingress = if ($null -ne $IngressStatusOverride) { $IngressStatusOverride } else { Get-ManagementIngressStatus -ManagementCluster $ManagementCluster -HelmAvailable $HelmAvailable -KubectlAvailable $KubectlAvailable }
-    $postgres = if ($null -ne $PostgresStatusOverride) { $PostgresStatusOverride } else { Get-ManagementPostgresStatus -ManagementCluster $ManagementCluster -HelmAvailable $HelmAvailable -KubectlAvailable $KubectlAvailable }
-    $argocd = if ($null -ne $ArgoCDStatusOverride) { $ArgoCDStatusOverride } else { Get-ManagementArgoCDStatus -ManagementCluster $ManagementCluster -HelmAvailable $HelmAvailable -KubectlAvailable $KubectlAvailable }
-    $workloadEndpoint = if ($null -ne $WorkloadEndpointStatusOverride) { $WorkloadEndpointStatusOverride } else { New-WorkloadClusterEndpointStatus }
-    $argocdWorkloadCluster = if ($null -ne $ArgoCDWorkloadClusterStatusOverride) { $ArgoCDWorkloadClusterStatusOverride } else { New-ArgoCDWorkloadClusterStatus }
-    $workloadDeployPermissions = if ($null -ne $WorkloadDeployPermissionsStatusOverride) { $WorkloadDeployPermissionsStatusOverride } else { New-WorkloadDeployPermissionsStatus }
-    $gitOpsRepository = if ($null -ne $GitOpsRepositoryStatusOverride) { $GitOpsRepositoryStatusOverride } else { New-GitOpsRepositoryStatus -RepoPath $RepoRoot }
-    $gitOpsRootApplication = if ($null -ne $GitOpsRootApplicationStatusOverride) { $GitOpsRootApplicationStatusOverride } else { New-GitOpsRootApplicationStatus }
-    $workloadObservability = if ($null -ne $WorkloadObservabilityStatusOverride) { $WorkloadObservabilityStatusOverride } else { New-WorkloadObservabilityStatus }
+    $ingressCurrent = if ($null -ne $IngressStatusOverride) { $IngressStatusOverride } else { Get-ManagementIngressStatus -ManagementCluster $ManagementCluster -HelmAvailable $HelmAvailable -KubectlAvailable $KubectlAvailable }
+    $ingressInspected = [bool]($null -ne $IngressStatusOverride -or ($HelmAvailable -and $KubectlAvailable -and [string]$ManagementCluster["status"] -eq "ready"))
+    $ingress = Resolve-PlatformComponentStatus -Current $ingressCurrent -Persisted (Get-PersistedPlatformComponent -PlatformBootstrap $PriorPlatformBootstrap -Name "ingress_nginx") -Name "Management ingress-nginx" -LauncherMode $LauncherMode -CurrentInspected $ingressInspected -CurrentSource $(if ($null -ne $IngressStatusOverride) { "current_run" } else { "current_live_discovery" })
+
+    $postgresCurrent = if ($null -ne $PostgresStatusOverride) { $PostgresStatusOverride } else { Get-ManagementPostgresStatus -ManagementCluster $ManagementCluster -HelmAvailable $HelmAvailable -KubectlAvailable $KubectlAvailable }
+    $postgresInspected = [bool]($null -ne $PostgresStatusOverride -or ($HelmAvailable -and $KubectlAvailable -and [string]$ManagementCluster["status"] -eq "ready"))
+    $postgres = Resolve-PlatformComponentStatus -Current $postgresCurrent -Persisted (Get-PersistedPlatformComponent -PlatformBootstrap $PriorPlatformBootstrap -Name "postgres") -Name "Management PostgreSQL" -LauncherMode $LauncherMode -CurrentInspected $postgresInspected -CurrentSource $(if ($null -ne $PostgresStatusOverride) { "current_run" } else { "current_live_discovery" })
+
+    $argocdCurrent = if ($null -ne $ArgoCDStatusOverride) { $ArgoCDStatusOverride } else { Get-ManagementArgoCDRuntimeStatus -ManagementCluster $ManagementCluster -KubectlAvailable $KubectlAvailable }
+    $argocd = Resolve-PlatformComponentStatus -Current $argocdCurrent -Persisted (Get-PersistedPlatformComponent -PlatformBootstrap $PriorPlatformBootstrap -Name "argocd") -Name "Management Argo CD" -LauncherMode $LauncherMode -CurrentInspected $true -CurrentSource $(if ($null -ne $ArgoCDStatusOverride) { "current_run" } else { "current_live_discovery" })
+
+    $workloadEndpointCurrent = if ($null -ne $WorkloadEndpointStatusOverride) { $WorkloadEndpointStatusOverride } else { New-WorkloadClusterEndpointStatus }
+    $workloadEndpoint = Resolve-PlatformComponentStatus -Current $workloadEndpointCurrent -Persisted (Get-PersistedPlatformComponent -PlatformBootstrap $PriorPlatformBootstrap -Name "workload_cluster_endpoint") -Name "Workload cluster endpoint" -LauncherMode $LauncherMode -CurrentInspected ([bool]($null -ne $WorkloadEndpointStatusOverride))
+
+    $argocdWorkloadClusterCurrent = if ($null -ne $ArgoCDWorkloadClusterStatusOverride) { $ArgoCDWorkloadClusterStatusOverride } else { New-ArgoCDWorkloadClusterStatus }
+    $argocdWorkloadCluster = Resolve-PlatformComponentStatus -Current $argocdWorkloadClusterCurrent -Persisted (Get-PersistedPlatformComponent -PlatformBootstrap $PriorPlatformBootstrap -Name "argocd_workload_cluster") -Name "Argo CD workload cluster registration" -LauncherMode $LauncherMode -CurrentInspected ([bool]($null -ne $ArgoCDWorkloadClusterStatusOverride))
+
+    $workloadDeployPermissionsCurrent = if ($null -ne $WorkloadDeployPermissionsStatusOverride) { $WorkloadDeployPermissionsStatusOverride } else { New-WorkloadDeployPermissionsStatus }
+    $workloadDeployPermissions = Resolve-PlatformComponentStatus -Current $workloadDeployPermissionsCurrent -Persisted (Get-PersistedPlatformComponent -PlatformBootstrap $PriorPlatformBootstrap -Name "workload_deploy_permissions") -Name "Workload deploy permissions" -LauncherMode $LauncherMode -CurrentInspected ([bool]($null -ne $WorkloadDeployPermissionsStatusOverride))
+
+    $gitOpsRepositoryCurrent = if ($null -ne $GitOpsRepositoryStatusOverride) { $GitOpsRepositoryStatusOverride } else { New-GitOpsRepositoryStatus -RepoPath $RepoRoot }
+    $gitOpsRepository = Resolve-PlatformComponentStatus -Current $gitOpsRepositoryCurrent -Persisted (Get-PersistedPlatformComponent -PlatformBootstrap $PriorPlatformBootstrap -Name "gitops_repository") -Name "GitOps repository" -LauncherMode $LauncherMode -CurrentInspected ([bool]($null -ne $GitOpsRepositoryStatusOverride))
+
+    $gitOpsRootApplicationCurrent = if ($null -ne $GitOpsRootApplicationStatusOverride) { $GitOpsRootApplicationStatusOverride } else { Get-GitOpsRootApplicationRuntimeStatus -ManagementCluster $ManagementCluster -KubectlAvailable $KubectlAvailable }
+    $gitOpsRootApplication = Resolve-PlatformComponentStatus -Current $gitOpsRootApplicationCurrent -Persisted (Get-PersistedPlatformComponent -PlatformBootstrap $PriorPlatformBootstrap -Name "gitops_root_application") -Name "GitOps Root Application" -LauncherMode $LauncherMode -CurrentInspected $true -CurrentSource $(if ($null -ne $GitOpsRootApplicationStatusOverride) { "current_run" } else { "current_live_discovery" })
+
+    $workloadObservabilityCurrent = if ($null -ne $WorkloadObservabilityStatusOverride) { $WorkloadObservabilityStatusOverride } else { New-WorkloadObservabilityStatus }
+    $workloadObservability = Resolve-PlatformComponentStatus -Current $workloadObservabilityCurrent -Persisted (Get-PersistedPlatformComponent -PlatformBootstrap $PriorPlatformBootstrap -Name "workload_observability") -Name "Workload observability" -LauncherMode $LauncherMode -CurrentInspected ([bool]($null -ne $WorkloadObservabilityStatusOverride))
+
+    $BackendImageStatus = Resolve-PlatformComponentStatus -Current $BackendImageStatus -Persisted (Get-PersistedPlatformComponent -PlatformBootstrap $PriorPlatformBootstrap -Name "backend_image") -Name "Management backend image" -LauncherMode $LauncherMode -CurrentInspected (Test-PlatformComponentCurrentEvidence -Component $BackendImageStatus)
+    $BackendSecretStatus = Resolve-PlatformComponentStatus -Current $BackendSecretStatus -Persisted (Get-PersistedPlatformComponent -PlatformBootstrap $PriorPlatformBootstrap -Name "backend_secret") -Name "Management backend Secret" -LauncherMode $LauncherMode -CurrentInspected (Test-PlatformComponentCurrentEvidence -Component $BackendSecretStatus)
+    $BackendStatus = Resolve-PlatformComponentStatus -Current $BackendStatus -Persisted (Get-PersistedPlatformComponent -PlatformBootstrap $PriorPlatformBootstrap -Name "backend") -Name "Management backend" -LauncherMode $LauncherMode -CurrentInspected (Test-PlatformComponentCurrentEvidence -Component $BackendStatus)
+    $BackendDatabaseStatus = Resolve-PlatformComponentStatus -Current $BackendDatabaseStatus -Persisted (Get-PersistedPlatformComponent -PlatformBootstrap $PriorPlatformBootstrap -Name "backend_database") -Name "Management backend database" -LauncherMode $LauncherMode -CurrentInspected (Test-PlatformComponentCurrentEvidence -Component $BackendDatabaseStatus)
+    $FrontendImageStatus = Resolve-PlatformComponentStatus -Current $FrontendImageStatus -Persisted (Get-PersistedPlatformComponent -PlatformBootstrap $PriorPlatformBootstrap -Name "frontend_image") -Name "Management frontend image" -LauncherMode $LauncherMode -CurrentInspected (Test-PlatformComponentCurrentEvidence -Component $FrontendImageStatus)
+    $FrontendStatus = Resolve-PlatformComponentStatus -Current $FrontendStatus -Persisted (Get-PersistedPlatformComponent -PlatformBootstrap $PriorPlatformBootstrap -Name "frontend") -Name "Management frontend" -LauncherMode $LauncherMode -CurrentInspected (Test-PlatformComponentCurrentEvidence -Component $FrontendStatus)
+    $workloadClusterComponent = Resolve-PlatformComponentStatus -Current $WorkloadCluster -Persisted (Get-PersistedPlatformComponent -PlatformBootstrap $PriorPlatformBootstrap -Name "workload_cluster") -Name "Workload cluster" -LauncherMode $LauncherMode -CurrentInspected $true -CurrentSource "current_live_discovery"
     $devdeployNamespace = Get-DevDeployNamespaceStatus -ManagementCluster $ManagementCluster -KubectlAvailable $KubectlAvailable
     $status = "not_started"
     $message = "Management platform bootstrap has not started yet."
@@ -10264,6 +12218,11 @@ function New-PlatformBootstrapStatus {
     elseif ($workloadObservabilityFailedChecks -gt 0 -and [string]$workloadObservability["status"] -ne "ready") {
         $status = "failed"
         $message = "Workload observability bootstrap failed."
+    }
+    elseif (@(@($ingress, $postgres, $BackendStatus, $BackendDatabaseStatus, $FrontendStatus, $argocd, $argocdWorkloadCluster, $workloadDeployPermissions, $gitOpsRepository, $gitOpsRootApplication, $workloadObservability) | Where-Object { [string]$_["status"] -in @("not_checked", "unknown") }).Count -gt 0) {
+        $knownReadyCount = @(@($ingress, $postgres, $BackendStatus, $BackendDatabaseStatus, $FrontendStatus, $argocd, $gitOpsRootApplication, $workloadObservability) | Where-Object { [string]$_["status"] -in @("ready", "warning") }).Count
+        $status = if ($knownReadyCount -gt 0) { "partial" } else { "unknown" }
+        $message = "Verified platform components are reported individually; one or more unrelated components were not checked by launcher mode $LauncherMode."
     }
     elseif ([string]$ingress["status"] -eq "ready" -and [string]$postgres["status"] -eq "ready" -and [string]$BackendStatus["status"] -in @("ready", "warning") -and [string]$BackendDatabaseStatus["status"] -eq "ready" -and [string]$FrontendStatus["status"] -in @("ready", "warning") -and [string]$argocd["status"] -eq "ready" -and [string]$argocdWorkloadCluster["status"] -in @("ready", "warning") -and [string]$workloadDeployPermissions["status"] -eq "ready" -and [string]$gitOpsRepository["status"] -eq "ready" -and [string]$gitOpsRootApplication["status"] -in @("ready", "warning") -and [bool]$gitOpsRootApplication["application_present"]) {
         $status = "partial"
@@ -10349,6 +12308,7 @@ function New-PlatformBootstrapStatus {
             frontend_image = $FrontendImageStatus
             frontend      = $FrontendStatus
             argocd        = $argocd
+            workload_cluster = $workloadClusterComponent
             workload_cluster_endpoint = $workloadEndpoint
             argocd_workload_cluster = $argocdWorkloadCluster
             workload_deploy_permissions = $workloadDeployPermissions
@@ -10378,6 +12338,7 @@ function New-PlatformBootstrapStatus {
         frontend_image_status = [string]$FrontendImageStatus["status"]
         frontend_status = [string]$FrontendStatus["status"]
         argocd_status = [string]$argocd["status"]
+        workload_cluster_status = [string]$workloadClusterComponent["status"]
         workload_endpoint_status = [string]$workloadEndpoint["status"]
         argocd_workload_cluster_status = [string]$argocdWorkloadCluster["status"]
         workload_deploy_permissions_status = [string]$workloadDeployPermissions["status"]
@@ -11304,9 +13265,19 @@ New-LocalDirectory -Path $LogsDir
 New-LocalDirectory -Path $KindDir
 New-LocalDirectory -Path $ToolsDir
 New-LocalDirectory -Path $KubeconfigDir
+$priorPlatformBootstrap = Get-PersistedPlatformBootstrapStatus
 
 if ($PlanWorkloadRebootstrap) {
     Write-LauncherLog "Starting DevDeploy Launcher read-only workload rebootstrap planning mode."
+}
+elseif ($PlanWorkloadPortRecovery) {
+    Write-LauncherLog "Starting DevDeploy Launcher read-only workload port recovery planning mode."
+}
+elseif ($PlanManagementPortRecovery) {
+    Write-LauncherLog "Starting DevDeploy Launcher read-only management port recovery planning mode."
+}
+elseif ($RepairDevDeployKindRestartPolicies) {
+    Write-LauncherLog "Starting DevDeploy Launcher explicit DevDeploy kind restart policy repair mode."
 }
 elseif ($CreateManagementCluster) {
     Write-LauncherLog "Starting DevDeploy Launcher guarded management cluster create mode."
@@ -11390,7 +13361,8 @@ else {
     Write-LauncherLog "Starting DevDeploy Launcher read-only preflight."
 }
 
-$dockerAvailable = Test-CommandAvailable -Name "docker" -Label "Docker CLI" -Required ([bool](-not ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $VerifyWorkloadDeployPermissions -or $ConfigureGitOpsRepository -or $BootstrapGitOpsRootApplication -or $VerifyGitOpsRootApplication -or $InitializeManagementBackendDatabase)))
+$managementIntegrityRequired = [bool](Test-ManagementClusterIntegrityRequired)
+$dockerAvailable = Test-CommandAvailable -Name "docker" -Label "Docker CLI" -Required ([bool]($managementIntegrityRequired -or -not ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $VerifyWorkloadDeployPermissions -or $ConfigureGitOpsRepository -or $BootstrapGitOpsRootApplication -or $VerifyGitOpsRootApplication -or $InitializeManagementBackendDatabase)))
 $kindAvailable = Test-CommandAvailable -Name "kind" -Label "kind CLI" -Required ([bool](-not ($BuildManagementBackendImage -or $BuildManagementFrontendImage -or $ConfigureGitOpsRepository)))
 $kubectlAvailable = Test-CommandAvailable -Name "kubectl" -Label "kubectl CLI" -Required ([bool](-not ($BuildManagementBackendImage -or $BuildManagementFrontendImage -or $ConfigureGitOpsRepository)))
 $gitAvailable = Test-CommandAvailable -Name "git" -Label "git CLI" -Required ([bool]($ConfigureGitOpsRepository -or $BootstrapGitOpsRootApplication))
@@ -11407,7 +13379,7 @@ if ($BootstrapWorkloadObservability -or $VerifyWorkloadObservability) {
     }
 }
 
-if ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $VerifyWorkloadDeployPermissions -or $ConfigureGitOpsRepository -or $BootstrapGitOpsRootApplication -or $VerifyGitOpsRootApplication -or $InitializeManagementBackendDatabase) {
+if (-not $managementIntegrityRequired -and ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $VerifyManagementBackend -or $BootstrapManagementFrontend -or $VerifyManagementFrontend -or $BootstrapManagementArgoCD -or $VerifyManagementArgoCD -or $RegisterWorkloadClusterWithArgoCD -or $VerifyWorkloadClusterRegistration -or $GrantWorkloadDeployPermissions -or $VerifyWorkloadDeployPermissions -or $ConfigureGitOpsRepository -or $BootstrapGitOpsRootApplication -or $VerifyGitOpsRootApplication -or $InitializeManagementBackendDatabase)) {
     $dockerDaemonReachable = $false
     Add-Check -Id "docker_daemon" -Label "Docker daemon" -Status "skipped" -Message "Docker daemon check is not required for this launcher mode." -Details @{
         required = $false
@@ -11415,6 +13387,18 @@ if ($EnsureManagementBackendSecret -or $VerifyManagementBackendSecret -or $Verif
 }
 else {
     $dockerDaemonReachable = Test-DockerDaemon -DockerCliAvailable $dockerAvailable
+    $dockerFollowUpMode = [bool](
+        $BuildManagementBackendImage -or
+        $LoadManagementBackendImage -or
+        $BuildManagementFrontendImage -or
+        $LoadManagementFrontendImage -or
+        $BootstrapManagementFrontend -or
+        $BootstrapWorkloadObservability -or
+        $VerifyWorkloadObservability
+    )
+    if (-not $dockerDaemonReachable -and $dockerFollowUpMode) {
+        $dockerDaemonReachable = Test-DockerDaemonFollowUp -DockerCliAvailable $dockerAvailable
+    }
 }
 
 $existingKindClusters = @()
@@ -11428,6 +13412,8 @@ if ($kindAvailable) {
         $workloadClusterExistsBeforePortCheck = $existingKindClusters -contains "devdeploy-workload"
     }
 }
+
+$PortSelection = Resolve-LauncherPortPlan -DockerAvailable $dockerAvailable -DockerDaemonReachable $dockerDaemonReachable -ManagementClusterExists $managementClusterExistsBeforePortCheck -WorkloadClusterExists $workloadClusterExistsBeforePortCheck
 
 foreach ($entry in $PortPlan.GetEnumerator()) {
     $portKey = [string]$entry.Key
@@ -11547,6 +13533,15 @@ $launcherMode = "preflight"
 if ($PlanWorkloadRebootstrap) {
     $launcherMode = "workload_rebootstrap_plan"
 }
+elseif ($PlanWorkloadPortRecovery) {
+    $launcherMode = "workload_port_recovery_plan"
+}
+elseif ($PlanManagementPortRecovery) {
+    $launcherMode = "management_port_recovery_plan"
+}
+elseif ($RepairDevDeployKindRestartPolicies) {
+    $launcherMode = "devdeploy_kind_restart_policy_repair"
+}
 elseif ($CreateManagementCluster) {
     $launcherMode = "management_cluster_create"
 }
@@ -11651,7 +13646,7 @@ $platformGitOpsRootApplicationOverride = $null
 $platformWorkloadObservabilityOverride = $null
 
 if ($CreateManagementCluster) {
-    Write-KindConfigPreview -Id "management_kind_config" -Label "Management kind config" -ClusterName "devdeploy-mgmt" -Path $MgmtKindConfigPath -ApiServerPort 58080 -HttpHostPort 8080 -HttpsHostPort 8443
+    Write-KindConfigPreview -Id "management_kind_config" -Label "Management kind config" -ClusterName "devdeploy-mgmt" -Path $MgmtKindConfigPath -ApiServerPort ([int]$PortPlan["management_api"]) -HttpHostPort ([int]$PortPlan["management_http"]) -HttpsHostPort ([int]$PortPlan["management_https"])
 
     $preCreateChecks = @($Checks | ForEach-Object { $_ })
     $preCreateStatus = [string](Get-OverallStatus -StableChecks $preCreateChecks)
@@ -11671,9 +13666,10 @@ if ($CreateManagementCluster) {
             }
         }
     }
+    Reset-CanonicalManagementClusterStatus
 }
 elseif ($CreateWorkloadCluster) {
-    Write-KindConfigPreview -Id "workload_kind_config" -Label "Workload kind config" -ClusterName "devdeploy-workload" -Path $WorkloadKindConfigPath -ApiServerPort 58081 -HttpHostPort 8081 -HttpsHostPort 8444
+    Write-KindConfigPreview -Id "workload_kind_config" -Label "Workload kind config" -ClusterName "devdeploy-workload" -Path $WorkloadKindConfigPath -ApiServerPort ([int]$PortPlan["workload_api"]) -HttpHostPort ([int]$PortPlan["workload_http"]) -HttpsHostPort ([int]$PortPlan["workload_https"])
 
     $preCreateChecks = @($Checks | ForEach-Object { $_ })
     $preCreateStatus = [string](Get-OverallStatus -StableChecks $preCreateChecks)
@@ -11693,6 +13689,9 @@ elseif ($CreateWorkloadCluster) {
             }
         }
     }
+}
+elseif ($RepairDevDeployKindRestartPolicies) {
+    Invoke-DevDeployKindRestartPolicyRepair -DockerAvailable $dockerAvailable -DockerDaemonReachable $dockerDaemonReachable | Out-Null
 }
 elseif ($BootstrapManagementIngress) {
     $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
@@ -11736,6 +13735,10 @@ elseif ($BootstrapManagementFrontend) {
     $backendSecretStatus = $frontendBootstrapResult["backend_secret"]
     $platformIngressOverride = $frontendBootstrapResult["ingress"]
     $platformPostgresOverride = $frontendBootstrapResult["postgres"]
+    if ([string]$frontendStatus["status"] -eq "ready" -and [string]$managementCluster["integrity_status"] -eq "ok") {
+        Set-DockerDaemonCheckFromEvidence -Evidence "management_kind_integrity_and_frontend_rollout" | Out-Null
+        $dockerDaemonReachable = $true
+    }
 }
 elseif ($VerifyManagementFrontend) {
     $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
@@ -11807,7 +13810,7 @@ elseif ($BootstrapGitOpsRootApplication) {
     if ([bool]$platformWorkloadDeployPermissionsOverride["ready"]) {
         $platformArgoCDWorkloadClusterOverride["write_rbac_configured"] = $true
     }
-    $platformGitOpsRepositoryOverride = Get-PersistedGitOpsRepositoryStatus -GitAvailable $gitAvailable
+    $platformGitOpsRepositoryOverride = Get-PersistedGitOpsRepositoryStatus -GitAvailable $gitAvailable -KubectlAvailable $kubectlAvailable
     $platformGitOpsRootApplicationOverride = Invoke-BootstrapGitOpsRootApplication -ManagementCluster $managementCluster -WorkloadCluster $workloadCluster -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable -ArgoCDStatus $platformArgoCDOverride -RegistrationStatus $platformArgoCDWorkloadClusterOverride -PermissionStatus $platformWorkloadDeployPermissionsOverride -RepositoryStatus $platformGitOpsRepositoryOverride
 }
 elseif ($VerifyGitOpsRootApplication) {
@@ -11819,10 +13822,18 @@ elseif ($VerifyGitOpsRootApplication) {
 elseif ($BootstrapWorkloadObservability) {
     $workloadCluster = New-WorkloadClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
     $platformWorkloadObservabilityOverride = Invoke-BootstrapWorkloadObservability -WorkloadCluster $workloadCluster -HelmAvailable $helmAvailable -KubectlAvailable $kubectlAvailable -HelmCommand $workloadObservabilityHelmCommand
+    if ([string]$platformWorkloadObservabilityOverride["status"] -eq "ready" -and [string]$workloadCluster["integrity_status"] -eq "ok") {
+        Set-DockerDaemonCheckFromEvidence -Evidence "workload_kind_integrity_and_observability_readiness" | Out-Null
+        $dockerDaemonReachable = $true
+    }
 }
 elseif ($VerifyWorkloadObservability) {
     $workloadCluster = New-WorkloadClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
     $platformWorkloadObservabilityOverride = Invoke-VerifyWorkloadObservability -WorkloadCluster $workloadCluster -HelmAvailable $helmAvailable -KubectlAvailable $kubectlAvailable -HelmCommand $workloadObservabilityHelmCommand
+    if ([string]$platformWorkloadObservabilityOverride["status"] -in @("ready", "warning") -and [string]$workloadCluster["integrity_status"] -eq "ok") {
+        Set-DockerDaemonCheckFromEvidence -Evidence "workload_kind_integrity_and_observability_verification" | Out-Null
+        $dockerDaemonReachable = $true
+    }
 }
 elseif ($InitializeManagementBackendDatabase) {
     $managementCluster = New-ManagementClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
@@ -11866,8 +13877,8 @@ elseif ($VerifyManagementBackend) {
     $platformPostgresOverride = $backendVerifyResult["postgres"]
 }
 elseif ($GenerateKindConfigs) {
-    Write-KindConfigPreview -Id "kind_config_mgmt_preview" -Label "Management kind config preview" -ClusterName "devdeploy-mgmt" -Path $MgmtKindConfigPath -ApiServerPort 58080 -HttpHostPort 8080 -HttpsHostPort 8443
-    Write-KindConfigPreview -Id "kind_config_workload_preview" -Label "Workload kind config preview" -ClusterName "devdeploy-workload" -Path $WorkloadKindConfigPath -ApiServerPort 58081 -HttpHostPort 8081 -HttpsHostPort 8444
+    Write-KindConfigPreview -Id "kind_config_mgmt_preview" -Label "Management kind config preview" -ClusterName "devdeploy-mgmt" -Path $MgmtKindConfigPath -ApiServerPort ([int]$PortPlan["management_api"]) -HttpHostPort ([int]$PortPlan["management_http"]) -HttpsHostPort ([int]$PortPlan["management_https"])
+    Write-KindConfigPreview -Id "kind_config_workload_preview" -Label "Workload kind config preview" -ClusterName "devdeploy-workload" -Path $WorkloadKindConfigPath -ApiServerPort ([int]$PortPlan["workload_api"]) -HttpHostPort ([int]$PortPlan["workload_http"]) -HttpsHostPort ([int]$PortPlan["workload_https"])
 }
 
 if ($null -eq $managementCluster) {
@@ -11877,9 +13888,10 @@ if ($null -eq $workloadCluster) {
     $workloadCluster = New-WorkloadClusterStatus -KindAvailable $kindAvailable -KubectlAvailable $kubectlAvailable
 }
 $platformHelmAvailable = [bool]($helmAvailable -and -not $BuildManagementBackendImage -and -not $BuildManagementFrontendImage -and -not $LoadManagementFrontendImage -and -not $BootstrapManagementFrontend -and -not $VerifyManagementFrontend -and -not $VerifyGitOpsRootApplication -and -not $InitializeManagementBackendDatabase -and -not $LoadManagementBackendImage -and -not $EnsureManagementBackendSecret -and -not $VerifyManagementBackendSecret -and -not $BootstrapManagementBackend -and -not $VerifyManagementBackend -and -not $BootstrapWorkloadObservability -and -not $VerifyWorkloadObservability)
-$platformBootstrap = New-PlatformBootstrapStatus -ManagementCluster $managementCluster -HelmAvailable $platformHelmAvailable -KubectlAvailable $kubectlAvailable -BackendImageStatus $backendImageStatus -BackendSecretStatus $backendSecretStatus -BackendStatus $backendStatus -BackendDatabaseStatus $backendDatabaseStatus -FrontendImageStatus $frontendImageStatus -FrontendStatus $frontendStatus -IngressStatusOverride $platformIngressOverride -PostgresStatusOverride $platformPostgresOverride -ArgoCDStatusOverride $platformArgoCDOverride -WorkloadEndpointStatusOverride $platformWorkloadEndpointOverride -ArgoCDWorkloadClusterStatusOverride $platformArgoCDWorkloadClusterOverride -WorkloadDeployPermissionsStatusOverride $platformWorkloadDeployPermissionsOverride -GitOpsRepositoryStatusOverride $platformGitOpsRepositoryOverride -GitOpsRootApplicationStatusOverride $platformGitOpsRootApplicationOverride -WorkloadObservabilityStatusOverride $platformWorkloadObservabilityOverride
+$platformBootstrap = New-PlatformBootstrapStatus -ManagementCluster $managementCluster -WorkloadCluster $workloadCluster -HelmAvailable $platformHelmAvailable -KubectlAvailable $kubectlAvailable -BackendImageStatus $backendImageStatus -BackendSecretStatus $backendSecretStatus -BackendStatus $backendStatus -BackendDatabaseStatus $backendDatabaseStatus -FrontendImageStatus $frontendImageStatus -FrontendStatus $frontendStatus -IngressStatusOverride $platformIngressOverride -PostgresStatusOverride $platformPostgresOverride -ArgoCDStatusOverride $platformArgoCDOverride -WorkloadEndpointStatusOverride $platformWorkloadEndpointOverride -ArgoCDWorkloadClusterStatusOverride $platformArgoCDWorkloadClusterOverride -WorkloadDeployPermissionsStatusOverride $platformWorkloadDeployPermissionsOverride -GitOpsRepositoryStatusOverride $platformGitOpsRepositoryOverride -GitOpsRootApplicationStatusOverride $platformGitOpsRootApplicationOverride -WorkloadObservabilityStatusOverride $platformWorkloadObservabilityOverride -PriorPlatformBootstrap $priorPlatformBootstrap -LauncherMode $launcherMode
 $workloadRebootstrapPlan = $null
-if ($PlanWorkloadRebootstrap) {
+$managementPortRecoveryPlan = $null
+if ($PlanWorkloadRebootstrap -or $PlanWorkloadPortRecovery) {
     $workloadRebootstrapPlan = New-WorkloadRebootstrapPlan -ManagementCluster $managementCluster -WorkloadCluster $workloadCluster
     $planCheckStatus = if ([bool]$workloadRebootstrapPlan["management_healthy"]) { "ok" } else { "warning" }
     Add-Check -Id "workload_rebootstrap_plan" -Label "Workload cluster rebootstrap plan" -Status $planCheckStatus -Message "Generated a plan-only workload cluster rebootstrap sequence. No commands were executed." -Details @{
@@ -11889,6 +13901,23 @@ if ($PlanWorkloadRebootstrap) {
         management_preserved          = $true
         destructive_commands_executed = $false
         requires_user_confirmation    = $true
+        selected_workload_https_port  = [int]$PortPlan["workload_https"]
+    }
+}
+if ($PlanManagementPortRecovery) {
+    $managementPortRecoveryPlan = New-ManagementPortRecoveryPlan -ManagementCluster $managementCluster
+    Add-Check -Id "management_port_recovery_plan" -Label "Management cluster port recovery plan" -Status "warning" -Message "Generated a plan-only management port recovery sequence. No commands were executed." -Details @{
+        required                       = $false
+        mode                           = "plan_only"
+        affected_cluster               = "devdeploy-mgmt"
+        destructive_commands_executed  = $false
+        requires_user_confirmation     = $true
+        backup_verification_required   = $true
+        selected_management_https_port = [int]$PortPlan["management_https"]
+        internal_cluster_ready         = $managementPortRecoveryPlan["internal_cluster_ready"]
+        host_access_healthy            = [bool]$managementPortRecoveryPlan["host_access_healthy"]
+        recreation_required            = [bool]$managementPortRecoveryPlan["recreation_required"]
+        recreation_reason              = [string]$managementPortRecoveryPlan["recreation_reason"]
     }
 }
 $stableChecks = @($Checks | ForEach-Object { $_ })
@@ -11918,11 +13947,15 @@ $statusDocument = [ordered]@{
     checks           = $stableChecks
     artifacts        = $artifacts
     ports            = $PortPlan
+    port_selection   = $PortSelection
     next_actions     = [string[]]$nextActions
 }
 
-if ($PlanWorkloadRebootstrap) {
+if ($PlanWorkloadRebootstrap -or $PlanWorkloadPortRecovery) {
     $statusDocument["workload_rebootstrap_plan"] = $workloadRebootstrapPlan
+}
+if ($PlanManagementPortRecovery) {
+    $statusDocument["management_port_recovery_plan"] = $managementPortRecoveryPlan
 }
 
 $statusDocument | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $StatusPath -Encoding UTF8
@@ -11932,14 +13965,20 @@ if (-not $Quiet) {
     Write-Host ("DevDeploy Launcher preflight status: {0}" -f $overallStatus)
     Write-KindIntegrityConsole -Cluster $managementCluster -Required (Test-ManagementClusterIntegrityRequired)
     Write-KindIntegrityConsole -Cluster $workloadCluster -Required (Test-WorkloadClusterIntegrityRequired)
-    if ($PlanWorkloadRebootstrap) {
+    if ($PlanManagementPortRecovery) {
+        Write-ManagementPortRecoveryPlanConsole -Plan $managementPortRecoveryPlan
+    }
+    elseif ($PlanWorkloadRebootstrap -or $PlanWorkloadPortRecovery) {
         Write-WorkloadRebootstrapPlanConsole -Plan $workloadRebootstrapPlan
     }
     else {
         Write-ClusterRecoveryPlanConsole -RecoveryPlan $managementRecoveryPlan
         Write-ClusterRecoveryPlanConsole -RecoveryPlan $workloadRecoveryPlan
     }
-    if ($PlanWorkloadRebootstrap) {
+    if ($PlanManagementPortRecovery) {
+        Write-Host "Management port recovery plan was generated locally. Management and workload clusters were not changed."
+    }
+    elseif ($PlanWorkloadRebootstrap -or $PlanWorkloadPortRecovery) {
         Write-Host "Workload rebootstrap plan was generated locally. Management and workload clusters were not changed."
     }
     elseif ($CreateManagementCluster) {
