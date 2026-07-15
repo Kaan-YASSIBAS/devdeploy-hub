@@ -116,7 +116,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build frontend image
-        run: docker build --build-arg VITE_API_BASE_URL=http://localhost:8000/api/v1 -t devdeploy-frontend:security-scan ./frontend
+        run: docker build --pull --build-arg VITE_API_BASE_URL=http://localhost:8000/api/v1 -t devdeploy-frontend:security-scan ./frontend
 
       - name: Scan frontend image
         uses: aquasecurity/trivy-action@v0.35.0
