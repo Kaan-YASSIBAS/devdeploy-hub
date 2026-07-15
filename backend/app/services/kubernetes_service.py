@@ -18,11 +18,11 @@ class KubernetesService:
     def check_health(self) -> None:
         self._core_api.list_namespace(limit=1)
 
-    def get_cluster_summary(self) -> dict[str, Any]:
+    def get_cluster_summary(self, namespace: str) -> dict[str, Any]:
         namespaces = self._core_api.list_namespace().items
-        pods = self._core_api.list_pod_for_all_namespaces().items
-        deployments = self._apps_api.list_deployment_for_all_namespaces().items
-        services = self._core_api.list_service_for_all_namespaces().items
+        pods = self._core_api.list_namespaced_pod(namespace).items
+        deployments = self._apps_api.list_namespaced_deployment(namespace).items
+        services = self._core_api.list_namespaced_service(namespace).items
         nodes = self._core_api.list_node().items
 
         return {
@@ -113,13 +113,29 @@ class KubernetesService:
         if self._loaded:
             return
         try:
-            if settings.kubernetes_in_cluster:
+            configuration = client.Configuration()
+            workload_kubeconfig_path = settings.resolved_observability_workload_kubeconfig
+            if (
+                settings.observability_access_mode == "kubernetes_service_proxy"
+                and workload_kubeconfig_path
+            ):
+                load_options: dict[str, Any] = {
+                    "config_file": workload_kubeconfig_path,
+                    "client_configuration": configuration,
+                }
+                if settings.observability_workload_kubeconfig_context:
+                    load_options["context"] = settings.observability_workload_kubeconfig_context
+                config.load_kube_config(**load_options)
+                self._normalize_authorization_header(configuration)
+                self._current_context = (
+                    settings.observability_workload_kubeconfig_context or "workload-runtime"
+                )
+            elif settings.kubernetes_in_cluster:
                 config.load_incluster_config()
                 configuration = client.Configuration.get_default_copy()
                 self._normalize_authorization_header(configuration)
                 self._current_context = "in-cluster"
             else:
-                configuration = client.Configuration()
                 kubeconfig_path = (
                     str(Path(settings.kubeconfig_path).expanduser()) if settings.kubeconfig_path else None
                 )
@@ -138,10 +154,10 @@ class KubernetesService:
         # Some client versions load "authorization" while generated API methods expect "BearerToken".
         authorization = configuration.api_key.get("authorization") or configuration.api_key.get("BearerToken")
         if not authorization:
-            raise ConfigException("In-cluster service account token was not loaded")
+            raise ConfigException("Kubernetes service account token was not loaded")
         token = authorization.strip()
-        if token.lower().startswith("bearer "):
-            token = token.split(None, 1)[1].strip()
+        while token.lower().startswith("bearer "):
+            token = token[7:].strip()
         configuration.api_key["authorization"] = token
         configuration.api_key_prefix["authorization"] = "Bearer"
         configuration.api_key["BearerToken"] = token

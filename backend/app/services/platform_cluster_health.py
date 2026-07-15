@@ -84,19 +84,22 @@ class PlatformClusterHealthService:
         )
 
     def read_health(self) -> PlatformClusterHealthResponse:
-        return PlatformClusterHealthResponse(
-            management=self._check_cluster(
+        management = self._check_cluster(
                 probe=self.management_probe,
                 cluster_name="devdeploy-mgmt",
                 context=self.management_context,
                 role="management",
-            ),
-            workload=self._check_cluster(
+            )
+        workload = self._check_cluster(
                 probe=self.workload_probe,
                 cluster_name="devdeploy-workload",
                 context=self.workload_context,
                 role="workload",
-            ),
+            )
+        return PlatformClusterHealthResponse(
+            management=management,
+            workload=workload,
+            platform_ready=management.api_reachable and workload.api_reachable,
         )
 
     @staticmethod

@@ -32,3 +32,4 @@ class PlatformClusterHealthItem(BaseModel):
 class PlatformClusterHealthResponse(BaseModel):
     management: PlatformClusterHealthItem
     workload: PlatformClusterHealthItem
+    platform_ready: bool

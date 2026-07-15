@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 
 from app.core.config import settings
 from app.core.deps import get_current_user
@@ -17,16 +17,19 @@ def get_platform_cluster_health_service() -> PlatformClusterHealthService:
     return PlatformClusterHealthService.from_server_config(
         management_kubeconfig=settings.management_kubeconfig,
         management_kubeconfig_context=settings.management_kubeconfig_context,
-        workload_kubeconfig=settings.workload_kubeconfig,
-        workload_kubeconfig_context=settings.workload_kubeconfig_context,
+        workload_kubeconfig=settings.resolved_observability_workload_kubeconfig,
+        workload_kubeconfig_context=settings.observability_workload_kubeconfig_context,
         use_in_cluster_management=settings.kubernetes_in_cluster,
     )
 
 
 @router.get("/cluster-health", response_model=PlatformClusterHealthResponse)
 def get_platform_cluster_health(
+    response: Response,
     current_user: User = Depends(get_current_user),
     health_service: PlatformClusterHealthService = Depends(get_platform_cluster_health_service),
 ) -> PlatformClusterHealthResponse:
     _ = current_user
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Vary"] = "Authorization"
     return health_service.read_health()

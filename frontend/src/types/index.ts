@@ -793,4 +793,5 @@ export type PlatformClusterHealthItem = {
 export type PlatformClusterHealthResponse = {
   management: PlatformClusterHealthItem;
   workload: PlatformClusterHealthItem;
+  platform_ready: boolean;
 };

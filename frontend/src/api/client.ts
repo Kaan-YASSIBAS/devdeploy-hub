@@ -348,8 +348,10 @@ export const observabilityApi = {
     const { data } = await apiClient.get<ObservabilityStatus>("/observability/status");
     return data;
   },
-  async clusterSummary() {
-    const { data } = await apiClient.get<ClusterSummary>("/observability/cluster/summary");
+  async clusterSummary(namespace: string) {
+    const { data } = await apiClient.get<ClusterSummary>("/observability/cluster/summary", {
+      params: { namespace }
+    });
     return data;
   },
   async namespaces() {

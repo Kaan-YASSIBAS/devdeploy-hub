@@ -90,9 +90,18 @@ def observability_status(
 
 
 @router.get("/cluster/summary", response_model=ClusterSummary)
-def get_cluster_summary(current_user: User = Depends(get_current_user)) -> dict:
+def get_cluster_summary(
+    namespace: str = Query(default=DEFAULT_WORKLOAD_NAMESPACE),
+    current_user: User = Depends(get_current_user),
+) -> dict:
     _require_observability_admin(current_user)
-    return _call_observability(KubernetesService().get_cluster_summary)
+    try:
+        safe_namespace = validate_namespace(namespace)
+    except ObservabilityUnavailableError as exc:
+        raise _bad_request(str(exc)) from exc
+    return _call_observability(
+        lambda: KubernetesService().get_cluster_summary(namespace=safe_namespace)
+    )
 
 
 @router.get("/kubernetes/namespaces", response_model=list[NamespaceSummary])

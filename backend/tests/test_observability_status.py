@@ -14,6 +14,7 @@ from kubernetes.client import ApiException
 from app.api.v1 import observability
 from app.core.deps import get_current_user
 from app.schemas.observability import ObservabilityComponentHealth, ObservabilityStatus
+from app.services.kubernetes_service import KubernetesService
 from app.services.loki_service import LokiService
 from app.services.observability_errors import ObservabilityUnavailableError
 from app.services.observability_service_proxy import KubernetesServiceProxyTransport
@@ -478,6 +479,29 @@ class ObservabilityServiceProxyTransportTestCase(unittest.TestCase):
         self.assertEqual(request_auth["key"], "authorization")
         self.assertTrue(str(request_auth["value"]).startswith("Bearer "))
 
+    def test_service_proxy_normalizes_raw_kubeconfig_token_for_bearer_auth(self) -> None:
+        configuration = client.Configuration()
+        configuration.api_key["authorization"] = "raw-test-token"
+
+        KubernetesServiceProxyTransport._normalize_authorization_header(configuration)
+
+        self.assertEqual(configuration.api_key["authorization"], "raw-test-token")
+        self.assertEqual(configuration.api_key_prefix["authorization"], "Bearer")
+        self.assertEqual(configuration.api_key["BearerToken"], "raw-test-token")
+        self.assertEqual(configuration.api_key_prefix["BearerToken"], "Bearer")
+
+        api_client = FakeApiClient()
+        api_client.configuration = configuration
+        transport = KubernetesServiceProxyTransport(
+            api_client=api_client,
+            namespace="monitoring",
+            max_response_bytes=2 * 1024 * 1024,
+        )
+
+        transport.prometheus_query({"query": "vector(1)"})
+
+        self.assertEqual(api_client.calls[0]["_request_auth"]["value"], "Bearer raw-test-token")
+
     def test_json_kubeconfig_fallback_accepts_utf8_bom(self) -> None:
         kubeconfig = """{
           "apiVersion": "v1",
@@ -524,7 +548,10 @@ class ObservabilityServiceProxyTransportTestCase(unittest.TestCase):
 
         self.assertEqual(configuration.host, "https://127.0.0.1:58081")
         self.assertIn("authorization", configuration.api_key)
-        self.assertTrue(configuration.api_key["authorization"].startswith("Bearer "))
+        self.assertEqual(configuration.api_key["authorization"], "fake-token")
+        self.assertEqual(configuration.api_key_prefix["authorization"], "Bearer")
+        self.assertEqual(configuration.api_key["BearerToken"], "fake-token")
+        self.assertEqual(configuration.api_key_prefix["BearerToken"], "Bearer")
 
     def test_loki_service_proxy_uses_fixed_allowlisted_path(self) -> None:
         transport, api_client = self.transport()
@@ -723,6 +750,42 @@ class ObservabilityServiceProxyTransportTestCase(unittest.TestCase):
         self.assertTrue(status.loki.available)
         self.assertEqual(status.grafana.status, "connected")
         self.assertTrue(status.grafana.available)
+
+    def test_kubernetes_service_uses_observability_kubeconfig_in_service_proxy_mode(self) -> None:
+        load_calls: list[dict[str, object]] = []
+
+        def fake_load_kube_config(**kwargs):
+            load_calls.append(kwargs)
+            configuration = kwargs["client_configuration"]
+            configuration.api_key["authorization"] = "raw-token"
+
+        with (
+            patch("app.services.kubernetes_service.settings.observability_access_mode", "kubernetes_service_proxy"),
+            patch(
+                "app.services.kubernetes_service.settings.observability_workload_kubeconfig",
+                "/var/run/devdeploy/workload-observability/kubeconfig",
+            ),
+            patch(
+                "app.services.kubernetes_service.settings.observability_workload_kubeconfig_context",
+                "devdeploy-workload-observability",
+            ),
+            patch("app.services.kubernetes_service.config.load_kube_config", side_effect=fake_load_kube_config),
+            patch("app.services.kubernetes_service.config.load_incluster_config") as load_incluster,
+        ):
+            service = KubernetesService()
+            api_client = service._get_api_client()
+
+        self.assertEqual(len(load_calls), 1)
+        self.assertTrue(
+            str(load_calls[0]["config_file"]).replace("\\", "/").endswith(
+                "/var/run/devdeploy/workload-observability/kubeconfig"
+            )
+        )
+        self.assertEqual(load_calls[0]["context"], "devdeploy-workload-observability")
+        load_incluster.assert_not_called()
+        self.assertEqual(api_client.configuration.api_key["authorization"], "raw-token")
+        self.assertEqual(api_client.configuration.api_key_prefix["authorization"], "Bearer")
+        self.assertEqual(service._current_context, "devdeploy-workload-observability")
 
 
 if __name__ == "__main__":

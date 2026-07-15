@@ -63,6 +63,9 @@ class PlatformClusterHealthApiTestCase(unittest.TestCase):
         self.assertEqual(body["management"]["reason"], "ok")
         self.assertEqual(body["workload"]["status"], "healthy")
         self.assertTrue(body["workload"]["api_reachable"])
+        self.assertTrue(body["platform_ready"])
+        self.assertEqual(response.headers["cache-control"], "no-store, private")
+        self.assertEqual(response.headers["vary"], "Authorization")
 
     def test_workload_failure_returns_unreachable_without_500(self) -> None:
         self.authenticate()
@@ -76,6 +79,7 @@ class PlatformClusterHealthApiTestCase(unittest.TestCase):
         self.assertEqual(body["workload"]["status"], "unreachable")
         self.assertFalse(body["workload"]["api_reachable"])
         self.assertEqual(body["workload"]["reason"], "api_unreachable")
+        self.assertFalse(body["platform_ready"])
         self.assertIn("launcher preflight", body["workload"]["recommended_action"].lower())
         self.assertTrue(any("runtime status" in item.lower() for item in body["workload"]["impact"]))
         self.assertTrue(
@@ -118,6 +122,19 @@ class PlatformClusterHealthApiTestCase(unittest.TestCase):
         self.assertNotIn("untrusted-context", response_text)
         self.assertEqual(response.json()["management"]["context"], "kind-devdeploy-mgmt")
         self.assertEqual(response.json()["workload"]["context"], "kind-devdeploy-workload")
+
+    def test_authenticated_response_cannot_be_reused_without_authentication(self) -> None:
+        self.authenticate()
+        authenticated = self.get_health()
+        self.assertEqual(authenticated.status_code, 200)
+
+        del self.app.dependency_overrides[get_current_user]
+        unauthenticated = self.get_health()
+
+        self.assertEqual(unauthenticated.status_code, 401)
+        self.assertEqual(unauthenticated.headers.get("cache-control"), None)
+        self.assertEqual(self.management_probe.calls, 1)
+        self.assertEqual(self.workload_probe.calls, 1)
 
 
 if __name__ == "__main__":

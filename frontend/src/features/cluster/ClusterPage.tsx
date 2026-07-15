@@ -13,7 +13,7 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { StatCard } from "@/components/shared/StatCard";
 import type { KubernetesDeployment, KubernetesPod, KubernetesService } from "@/types";
 
-const DEFAULT_NAMESPACE = "devdeploy";
+const DEFAULT_NAMESPACE = "devdeploy-apps";
 
 function phaseVariant(phase: string | null): BadgeProps["variant"] {
   switch (phase?.toLowerCase()) {
@@ -59,7 +59,10 @@ export function ClusterPage() {
   const { t } = useTranslation();
   const [namespace, setNamespace] = useState(DEFAULT_NAMESPACE);
 
-  const summaryQuery = useQuery({ queryKey: ["observability", "cluster-summary"], queryFn: observabilityApi.clusterSummary });
+  const summaryQuery = useQuery({
+    queryKey: ["observability", "cluster-summary", namespace],
+    queryFn: () => observabilityApi.clusterSummary(namespace)
+  });
   const namespacesQuery = useQuery({ queryKey: ["observability", "namespaces"], queryFn: observabilityApi.namespaces });
   const podsQuery = useQuery({ queryKey: ["observability", "pods", namespace], queryFn: () => observabilityApi.pods(namespace) });
   const deploymentsQuery = useQuery({

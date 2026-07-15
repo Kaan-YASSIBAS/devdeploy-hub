@@ -21,6 +21,9 @@ spec:
         app.kubernetes.io/component: frontend
         app.kubernetes.io/part-of: devdeploy
         app.kubernetes.io/managed-by: devdeploy-launcher
+      annotations:
+        devdeploy.io/cluster-summary: namespace-scoped-v1
+        devdeploy.io/setup-route-guard: platform-health-v1
     spec:
       automountServiceAccountToken: false
       securityContext:
