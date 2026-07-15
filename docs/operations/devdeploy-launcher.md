@@ -568,7 +568,8 @@ The launcher checks:
   - `8443`
   - `58081`
   - `8081`
-  - `8444`
+  - management HTTPS, preferably `8443` when the host allows it
+  - workload HTTPS, preferably `8444` when the host allows it
 - Existing kind clusters.
 - Current kubectl context, if available.
 
@@ -576,10 +577,14 @@ Docker, Docker daemon, kind, kubectl, and required ports are treated as blocking
 
 If a required port such as `8080` is busy before the matching DevDeploy cluster exists, the launcher exits with a failed status. Preview mode still writes deterministic kind config files so users can inspect the planned cluster configuration, but the configs cannot be used until blocking ports are freed.
 
+Before generating kind config previews, the launcher validates candidate host ports against active bind availability, Docker-published ports and their owning containers, Windows excluded TCP port ranges, and collisions with every other selected DevDeploy host port. Management HTTPS uses `8443` as the preferred candidate. Workload HTTPS uses `8444` as the preferred candidate. If Windows reserves either port, for example through an excluded range such as `8390-8489`, the launcher selects the first deterministic safe fallback from that cluster's candidate list and records the selected values in `launcher-status.json`. Candidate evaluation is de-duplicated and remains in deterministic order.
+
+For an existing cluster, the launcher preserves its immutable HTTPS port when HostConfig, NetworkSettings, and `docker port` agree, the port belongs to the expected DevDeploy control-plane container, and Windows does not exclude it. A failed bind probe is expected for that valid existing publication and is not treated as a collision. A port owned by the other DevDeploy cluster or an unrelated Docker container remains unavailable. Candidate details expose `docker_port_owner`, `owned_by_expected_cluster`, `owned_by_other_devdeploy_cluster`, and `owned_by_unrelated_container` without logging container output beyond the sanitized owner name.
+
 After a DevDeploy cluster exists, its expected ports may already be occupied by that cluster. In that case, the launcher treats the port usage as expected instead of a blocking failure:
 
-- `58080`, `8080`, and `8443` are expected when `devdeploy-mgmt` exists.
-- `58081`, `8081`, and `8444` are expected when `devdeploy-workload` exists.
+- `58080`, `8080`, and the selected management HTTPS port are expected when `devdeploy-mgmt` exists.
+- `58081`, `8081`, and the selected workload HTTPS port are expected when `devdeploy-workload` exists.
 
 ## Diagnose kind API Port Mapping Integrity
 
@@ -592,11 +597,14 @@ Cluster summaries include:
 - `api_port_published`
 - `expected_api_port`
 - `actual_api_port`
+- `restart_policy_name`
+- `restart_policy_healthy`
+- `restart_policy_reconciliation_needed`
 - `kubeconfig_reachable`
 - `integrity_status`
 - `recommended_action`
 
-Integrity statuses are `ok`, `cluster_missing`, `container_missing`, `container_stopped`, `api_port_unpublished`, `api_port_mismatch`, `kubeconfig_unreachable`, `docker_unavailable`, and `unknown`. A broken management mapping is blocking for management operations. A broken workload mapping is blocking for default preflight and workload operations, but remains a warning for management-only modes that do not require the workload API.
+Integrity statuses are `ok`, `cluster_missing`, `container_missing`, `container_stopped`, `api_port_unpublished`, `api_port_mismatch`, `kubeconfig_unreachable`, `docker_unavailable`, `management_cluster_recreation_required`, `workload_cluster_recreation_required`, and `unknown`. A broken management mapping is blocking for management operations. A broken workload mapping is blocking for default preflight and workload operations, but remains a warning for management-only modes that do not require the workload API.
 
 A Docker Desktop or WSL integration failure may leave `devdeploy-mgmt-control-plane` or `devdeploy-workload-control-plane` running while `docker port <container> 6443/tcp` returns no host mapping. Symptoms include `kubectl` refusing connections to `127.0.0.1:58080` or `127.0.0.1:58081`, and `kind export kubeconfig` being unable to discover the published API server port.
 
@@ -609,6 +617,30 @@ Recovery is intentionally manual:
 5. Recreate only the affected kind cluster if `6443/tcp` is still unpublished.
 
 The launcher does not stop Docker Desktop, delete clusters, recreate clusters, export kubeconfig, or mutate Kubernetes as part of this diagnostic.
+
+### Docker Restart Policy
+
+kind creates node containers with Docker restart policy defaults such as `on-failure` with a retry count. A clean Windows or Docker Desktop shutdown can exit with code `0`, leaving a kind node stopped on the next startup. DevDeploy expects its kind node containers to use:
+
+```text
+unless-stopped
+```
+
+Default preflight, `-GenerateKindConfigs`, and plan-only recovery modes verify and report the restart policy but do not change it. Existing healthy clusters whose node container still uses `on-failure` are reported with `restart_policy_reconciliation_needed: true`.
+
+The launcher reconciles restart policy only in explicit mutating modes:
+
+- After successful `-CreateManagementCluster`, only `devdeploy-mgmt-control-plane` is updated.
+- After successful `-CreateWorkloadCluster`, only `devdeploy-workload-control-plane` is updated.
+- `-RepairDevDeployKindRestartPolicies` updates only those two expected DevDeploy kind control-plane containers.
+
+The repair mode is intentionally narrow:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -RepairDevDeployKindRestartPolicies
+```
+
+It does not delete, create, start, stop, or recreate clusters. It does not target arbitrary Docker containers, apply Kubernetes manifests, or run Helm. If Docker rejects the update, the launcher records a failed check and performs no cleanup.
 
 The authenticated backend endpoint `GET /api/v1/platform/cluster-health` provides the UI with a coarse, sanitized API reachability status for both clusters. The product shell uses that status to warn when management services may be unstable or when workload runtime, untracked discovery, drift comparison, and reconcile validation may be unavailable. The backend does not inspect Docker or WSL; run launcher preflight for the detailed container and host port mapping diagnosis described above.
 
@@ -669,6 +701,81 @@ Try non-destructive recovery first:
 If the mapping is still broken, recreate only `devdeploy-workload` through its explicit launcher mode and then rebootstrap workload cluster access from management and Argo CD. Do not recreate `devdeploy-mgmt` for a workload-only failure. Workload runtime resources may be lost, but DevDeploy product records in the management database and GitOps manifests remain. Managed deployments can then use Recover or Redeploy after workload access is healthy.
 
 For a stopped workload control-plane container, the plan first suggests `docker start devdeploy-workload-control-plane`, followed by another preflight. The launcher does not run that command itself.
+
+### Plan Workload Port Recovery
+
+Windows can reserve port ranges that overlap with an existing kind cluster's immutable Docker port bindings. If `devdeploy-workload` was created with `8444 -> 443` and Windows later reserves a range such as `8390-8489`, Docker may refuse to start the workload control-plane container with a socket permission error. The launcher reports this as `workload_cluster_recreation_required` when the stopped workload container has an unusable HTTPS binding.
+
+To generate a workload-only port recovery plan:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -PlanWorkloadPortRecovery
+```
+
+This mode is read-only. It does not delete `devdeploy-workload`, does not create a new cluster, does not mutate `devdeploy-mgmt`, does not apply manifests, and does not run Helm. It records the selected safe workload HTTPS host port in `ports.workload_https` and `port_selection.workload_https`.
+
+After review, the intended recovery sequence is:
+
+1. Confirm that `devdeploy-mgmt` is healthy and must be preserved.
+2. Delete only the old workload cluster after explicit user confirmation:
+
+   ```powershell
+   kind delete cluster --name devdeploy-workload
+   ```
+
+3. Generate kind config previews with the selected safe workload HTTPS port:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -GenerateKindConfigs
+   ```
+
+4. Recreate only the workload cluster:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -CreateWorkloadCluster
+   ```
+
+5. Recreate `devdeploy-apps` and namespace-scoped deploy permissions:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -GrantWorkloadDeployPermissions
+   ```
+
+6. Refresh workload endpoint discovery, Argo CD cluster registration, Root Application intent, and observability:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -DiscoverWorkloadClusterEndpoint
+   powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -RegisterWorkloadClusterWithArgoCD
+   powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -BootstrapGitOpsRootApplication
+   powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -BootstrapWorkloadObservability
+   ```
+
+7. Verify the workload registration, permissions, Root Application, observability, and GitOps-recovered workloads with the existing read-only verify modes.
+
+The recovery preserves the management cluster, PostgreSQL and domain records, GitOps repository contents, and Argo CD Root Application intent. Runtime resources in the old workload cluster may be lost, but managed apps are recovered from GitOps and product records.
+
+### Plan Management Port Recovery
+
+If `devdeploy-mgmt` was created with `8443 -> 443` and Windows later reserves that port, Docker may leave the management control-plane container host-inaccessible even though Kubernetes remains internally Ready inside the container. The launcher evaluates internal Kubernetes readiness separately from required host publication and host API reachability. A missing required API, HTTP, or HTTPS publication, or an unusable immutable HTTPS binding, is reported as `management_cluster_recreation_required`; internal readiness does not make broken host access healthy.
+
+To generate a read-only management recovery plan:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\launcher\devdeploy-launcher.ps1 -PlanManagementPortRecovery
+```
+
+This mode never deletes or recreates `devdeploy-mgmt`, never mutates `devdeploy-workload`, does not run `docker update`, does not apply manifests, and does not run Helm. It records the selected safe management HTTPS host port in `ports.management_https` and `port_selection.management_https`.
+
+Management recovery is riskier than workload recovery because `devdeploy-mgmt` hosts PostgreSQL and platform state. Any future destructive management recreation requires explicit user confirmation and a verified PostgreSQL backup outside the cluster. This phase intentionally does not add an automatic management delete/recreate action.
+
+The plan-only output includes:
+
+- Current management diagnosis.
+- Separate `internal_cluster_ready`, `host_access_healthy`, `recreation_required`, and `recreation_reason` values.
+- The selected management HTTPS replacement port.
+- A backup verification requirement.
+- A future recovery outline that preserves the workload cluster and GitOps repository intent.
+- Post-recovery validation commands generated from the selected `PortPlan` values.
 
 #### Management Cluster Warning
 
@@ -809,6 +916,8 @@ The `platform_bootstrap` object summarizes platform component bootstrap state. I
 
 It also includes `devdeploy_namespace`, which reports whether the management `devdeploy` namespace exists.
 
+Narrow launcher modes merge platform status instead of rebuilding unrelated components as `not_started`. Current live or mode-specific evidence takes precedence. If a component was not checked, a prior positively verified state may be carried forward with `status_source: persisted_prior_verified_state` and `carried_forward: true`; otherwise the component reports `not_checked`. Current live `absent`, `degraded`, or failure evidence always overrides persisted success. The additive `status_source`, `observed_in_mode`, and `carried_forward` fields let backend and Setup Wizard consumers distinguish current observations from persisted verified state without changing the schema version.
+
 Current component keys:
 
 - `ingress_nginx`
@@ -818,8 +927,13 @@ Current component keys:
 - `frontend_image`
 - `frontend`
 - `argocd`
+- `workload_cluster`
+- `workload_cluster_endpoint`
+- `argocd_workload_cluster`
+- `workload_deploy_permissions`
 - `gitops_repository`
 - `gitops_root_application`
+- `workload_observability`
 
 `platform_bootstrap.status` may be:
 
@@ -851,10 +965,12 @@ The `ports` object includes the selected default ports:
 
 - `management_api`: `58080`
 - `management_http`: `8080`
-- `management_https`: `8443`
+- `management_https`: the selected safe management HTTPS port, preferring `8443` when available
 - `workload_api`: `58081`
 - `workload_http`: `8081`
-- `workload_https`: `8444`
+- `workload_https`: the selected safe workload HTTPS port, preferring `8444` when available
+
+The top-level `port_selection` object records why each HTTPS port was selected, the preferred default, the candidate list, any detected Windows excluded TCP ranges, and the selected port. This keeps backend and Setup Wizard consumers from assuming `8443` or `8444` on machines where Windows reserves those ports.
 
 The `artifacts` object always includes:
 
@@ -927,7 +1043,7 @@ When `-BootstrapWorkloadObservability` is used, status includes:
 
 - `platform_bootstrap.components.workload_observability`
 
-This explicit mode installs or verifies the workload-cluster observability stack in `kind-devdeploy-workload/monitoring`: kube-prometheus-stack, Prometheus, kube-state-metrics, node-exporter, Grafana, Loki, Grafana Alloy, and Grafana datasource provisioning. It also prepares the management backend for cross-cluster observability reads by creating a narrow workload-cluster service account and a management-cluster backend kubeconfig Secret. For local uvicorn development, the launcher writes the same narrow identity to `.devdeploy/local/kubeconfig/observability-workload-kubeconfig.yaml` and updates only the observability-specific backend `.env` keys with `../.devdeploy/local/kubeconfig/observability-workload-kubeconfig.yaml`. The host-local file derives its API server endpoint and CA data from the selected normal workload kubeconfig/context, while the management-cluster Secret can use the Docker-network control-plane endpoint. The generated kubeconfigs use only that service account identity; the launcher does not mount the host kubeconfig into the backend and does not replace the normal workload kubeconfig.
+This explicit mode installs or verifies the workload-cluster observability stack in `kind-devdeploy-workload/monitoring`: kube-prometheus-stack, Prometheus, kube-state-metrics, node-exporter, Grafana, Loki, Grafana Alloy, and Grafana datasource provisioning. It also prepares the management backend for cross-cluster reads by creating one narrow workload-cluster service account and one management-cluster backend kubeconfig Secret. General read-only workload runtime readers and observability readers use that credential. For local uvicorn development, the launcher writes the identity to `.devdeploy/local/kubeconfig/observability-workload-kubeconfig.yaml` and configures the observability backend `.env` keys with the portable relative path. It does not replace `DEVDEPLOY_WORKLOAD_KUBECONFIG`, which remains a separate explicit credential for operations that require scoped workload mutation. The host-local read-only file derives its API server endpoint and CA data from the selected workload kubeconfig/context, while the management-cluster Secret uses the Docker-network control-plane endpoint. The launcher never mounts the host kubeconfig into the backend.
 
 The Launcher is the end-user entry point for Helm dependency handling. If a compatible Helm v3 CLI is already available on PATH, workload observability bootstrap reuses it. If Helm is missing, bootstrap mode prepares pinned Helm `v3.18.6` from the official `https://get.helm.sh` release archive, verifies the downloaded archive with the official `.sha256sum`, extracts it under `.devdeploy/local/tools/helm/v3.18.6`, and records only sanitized dependency status. This does not change the global PATH, require administrator rights, or write credentials. `-VerifyWorkloadObservability` remains read-only: it can use an already compatible or previously verified DevDeploy-managed Helm binary, but it does not download or install Helm.
 
