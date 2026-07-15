@@ -71,27 +71,60 @@ class ObservabilityBootstrapAssetsTestCase(unittest.TestCase):
 
     def test_backend_service_proxy_reader_rbac_is_narrow(self) -> None:
         documents = self.read_yaml_documents("backend-service-proxy-reader.yaml")
-        kinds = {document["kind"]: document for document in documents}
-        role = kinds["Role"]
-        role_binding = kinds["RoleBinding"]
+        by_kind_and_name = {
+            (document["kind"], document["metadata"]["name"]): document
+            for document in documents
+        }
+        service_account = by_kind_and_name[("ServiceAccount", "devdeploy-observability-reader")]
+        proxy_role = by_kind_and_name[("Role", "devdeploy-observability-service-proxy-reader")]
+        proxy_binding = by_kind_and_name[("RoleBinding", "devdeploy-observability-service-proxy-reader")]
+        runtime_role = by_kind_and_name[("Role", "devdeploy-workload-runtime-reader")]
+        runtime_binding = by_kind_and_name[("RoleBinding", "devdeploy-workload-runtime-reader")]
+        cluster_role = by_kind_and_name[("ClusterRole", "devdeploy-observability-namespace-reader")]
+        cluster_role_binding = by_kind_and_name[
+            ("ClusterRoleBinding", "devdeploy-observability-namespace-reader")
+        ]
 
-        self.assertEqual(kinds["ServiceAccount"]["metadata"]["name"], "devdeploy-observability-reader")
-        self.assertEqual(role["metadata"]["namespace"], "monitoring")
-        self.assertEqual(role_binding["subjects"][0]["name"], "devdeploy-observability-reader")
-        self.assertEqual(role_binding["roleRef"]["name"], "devdeploy-observability-service-proxy-reader")
+        self.assertEqual(service_account["metadata"]["namespace"], "monitoring")
+        self.assertEqual(proxy_role["metadata"]["namespace"], "monitoring")
+        self.assertEqual(proxy_binding["subjects"][0]["name"], "devdeploy-observability-reader")
+        self.assertEqual(proxy_binding["roleRef"]["name"], "devdeploy-observability-service-proxy-reader")
+        self.assertEqual(runtime_role["metadata"]["namespace"], "devdeploy-apps")
+        self.assertEqual(runtime_binding["subjects"][0]["name"], "devdeploy-observability-reader")
+        self.assertEqual(runtime_binding["subjects"][0]["namespace"], "monitoring")
+        self.assertEqual(runtime_binding["roleRef"]["name"], "devdeploy-workload-runtime-reader")
+        self.assertEqual(cluster_role_binding["subjects"][0]["name"], "devdeploy-observability-reader")
+        self.assertEqual(cluster_role_binding["subjects"][0]["namespace"], "monitoring")
+        self.assertEqual(cluster_role_binding["roleRef"]["name"], "devdeploy-observability-namespace-reader")
 
-        rules = {(tuple(rule["resources"]), tuple(rule["verbs"])) for rule in role["rules"]}
-        self.assertIn((("services",), ("get", "list", "watch")), rules)
-        self.assertIn((("services/proxy",), ("get",)), rules)
+        proxy_rules = {(tuple(rule["resources"]), tuple(rule["verbs"])) for rule in proxy_role["rules"]}
+        self.assertIn((("services",), ("get", "list", "watch")), proxy_rules)
+        self.assertIn((("services/proxy",), ("get",)), proxy_rules)
+        runtime_rules = {
+            (tuple(rule["apiGroups"]), tuple(rule["resources"]), tuple(rule["verbs"]))
+            for rule in runtime_role["rules"]
+        }
+        self.assertIn((("",), ("pods", "services"), ("get", "list", "watch")), runtime_rules)
+        self.assertIn((("",), ("services/proxy",), ("get",)), runtime_rules)
+        self.assertIn((("apps",), ("deployments",), ("get", "list", "watch")), runtime_rules)
+        cluster_rules = {(tuple(rule["resources"]), tuple(rule["verbs"])) for rule in cluster_role["rules"]}
+        self.assertEqual(cluster_rules, {(("namespaces", "nodes"), ("get", "list", "watch"))})
 
-        text = str(role).lower()
+        text = str(documents).lower()
         self.assertNotIn("secrets", text)
-        self.assertNotIn("pods", text)
-        self.assertNotIn("deployments", text)
         self.assertNotIn("create", text)
         self.assertNotIn("update", text)
         self.assertNotIn("patch", text)
         self.assertNotIn("delete", text)
+        self.assertNotIn("impersonate", text)
+
+    def test_workload_observability_kustomization_renders_only_manifest_assets(self) -> None:
+        kustomization = self.read_yaml("kustomization.yaml")
+
+        self.assertEqual(
+            kustomization["resources"],
+            ["backend-service-proxy-reader.yaml", "grafana-datasources.yaml"],
+        )
 
     def test_legacy_terraform_no_longer_hard_codes_grafana_admin_password(self) -> None:
         main_tf = (self.repository_root / "infra" / "terraform" / "local" / "main.tf").read_text(

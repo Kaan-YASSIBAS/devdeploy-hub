@@ -387,6 +387,31 @@ class KubernetesGitOpsStatusReaderTestCase(unittest.TestCase):
 
     @patch("app.services.gitops.kubernetes_status_reader.client.ApiClient")
     @patch("app.services.gitops.kubernetes_status_reader.config.load_kube_config")
+    def test_token_kubeconfig_is_normalized_for_generated_api_clients(
+        self,
+        load_kube_config,
+        api_client,
+    ) -> None:
+        def configure_token(*, client_configuration, **kwargs):
+            _ = kwargs
+            client_configuration.api_key["authorization"] = "Bearer raw-test-token"
+
+        load_kube_config.side_effect = configure_token
+
+        KubernetesGitOpsStatusReader._build_api_client(
+            kubeconfig_path="workload-kubeconfig.yaml",
+            kubeconfig_context="devdeploy-workload-observability",
+            allow_in_cluster=False,
+        )
+
+        configuration = api_client.call_args.args[0]
+        self.assertEqual(configuration.api_key["authorization"], "raw-test-token")
+        self.assertEqual(configuration.api_key_prefix["authorization"], "Bearer")
+        self.assertEqual(configuration.api_key["BearerToken"], "raw-test-token")
+        self.assertEqual(configuration.api_key_prefix["BearerToken"], "Bearer")
+
+    @patch("app.services.gitops.kubernetes_status_reader.client.ApiClient")
+    @patch("app.services.gitops.kubernetes_status_reader.config.load_kube_config")
     def test_empty_context_preserves_default_kubeconfig_behavior(
         self,
         load_kube_config,
@@ -447,8 +472,12 @@ class GitOpsStatusServiceFactoryTestCase(unittest.TestCase):
             patch.object(settings, "status_reader_mode", "kubernetes"),
             patch.object(settings, "management_kubeconfig", "mgmt.yaml"),
             patch.object(settings, "management_kubeconfig_context", "kind-devdeploy-mgmt"),
-            patch.object(settings, "workload_kubeconfig", "workload.yaml"),
-            patch.object(settings, "workload_kubeconfig_context", "kind-devdeploy-workload"),
+            patch.object(settings, "observability_workload_kubeconfig", "workload.yaml"),
+            patch.object(
+                settings,
+                "observability_workload_kubeconfig_context",
+                "kind-devdeploy-workload",
+            ),
             patch.object(settings, "kubernetes_in_cluster", False),
         ):
             get_gitops_status_service.cache_clear()

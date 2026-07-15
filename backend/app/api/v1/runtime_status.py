@@ -39,8 +39,8 @@ def get_workload_runtime_reader() -> WorkloadRuntimeReader | None:
         return None
     try:
         return KubernetesGitOpsStatusReader.from_workload_server_config(
-            workload_kubeconfig=settings.workload_kubeconfig,
-            workload_kubeconfig_context=settings.workload_kubeconfig_context,
+            workload_kubeconfig=settings.resolved_observability_workload_kubeconfig,
+            workload_kubeconfig_context=settings.observability_workload_kubeconfig_context,
         )
     except Exception as error:
         logger.warning(
@@ -63,8 +63,8 @@ def get_workload_service_proxy_client() -> WorkloadServiceProxy | None:
         return None
     try:
         return KubernetesServiceProxyClient.from_server_config(
-            workload_kubeconfig=settings.workload_kubeconfig,
-            workload_kubeconfig_context=settings.workload_kubeconfig_context,
+            workload_kubeconfig=settings.resolved_observability_workload_kubeconfig,
+            workload_kubeconfig_context=settings.observability_workload_kubeconfig_context,
         )
     except Exception as error:
         logger.warning(
@@ -80,8 +80,8 @@ def get_workload_runtime_cleanup_client() -> WorkloadRuntimeCleanupClient | None
         return None
     try:
         return KubernetesWorkloadRuntimeCleanupClient.from_server_config(
-            workload_kubeconfig=settings.workload_kubeconfig,
-            workload_kubeconfig_context=settings.workload_kubeconfig_context,
+            workload_kubeconfig=settings.resolved_workload_kubeconfig,
+            workload_kubeconfig_context=settings.resolved_workload_kubeconfig_context,
         )
     except Exception as error:
         logger.warning(
@@ -97,8 +97,8 @@ def get_recovered_workload_readiness_client() -> RecoveredWorkloadReadinessClien
         return None
     try:
         return KubernetesRecoveredWorkloadReadinessClient.from_server_config(
-            workload_kubeconfig=settings.workload_kubeconfig,
-            workload_kubeconfig_context=settings.workload_kubeconfig_context,
+            workload_kubeconfig=settings.resolved_observability_workload_kubeconfig,
+            workload_kubeconfig_context=settings.observability_workload_kubeconfig_context,
         )
     except Exception as error:
         logger.warning(

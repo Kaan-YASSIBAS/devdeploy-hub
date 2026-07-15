@@ -21,6 +21,9 @@ spec:
         app.kubernetes.io/component: backend
         app.kubernetes.io/part-of: devdeploy-hub
         app.kubernetes.io/managed-by: devdeploy-launcher
+      annotations:
+        devdeploy.io/backend-tempdir: /var/run/devdeploy/tmp
+        devdeploy.io/observability-client: namespace-summary-rbac-v4
     spec:
       securityContext:
         runAsNonRoot: true
@@ -75,7 +78,11 @@ spec:
           env:
             - name: ACCESS_TOKEN_EXPIRE_MINUTES
               value: "60"
+            - name: TMPDIR
+              value: /var/run/devdeploy/tmp
           volumeMounts:
+            - name: backend-tmp
+              mountPath: /var/run/devdeploy/tmp
             - name: observability-workload-kubeconfig
               mountPath: /var/run/devdeploy/workload-observability
               readOnly: true
@@ -112,6 +119,9 @@ spec:
               drop:
                 - ALL
       volumes:
+        - name: backend-tmp
+          emptyDir:
+            sizeLimit: 64Mi
         - name: observability-workload-kubeconfig
           secret:
             secretName: devdeploy-backend-workload-kubeconfig

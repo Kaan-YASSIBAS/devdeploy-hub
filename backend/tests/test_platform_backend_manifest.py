@@ -13,10 +13,16 @@ class PlatformBackendManifestTestCase(unittest.TestCase):
             )
         )
         pod_spec = deployment["spec"]["template"]["spec"]
+        pod_metadata = deployment["spec"]["template"]["metadata"]
         migration = next(
             item for item in pod_spec["initContainers"] if item["name"] == "database-migrations"
         )
 
+        self.assertEqual(pod_metadata["annotations"]["devdeploy.io/backend-tempdir"], "/var/run/devdeploy/tmp")
+        self.assertEqual(
+            pod_metadata["annotations"]["devdeploy.io/observability-client"],
+            "namespace-summary-rbac-v4",
+        )
         self.assertEqual(migration["image"], "devdeploy-backend:local")
         self.assertEqual(migration["command"], ["python", "-m", "app.db.migrate"])
         self.assertEqual([item["name"] for item in migration["env"]], ["DATABASE_URL"])
@@ -35,13 +41,26 @@ class PlatformBackendManifestTestCase(unittest.TestCase):
             "/api/v1/health/ready",
         )
         self.assertEqual(backend["livenessProbe"]["httpGet"]["path"], "/api/v1/health")
+        self.assertTrue(backend["securityContext"]["readOnlyRootFilesystem"])
+        self.assertFalse(backend["securityContext"]["allowPrivilegeEscalation"])
+
+        env = {item["name"]: item["value"] for item in backend["env"] if "value" in item}
+        self.assertEqual(env["TMPDIR"], "/var/run/devdeploy/tmp")
+
         volume_names = [item["name"] for item in backend["volumeMounts"]]
+        self.assertIn("backend-tmp", volume_names)
         self.assertIn("observability-workload-kubeconfig", volume_names)
+        temp_mount = next(item for item in backend["volumeMounts"] if item["name"] == "backend-tmp")
+        self.assertEqual(temp_mount["mountPath"], "/var/run/devdeploy/tmp")
+        self.assertNotIn("readOnly", temp_mount)
         observability_mount = next(
             item for item in backend["volumeMounts"] if item["name"] == "observability-workload-kubeconfig"
         )
         self.assertEqual(observability_mount["mountPath"], "/var/run/devdeploy/workload-observability")
         self.assertTrue(observability_mount["readOnly"])
+        self.assertFalse(any("hostPath" in volume for volume in pod_spec["volumes"]))
+        temp_volume = next(item for item in pod_spec["volumes"] if item["name"] == "backend-tmp")
+        self.assertEqual(temp_volume["emptyDir"], {"sizeLimit": "64Mi"})
         observability_secret = next(
             item for item in pod_spec["volumes"] if item["name"] == "observability-workload-kubeconfig"
         )
@@ -72,6 +91,7 @@ class PlatformBackendManifestTestCase(unittest.TestCase):
             "devdeploy-workload-observability",
         )
         self.assertEqual(data["DEVDEPLOY_WORKLOAD_KUBECONFIG"], "")
+        self.assertEqual(data["DEVDEPLOY_WORKLOAD_KUBECONFIG_CONTEXT"], "")
         self.assertNotIn("ClusterIP", str(data))
         self.assertNotIn(".svc.cluster.local", str(data))
 

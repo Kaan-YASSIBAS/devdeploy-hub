@@ -191,6 +191,7 @@ class KubernetesServiceProxyTransport:
             if settings.observability_workload_kubeconfig_context:
                 load_options["context"] = settings.observability_workload_kubeconfig_context.strip()
             config.load_kube_config(**load_options)
+            KubernetesServiceProxyTransport._normalize_authorization_header(configuration)
         except (ConfigException, OSError, ValueError) as exc:
             KubernetesServiceProxyTransport._load_json_kubeconfig_fallback(
                 kubeconfig_path,
@@ -208,6 +209,21 @@ class KubernetesServiceProxyTransport:
         return client.ApiClient(configuration)
 
     @staticmethod
+    def _normalize_authorization_header(configuration: client.Configuration) -> None:
+        authorization = configuration.api_key.get("authorization") or configuration.api_key.get("BearerToken")
+        if not authorization:
+            return
+        token = authorization.strip()
+        while token.lower().startswith("bearer "):
+            token = token[7:].strip()
+        if not token:
+            return
+        configuration.api_key["authorization"] = token
+        configuration.api_key_prefix["authorization"] = "Bearer"
+        configuration.api_key["BearerToken"] = token
+        configuration.api_key_prefix["BearerToken"] = "Bearer"
+
+    @staticmethod
     def _load_json_kubeconfig_fallback(
         kubeconfig_path: str,
         configuration: client.Configuration,
@@ -222,6 +238,7 @@ class KubernetesServiceProxyTransport:
                 raise ValueError("Kubeconfig JSON root must be an object.")
             active_context = context.strip() if context and context.strip() else None
             KubeConfigLoader(config_dict=payload, active_context=active_context).load_and_set(configuration)
+            KubernetesServiceProxyTransport._normalize_authorization_header(configuration)
             logger.info(
                 "Loaded observability workload kubeconfig with JSON fallback after standard loader failure: error=%s",
                 original_error.__class__.__name__,
@@ -305,10 +322,12 @@ class KubernetesServiceProxyTransport:
         authorization = api_key.get("authorization") or api_key.get("Authorization")
         if not authorization:
             raise ObservabilityUnavailableError("Workload kubeconfig credentials are unavailable.")
+        prefix = (getattr(configuration, "api_key_prefix", {}) or {}).get("authorization")
+        value = f"{prefix} {authorization}" if prefix and not str(authorization).lower().startswith("bearer ") else authorization
         return {
             "in": "header",
             "key": "authorization",
-            "value": authorization,
+            "value": value,
         }
 
     def _enforce_size(self, body: bytearray, service_label: str) -> None:

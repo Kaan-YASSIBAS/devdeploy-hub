@@ -519,6 +519,8 @@ class KubernetesGitOpsStatusReader:
                 if normalized_context:
                     load_options["context"] = normalized_context
                 config.load_kube_config(**load_options)
+                if configuration.api_key.get("authorization") or configuration.api_key.get("BearerToken"):
+                    KubernetesGitOpsStatusReader._normalize_authorization_header(configuration)
             elif allow_in_cluster:
                 config.load_incluster_config(client_configuration=configuration)
                 KubernetesGitOpsStatusReader._normalize_authorization_header(configuration)

@@ -131,6 +131,15 @@ class Settings(BaseSettings):
     def resolved_observability_workload_kubeconfig(self) -> str | None:
         return self.resolve_runtime_path(self.observability_workload_kubeconfig)
 
+    @property
+    def resolved_workload_kubeconfig(self) -> str | None:
+        return self.resolve_runtime_path(self.workload_kubeconfig)
+
+    @property
+    def resolved_workload_kubeconfig_context(self) -> str | None:
+        configured = self.workload_kubeconfig_context
+        return configured.strip() if configured and configured.strip() else None
+
     def resolve_runtime_path(self, path_value: str | None) -> str | None:
         if path_value is None or not path_value.strip():
             return None
