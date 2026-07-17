@@ -90,7 +90,7 @@ const setupStepTitleKeys: Record<SetupStepKey, string> = {
 export function SettingsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { getCurrentUser, user } = useAuth();
   const queryClient = useQueryClient();
   const [profileName, setProfileName] = useState("");
   const [workspaceName, setWorkspaceName] = useState("");
@@ -184,9 +184,10 @@ export function SettingsPage() {
 
   const profileMutation = useMutation({
     mutationFn: () => settingsApi.updateProfile({ display_name: profileName.trim() }),
-    onSuccess: async () => {
+    onSuccess: async (profile) => {
       toast.success(t("settings.profile.saved"));
-      await queryClient.invalidateQueries({ queryKey: ["settings", "profile"] });
+      queryClient.setQueryData(["settings", "profile"], profile);
+      await getCurrentUser();
     },
     onError: (error) => toast.error(getApiErrorMessage(error) || t("api.errors.settingsSaveFailed"))
   });

@@ -275,8 +275,6 @@ class PrometheusService:
     def _timeseries_definitions(namespace: str, restart_window: str) -> dict[str, dict[str, str]]:
         namespace_value = escape_label_value(namespace)
         namespace_selector = f'namespace="{namespace_value}"'
-        backend_service_selector = 'service="devdeploy-backend"'
-        backend_job_selector = 'job=~".*devdeploy-backend.*"'
         ingress_namespace_selector = f'exported_namespace="{namespace_value}"'
         error_status_selector = 'status=~"5..|5xx"'
         error_status_code_selector = 'status_code=~"5..|5xx"'
@@ -301,7 +299,7 @@ class PrometheusService:
                 "namespace": namespace,
                 "range": restart_window,
                 "restart_window": restart_window,
-                "queries": f"sum(increase(kube_pod_container_status_restarts_total{{{namespace_selector}}}[{restart_window}]))",
+                "queries": f"sum(increase(kube_pod_container_status_restarts_total{{{namespace_selector}}}[5m]))",
             },
             "request_rate": {
                 "name": "Request rate",
@@ -309,12 +307,7 @@ class PrometheusService:
                 "queries": "\n".join(
                     [
                         f"sum(rate(http_requests_total{{{namespace_selector}}}[5m]))",
-                        f"sum(rate(http_requests_total{{{backend_service_selector}}}[5m]))",
-                        f"sum(rate(http_requests_total{{{backend_job_selector}}}[5m]))",
-                        "sum(rate(http_requests_total[5m]))",
                         f"sum(rate(http_request_duration_seconds_count{{{namespace_selector}}}[5m]))",
-                        f"sum(rate(http_request_duration_seconds_count{{{backend_service_selector}}}[5m]))",
-                        f"sum(rate(http_request_duration_seconds_count{{{backend_job_selector}}}[5m]))",
                         f"sum(rate(nginx_ingress_controller_requests{{{ingress_namespace_selector}}}[5m]))",
                     ]
                 ),
@@ -325,21 +318,9 @@ class PrometheusService:
                 "queries": "\n".join(
                     [
                         f"sum(rate(http_requests_total{{{namespace_selector},{error_status_selector}}}[5m]))",
-                        f"sum(rate(http_requests_total{{{backend_service_selector},{error_status_selector}}}[5m]))",
-                        f"sum(rate(http_requests_total{{{backend_job_selector},{error_status_selector}}}[5m]))",
-                        f"sum(rate(http_requests_total{{{error_status_selector}}}[5m]))",
                         f"sum(rate(http_requests_total{{{namespace_selector},{error_status_code_selector}}}[5m]))",
-                        f"sum(rate(http_requests_total{{{backend_service_selector},{error_status_code_selector}}}[5m]))",
-                        f"sum(rate(http_requests_total{{{backend_job_selector},{error_status_code_selector}}}[5m]))",
-                        f"sum(rate(http_requests_total{{{error_status_code_selector}}}[5m]))",
                         f"sum(rate(http_request_duration_seconds_count{{{namespace_selector},{error_status_selector}}}[5m]))",
-                        f"sum(rate(http_request_duration_seconds_count{{{backend_service_selector},{error_status_selector}}}[5m]))",
-                        f"sum(rate(http_request_duration_seconds_count{{{backend_job_selector},{error_status_selector}}}[5m]))",
-                        f"sum(rate(http_request_duration_seconds_count{{{error_status_selector}}}[5m]))",
                         f"sum(rate(http_request_duration_seconds_count{{{namespace_selector},{error_status_code_selector}}}[5m]))",
-                        f"sum(rate(http_request_duration_seconds_count{{{backend_service_selector},{error_status_code_selector}}}[5m]))",
-                        f"sum(rate(http_request_duration_seconds_count{{{backend_job_selector},{error_status_code_selector}}}[5m]))",
-                        f"sum(rate(http_request_duration_seconds_count{{{error_status_code_selector}}}[5m]))",
                         f"sum(rate(nginx_ingress_controller_requests{{{ingress_namespace_selector},{error_status_selector}}}[5m]))",
                     ]
                 ),

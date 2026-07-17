@@ -1,10 +1,14 @@
 import unittest
 
+from kubernetes.client.exceptions import ApiException
+
 from app.services.deployment_preview_service import (
     DeploymentPreviewService,
     KubernetesServiceProxyClient,
     NoRedirectPoolManager,
+    PreviewForbiddenError,
     PreviewPathError,
+    PreviewServiceUnavailableError,
     PreviewUpstreamError,
 )
 
@@ -131,6 +135,85 @@ class DeploymentPreviewServiceTestCase(unittest.TestCase):
             ),
             "/api/v1/namespaces/devdeploy-apps/services/smoke-nginx:80/proxy/assets/app%20css/main.css",
         )
+
+    def test_kubernetes_rbac_forbidden_is_not_reported_as_upstream_forbidden(self) -> None:
+        api_client = FakeApiClient()
+        error = ApiException(status=403, reason="Forbidden")
+        error.body = (
+            '{"kind":"Status","status":"Failure","reason":"Forbidden","code":403}'
+        )
+        api_client.call_api = lambda *args, **kwargs: (_ for _ in ()).throw(error)
+
+        with self.assertRaises(PreviewForbiddenError):
+            KubernetesServiceProxyClient(api_client).get(
+                namespace="devdeploy-apps",
+                service_name="smoke-nginx",
+                port=80,
+                path="",
+            )
+
+    def test_upstream_403_is_preserved_as_an_upstream_response(self) -> None:
+        api_client = FakeApiClient()
+        error = ApiException(status=403, reason="Forbidden")
+        error.body = "app-specific forbidden"
+        api_client.call_api = lambda *args, **kwargs: (_ for _ in ()).throw(error)
+
+        response = KubernetesServiceProxyClient(api_client).get(
+            namespace="devdeploy-apps",
+            service_name="smoke-nginx",
+            port=80,
+            path="",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.body, b"Preview upstream returned HTTP 403.")
+
+    def test_upstream_500_is_preserved_as_an_upstream_response(self) -> None:
+        api_client = FakeApiClient()
+        error = ApiException(status=500, reason="Internal Server Error")
+        error.body = "app-specific failure"
+        api_client.call_api = lambda *args, **kwargs: (_ for _ in ()).throw(error)
+
+        response = KubernetesServiceProxyClient(api_client).get(
+            namespace="devdeploy-apps",
+            service_name="smoke-nginx",
+            port=80,
+            path="",
+        )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.body, b"Preview upstream returned HTTP 500.")
+
+    def test_kubernetes_500_status_is_service_unavailable(self) -> None:
+        api_client = FakeApiClient()
+        error = ApiException(status=500, reason="Internal Server Error")
+        error.body = (
+            '{"kind":"Status","status":"Failure",'
+            '"reason":"InternalError","code":500}'
+        )
+        api_client.call_api = lambda *args, **kwargs: (_ for _ in ()).throw(error)
+
+        with self.assertRaises(PreviewServiceUnavailableError):
+            KubernetesServiceProxyClient(api_client).get(
+                namespace="devdeploy-apps",
+                service_name="smoke-nginx",
+                port=80,
+                path="",
+            )
+
+    def test_transport_failure_is_service_unavailable(self) -> None:
+        api_client = FakeApiClient()
+        api_client.call_api = lambda *args, **kwargs: (_ for _ in ()).throw(
+            OSError("raw kubeconfig endpoint detail")
+        )
+
+        with self.assertRaises(PreviewServiceUnavailableError):
+            KubernetesServiceProxyClient(api_client).get(
+                namespace="devdeploy-apps",
+                service_name="smoke-nginx",
+                port=80,
+                path="",
+            )
 
 
 if __name__ == "__main__":

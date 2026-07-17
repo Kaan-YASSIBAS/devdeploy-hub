@@ -495,7 +495,7 @@ export function DashboardPage() {
             <Button asChild variant="outline">
               <Link to="/applications">
                 <Boxes className="h-4 w-4" />
-                {t("dashboard.actions.registerApplication")}
+                {t("dashboard.actions.viewServices")}
               </Link>
             </Button>
             <Button asChild variant="outline">

@@ -123,6 +123,16 @@ rules:
     resources:
       - namespaces
       - nodes
+      - pods
+      - services
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
     verbs:
       - get
       - list

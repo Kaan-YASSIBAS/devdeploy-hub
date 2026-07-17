@@ -5,6 +5,7 @@ from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 from kubernetes.config.config_exception import ConfigException
 
+from app.services.kubernetes_client_auth import configure_bearer_token_refresh
 from app.services.gitops.status_reader import (
     ArgoResourceSnapshot,
     GitOpsStatusError,
@@ -536,10 +537,10 @@ class KubernetesGitOpsStatusReader:
                     load_options["context"] = normalized_context
                 config.load_kube_config(**load_options)
                 if configuration.api_key.get("authorization") or configuration.api_key.get("BearerToken"):
-                    KubernetesGitOpsStatusReader._normalize_authorization_header(configuration)
+                    configure_bearer_token_refresh(configuration)
             elif allow_in_cluster:
                 config.load_incluster_config(client_configuration=configuration)
-                KubernetesGitOpsStatusReader._normalize_authorization_header(configuration)
+                configure_bearer_token_refresh(configuration, required=True)
             else:
                 raise GitOpsStatusError(
                     "status_reader_unavailable",
@@ -552,20 +553,7 @@ class KubernetesGitOpsStatusReader:
                 "status_reader_unavailable",
                 "Deployment status is temporarily unavailable.",
             ) from None
-        return client.ApiClient(configuration)
-
-    @staticmethod
-    def _normalize_authorization_header(configuration: client.Configuration) -> None:
-        authorization = configuration.api_key.get("authorization") or configuration.api_key.get("BearerToken")
-        if not authorization:
-            raise ConfigException("In-cluster service account token was not loaded")
-        token = authorization.strip()
-        if token.lower().startswith("bearer "):
-            token = token.split(None, 1)[1].strip()
-        configuration.api_key["authorization"] = token
-        configuration.api_key_prefix["authorization"] = "Bearer"
-        configuration.api_key["BearerToken"] = token
-        configuration.api_key_prefix["BearerToken"] = "Bearer"
+        return client.ApiClient(configuration=configuration)
 
     @staticmethod
     def _string_or_none(value: object) -> str | None:

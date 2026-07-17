@@ -12,7 +12,6 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { EmptyState } from "@/components/shared/EmptyState";
 import type { LogEntry } from "@/types";
 
-const DEFAULT_NAMESPACE = "devdeploy-apps";
 const limits = [50, 100, 200, 500];
 
 function formatLogTimestamp(value: string) {
@@ -55,7 +54,7 @@ function getErrorKey(status?: number) {
 
 export function LogsPage() {
   const { t } = useTranslation();
-  const [namespace, setNamespace] = useState(DEFAULT_NAMESPACE);
+  const [namespace, setNamespace] = useState("");
   const [pod, setPod] = useState("all");
   const [limit, setLimit] = useState(100);
   const [query, setQuery] = useState("");
@@ -67,14 +66,15 @@ export function LogsPage() {
   const lokiReady = Boolean(lokiHealth?.available);
   const lokiUnavailable = Boolean(lokiHealth && !lokiHealth.available) || healthQuery.isError;
   const namespacesQuery = useQuery({ queryKey: ["observability", "namespaces"], queryFn: observabilityApi.namespaces });
-  const podsQuery = useQuery({ queryKey: ["observability", "pods", namespace], queryFn: () => observabilityApi.pods(namespace) });
+  const podsQuery = useQuery({ queryKey: ["observability", "pods", namespace], queryFn: () => observabilityApi.pods(namespace), enabled: Boolean(namespace) });
   const logsQuery = useQuery({
     queryKey: ["observability", "logs", namespace, pod, limit],
     queryFn: () => observabilityApi.logs({ namespace, pod: pod === "all" ? undefined : pod, limit }),
-    enabled: lokiReady
+    enabled: lokiReady && Boolean(namespace)
   });
 
-  const namespaceOptions = namespacesQuery.data?.map((item) => ({ value: item.name, label: item.name })) ?? [{ value: namespace, label: namespace }];
+  const namespaces = useMemo(() => namespacesQuery.data ?? [], [namespacesQuery.data]);
+  const namespaceOptions = namespaces.map((item) => ({ value: item.name, label: item.name }));
   const podOptions = useMemo(
     () => [
       { value: "all", label: t("common.all") },
@@ -94,6 +94,12 @@ export function LogsPage() {
       return entry.line.toLowerCase().includes(normalizedQuery) || labels.includes(normalizedQuery);
     });
   }, [logRows, query]);
+
+  useEffect(() => {
+    if (!namespace && namespaces.length) {
+      setNamespace(namespaces[0].name);
+    }
+  }, [namespace, namespaces]);
 
   useEffect(() => {
     if (autoScroll && containerRef.current) {
@@ -122,8 +128,8 @@ export function LogsPage() {
     ? healthQuery.isError
       ? t(getErrorKey(getApiErrorStatus(healthQuery.error)))
       : t(`observability.messages.${lokiHealth?.message_code ?? "loki.unavailable"}`)
-    : logsQuery.error
-      ? t(getErrorKey(getApiErrorStatus(logsQuery.error)))
+      : logsQuery.error || podsQuery.error
+      ? t(getErrorKey(getApiErrorStatus(logsQuery.error ?? podsQuery.error)))
       : t("logs.emptyDescription");
 
   return (
@@ -149,7 +155,7 @@ export function LogsPage() {
         <CardContent className="grid gap-3 pt-5 lg:grid-cols-[170px_1fr_130px_1.2fr_auto]">
           <Select
             aria-label={t("common.namespace")}
-            options={namespaceOptions.some((item) => item.value === namespace) ? namespaceOptions : [{ value: namespace, label: namespace }, ...namespaceOptions]}
+            options={namespaceOptions}
             value={namespace}
             onChange={(event) => {
               setNamespace(event.target.value);

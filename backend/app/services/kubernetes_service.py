@@ -6,6 +6,7 @@ from kubernetes import client, config
 from kubernetes.config.config_exception import ConfigException
 
 from app.core.config import settings
+from app.services.kubernetes_client_auth import configure_bearer_token_refresh
 from app.services.observability_errors import ObservabilityUnavailableError
 
 
@@ -36,7 +37,7 @@ class KubernetesService:
         }
 
     def list_namespaces(self) -> list[dict[str, Any]]:
-        return [
+        namespaces = [
             {
                 "name": item.metadata.name,
                 "status": item.status.phase,
@@ -45,29 +46,21 @@ class KubernetesService:
             }
             for item in self._core_api.list_namespace().items
         ]
-
-    def list_pods(self, namespace: str | None = None) -> list[dict[str, Any]]:
-        pods = (
-            self._core_api.list_namespaced_pod(namespace).items
-            if namespace
-            else self._core_api.list_pod_for_all_namespaces().items
+        return sorted(
+            namespaces,
+            key=lambda item: (item["name"] != settings.workload_namespace, item["name"]),
         )
+
+    def list_pods(self, namespace: str) -> list[dict[str, Any]]:
+        pods = self._core_api.list_namespaced_pod(namespace).items
         return [self._serialize_pod(pod) for pod in pods]
 
-    def list_deployments(self, namespace: str | None = None) -> list[dict[str, Any]]:
-        deployments = (
-            self._apps_api.list_namespaced_deployment(namespace).items
-            if namespace
-            else self._apps_api.list_deployment_for_all_namespaces().items
-        )
+    def list_deployments(self, namespace: str) -> list[dict[str, Any]]:
+        deployments = self._apps_api.list_namespaced_deployment(namespace).items
         return [self._serialize_deployment(deployment) for deployment in deployments]
 
-    def list_services(self, namespace: str | None = None) -> list[dict[str, Any]]:
-        services = (
-            self._core_api.list_namespaced_service(namespace).items
-            if namespace
-            else self._core_api.list_service_for_all_namespaces().items
-        )
+    def list_services(self, namespace: str) -> list[dict[str, Any]]:
+        services = self._core_api.list_namespaced_service(namespace).items
         return [self._serialize_service(service) for service in services]
 
     def namespace_exists(self, name: str) -> bool:
@@ -126,14 +119,13 @@ class KubernetesService:
                 if settings.observability_workload_kubeconfig_context:
                     load_options["context"] = settings.observability_workload_kubeconfig_context
                 config.load_kube_config(**load_options)
-                self._normalize_authorization_header(configuration)
+                configure_bearer_token_refresh(configuration, required=True)
                 self._current_context = (
                     settings.observability_workload_kubeconfig_context or "workload-runtime"
                 )
             elif settings.kubernetes_in_cluster:
-                config.load_incluster_config()
-                configuration = client.Configuration.get_default_copy()
-                self._normalize_authorization_header(configuration)
+                config.load_incluster_config(client_configuration=configuration)
+                configure_bearer_token_refresh(configuration, required=True)
                 self._current_context = "in-cluster"
             else:
                 kubeconfig_path = (
@@ -144,24 +136,10 @@ class KubernetesService:
                 else:
                     config.load_kube_config(client_configuration=configuration)
                 self._current_context = self._get_current_kube_context(kubeconfig_path)
-            self._api_client = client.ApiClient(configuration)
+            self._api_client = client.ApiClient(configuration=configuration)
         except (ConfigException, OSError) as exc:
             raise ObservabilityUnavailableError(f"Kubernetes configuration unavailable: {exc}") from exc
         self._loaded = True
-
-    @staticmethod
-    def _normalize_authorization_header(configuration: client.Configuration) -> None:
-        # Some client versions load "authorization" while generated API methods expect "BearerToken".
-        authorization = configuration.api_key.get("authorization") or configuration.api_key.get("BearerToken")
-        if not authorization:
-            raise ConfigException("Kubernetes service account token was not loaded")
-        token = authorization.strip()
-        while token.lower().startswith("bearer "):
-            token = token[7:].strip()
-        configuration.api_key["authorization"] = token
-        configuration.api_key_prefix["authorization"] = "Bearer"
-        configuration.api_key["BearerToken"] = token
-        configuration.api_key_prefix["BearerToken"] = "Bearer"
 
     @staticmethod
     def _get_current_kube_context(kubeconfig_path: str | None) -> str | None:

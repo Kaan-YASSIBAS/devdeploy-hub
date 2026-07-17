@@ -343,7 +343,7 @@
     "quickActions": "Hızlı işlemler",
     "quickActionsDescription": "Geçerli ortam için sık kullanılan platform görevleri.",
     "actions": {
-      "registerApplication": "Servis kaydet",
+      "viewServices": "Servisleri görüntüle",
       "createDeployment": "Deployment oluştur",
       "viewLogs": "Logları görüntüle",
       "openMonitoring": "Monitoring aç"
@@ -510,6 +510,13 @@
         "degraded": "Bozulmuş",
         "drifted": "Senkron dışı",
         "unknown": "Bilinmiyor"
+      },
+      "reconcileSummary": {
+        "synced": "İstenen durum ile runtime durumu uyumlu.",
+        "progressing": "Uzlaştırma işlemi devam ediyor.",
+        "degraded": "Uzlaştırma için müdahale gerekiyor.",
+        "drifted": "Runtime durumu istenen durumdan farklı.",
+        "unknown": "Uzlaştırma kanıtı henüz yeterli değil."
       },
       "archive": {
         "action": "Arşivle",
@@ -968,6 +975,7 @@
       "title": "Metrik verisi yok",
       "loading": "Metrik noktaları Prometheus üzerinden yükleniyor.",
       "noData": "Bu zaman aralığı için metrik verisi yok.",
+      "noDataInRange": "Bu zaman aralığında veri yok.",
       "metricUnavailable": "Bu Prometheus sorgusu şu anda kullanılamıyor.",
       "requestMetrics": "Servis henüz request metrikleri yayınlamıyor.",
       "errorMetrics": "5xx hata metriği yok. Sistem hata üretmedi veya servis 5xx metriği yayınlamıyor."

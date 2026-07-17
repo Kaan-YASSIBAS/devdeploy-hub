@@ -38,7 +38,9 @@ from app.services.deployment_access_service import DeploymentAccessService
 from app.services.deployment_drift import DeploymentDriftService
 from app.services.deployment_preview_service import (
     DeploymentPreviewService,
+    PreviewForbiddenError,
     PreviewPathError,
+    PreviewServiceUnavailableError,
     PreviewTimeoutError,
     PreviewUnavailableError,
     PreviewUpstreamError,
@@ -210,7 +212,7 @@ def get_deployment_access(
             max_age=PREVIEW_SESSION_TTL_SECONDS,
             httponly=True,
             secure=settings.preview_cookie_secure,
-            samesite="strict",
+            samesite="lax",
             path=access.preview_url,
         )
     return access
@@ -290,6 +292,16 @@ def get_deployment_preview(
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="The app preview request timed out.",
+        ) from None
+    except PreviewForbiddenError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Workload Service proxy access is denied.",
+        ) from None
+    except PreviewServiceUnavailableError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The app preview service is unavailable.",
         ) from None
     except PreviewUpstreamError:
         raise HTTPException(

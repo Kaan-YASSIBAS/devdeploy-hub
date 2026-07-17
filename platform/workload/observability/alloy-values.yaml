@@ -34,9 +34,6 @@ alloy:
           field = "spec.nodeName=" + sys.env("NODE_NAME")
         }
 
-        namespaces {
-          names = ["devdeploy-apps"]
-        }
       }
 
       discovery.relabel "pod_logs" {

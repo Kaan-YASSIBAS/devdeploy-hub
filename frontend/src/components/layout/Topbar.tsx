@@ -40,7 +40,9 @@ export function Topbar({ onMenuClick }: TopbarProps) {
           <div className="hidden items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2 xl:flex">
             <UserCircle className="h-7 w-7 text-cyan-200" />
             <div>
-              <p className="text-sm font-medium text-white">{user?.username ?? t("topbar.profile")}</p>
+              <p className="text-sm font-medium text-white">
+                {user?.display_name || user?.username || t("topbar.profile")}
+              </p>
               <p className="text-xs text-slate-500">{user?.role ?? t("topbar.demoUser")}</p>
             </div>
           </div>

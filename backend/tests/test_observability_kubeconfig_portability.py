@@ -172,9 +172,16 @@ class ObservabilityKubeconfigPortabilityTestCase(unittest.TestCase):
             observability_workload_kubeconfig_context="devdeploy-workload-observability",
             workload_kubeconfig="~/.kube/config",
         )
+
+        def load_test_kubeconfig(**kwargs) -> None:
+            kwargs["client_configuration"].api_key["authorization"] = "test-only-token"
+
         with (
             patch("app.services.observability_service_proxy.settings", fake_settings),
-            patch("app.services.observability_service_proxy.config.load_kube_config") as load_kube_config,
+            patch(
+                "app.services.observability_service_proxy.config.load_kube_config",
+                side_effect=load_test_kubeconfig,
+            ) as load_kube_config,
             patch("app.services.observability_service_proxy.client.ApiClient", return_value="api-client"),
         ):
             api_client = KubernetesServiceProxyTransport._build_workload_api_client()

@@ -1,5 +1,5 @@
 import { Boxes, Database, Layers, Network, RefreshCw, Server, ShipWheel } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { observabilityApi, getApiErrorStatus } from "@/api/client";
@@ -12,8 +12,6 @@ import { DataTable, type Column } from "@/components/shared/DataTable";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { StatCard } from "@/components/shared/StatCard";
 import type { KubernetesDeployment, KubernetesPod, KubernetesService } from "@/types";
-
-const DEFAULT_NAMESPACE = "devdeploy-apps";
 
 function phaseVariant(phase: string | null): BadgeProps["variant"] {
   switch (phase?.toLowerCase()) {
@@ -57,19 +55,21 @@ function getErrorKey(status?: number) {
 
 export function ClusterPage() {
   const { t } = useTranslation();
-  const [namespace, setNamespace] = useState(DEFAULT_NAMESPACE);
+  const [namespace, setNamespace] = useState("");
 
   const summaryQuery = useQuery({
     queryKey: ["observability", "cluster-summary", namespace],
-    queryFn: () => observabilityApi.clusterSummary(namespace)
+    queryFn: () => observabilityApi.clusterSummary(namespace),
+    enabled: Boolean(namespace)
   });
   const namespacesQuery = useQuery({ queryKey: ["observability", "namespaces"], queryFn: observabilityApi.namespaces });
-  const podsQuery = useQuery({ queryKey: ["observability", "pods", namespace], queryFn: () => observabilityApi.pods(namespace) });
+  const podsQuery = useQuery({ queryKey: ["observability", "pods", namespace], queryFn: () => observabilityApi.pods(namespace), enabled: Boolean(namespace) });
   const deploymentsQuery = useQuery({
     queryKey: ["observability", "kubernetes-deployments", namespace],
-    queryFn: () => observabilityApi.kubernetesDeployments(namespace)
+    queryFn: () => observabilityApi.kubernetesDeployments(namespace),
+    enabled: Boolean(namespace)
   });
-  const servicesQuery = useQuery({ queryKey: ["observability", "services", namespace], queryFn: () => observabilityApi.services(namespace) });
+  const servicesQuery = useQuery({ queryKey: ["observability", "services", namespace], queryFn: () => observabilityApi.services(namespace), enabled: Boolean(namespace) });
 
   const namespaces = useMemo(() => namespacesQuery.data ?? [], [namespacesQuery.data]);
   const pods = podsQuery.data ?? [];
@@ -78,10 +78,18 @@ export function ClusterPage() {
   const selectedNamespace = namespaces.find((item) => item.name === namespace);
   const namespaceOptions = useMemo(() => {
     const options = namespaces.map((item) => ({ value: item.name, label: item.name }));
-    return options.some((item) => item.value === namespace) ? options : [{ value: namespace, label: namespace }, ...options];
+    return namespace && !options.some((item) => item.value === namespace)
+      ? [{ value: namespace, label: namespace }, ...options]
+      : options;
   }, [namespace, namespaces]);
 
-  const isLoading = summaryQuery.isLoading || podsQuery.isLoading || deploymentsQuery.isLoading || servicesQuery.isLoading;
+  useEffect(() => {
+    if (!namespace && namespaces.length) {
+      setNamespace(namespaces[0].name);
+    }
+  }, [namespace, namespaces]);
+
+  const isLoading = !namespace || summaryQuery.isLoading || podsQuery.isLoading || deploymentsQuery.isLoading || servicesQuery.isLoading;
   const firstError = summaryQuery.error ?? podsQuery.error ?? deploymentsQuery.error ?? servicesQuery.error ?? namespacesQuery.error;
   const errorDescription = firstError ? t(getErrorKey(getApiErrorStatus(firstError))) : t("cluster.emptyDescription");
   const unavailableValue = summaryQuery.isLoading ? "..." : t("common.unavailable");
@@ -173,21 +181,21 @@ export function ClusterPage() {
           value={summaryQuery.data ? String(summaryQuery.data.namespaces_count) : unavailableValue}
         />
         <StatCard
-          detail={t("cluster.realData")}
+          detail={namespace}
           icon={<Boxes className="h-5 w-5" />}
           label={t("cluster.overview.pods")}
           tone="emerald"
           value={summaryQuery.data ? String(summaryQuery.data.pods_count) : unavailableValue}
         />
         <StatCard
-          detail={t("cluster.realData")}
+          detail={namespace}
           icon={<ShipWheel className="h-5 w-5" />}
           label={t("cluster.overview.deployments")}
           tone="amber"
           value={summaryQuery.data ? String(summaryQuery.data.deployments_count) : unavailableValue}
         />
         <StatCard
-          detail={t("cluster.realData")}
+          detail={namespace}
           icon={<Network className="h-5 w-5" />}
           label={t("cluster.overview.services")}
           value={summaryQuery.data ? String(summaryQuery.data.services_count) : unavailableValue}

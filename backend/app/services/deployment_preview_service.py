@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import json
 import logging
 from typing import Any, Protocol
 from urllib.parse import quote, unquote, urlsplit
@@ -49,6 +50,14 @@ class PreviewUnavailableError(RuntimeError):
 
 
 class PreviewTimeoutError(RuntimeError):
+    pass
+
+
+class PreviewForbiddenError(RuntimeError):
+    pass
+
+
+class PreviewServiceUnavailableError(RuntimeError):
     pass
 
 
@@ -160,26 +169,52 @@ class KubernetesServiceProxyClient:
             if status_code in {408, 504}:
                 logger.info("Deployment preview Service proxy timed out with status %s.", status_code)
                 raise PreviewTimeoutError("App preview timed out.") from None
-            if 400 <= status_code <= 499:
-                logger.info("Deployment preview Service proxy returned client status %s.", status_code)
+            kubernetes_status = self._kubernetes_status(error)
+            if kubernetes_status is not None:
+                if status_code == 403 and kubernetes_status.get("reason") == "Forbidden":
+                    logger.info("Deployment preview Service proxy access was denied by Kubernetes RBAC.")
+                    raise PreviewForbiddenError("Workload Service proxy access is denied.") from None
+                logger.warning(
+                    "Deployment preview Service proxy failed with Kubernetes status %s.",
+                    status_code,
+                )
+                raise PreviewServiceUnavailableError("The app preview service is unavailable.") from None
+            if 400 <= status_code <= 599:
+                logger.info("Deployment preview upstream returned status %s.", status_code)
                 return ServiceProxyResponse(
                     status_code=status_code,
                     body=f"Preview upstream returned HTTP {status_code}.".encode("ascii"),
                     headers={"Content-Type": "text/plain; charset=utf-8"},
                 )
             logger.warning("Deployment preview Service proxy failed with Kubernetes status %s.", status_code)
-            raise PreviewUpstreamError("The app preview upstream is unavailable.") from None
+            raise PreviewServiceUnavailableError("The app preview service is unavailable.") from None
         except urllib3.exceptions.TimeoutError:
             logger.info("Deployment preview Service proxy request timed out.")
             raise PreviewTimeoutError("App preview timed out.") from None
         except PreviewUpstreamError:
+            raise
+        except (PreviewForbiddenError, PreviewServiceUnavailableError):
             raise
         except Exception as error:
             logger.warning(
                 "Deployment preview Service proxy request failed: %s.",
                 error.__class__.__name__,
             )
-            raise PreviewUpstreamError("The app preview upstream is unavailable.") from None
+            raise PreviewServiceUnavailableError("The app preview service is unavailable.") from None
+
+    @staticmethod
+    def _kubernetes_status(error: ApiException) -> dict[str, Any] | None:
+        try:
+            body = json.loads(error.body or "")
+        except (TypeError, ValueError):
+            return None
+        if (
+            isinstance(body, dict)
+            and body.get("kind") == "Status"
+            and body.get("status") == "Failure"
+        ):
+            return body
+        return None
 
     @staticmethod
     def _service_proxy_resource_path(

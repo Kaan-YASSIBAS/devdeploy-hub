@@ -43,11 +43,13 @@ class ObservabilityBootstrapAssetsTestCase(unittest.TestCase):
         self.assertEqual(values["loki"]["limits_config"]["retention_period"], "24h")
         self.assertFalse(values["minio"]["enabled"])
 
-    def test_alloy_collects_only_workload_namespace_logs(self) -> None:
+    def test_alloy_collects_logs_with_namespace_labels_across_authorized_namespaces(self) -> None:
         values = self.read_yaml("alloy-values.yaml")
         content = values["alloy"]["configMap"]["content"]
 
-        self.assertIn('names = ["devdeploy-apps"]', content)
+        self.assertNotIn('names = ["devdeploy-apps"]', content)
+        self.assertIn('source_labels = ["__meta_kubernetes_namespace"]', content)
+        self.assertIn('target_label  = "namespace"', content)
         self.assertIn("http://loki-gateway.monitoring.svc.cluster.local/loki/api/v1/push", content)
         self.assertNotIn("token", content.lower())
 
@@ -105,13 +107,26 @@ class ObservabilityBootstrapAssetsTestCase(unittest.TestCase):
             for rule in runtime_role["rules"]
         }
         self.assertIn((("",), ("pods", "services"), ("get", "list", "watch")), runtime_rules)
-        self.assertIn((("",), ("services/proxy",), ("get",)), runtime_rules)
         self.assertIn((("apps",), ("deployments",), ("get", "list", "watch")), runtime_rules)
-        cluster_rules = {(tuple(rule["resources"]), tuple(rule["verbs"])) for rule in cluster_role["rules"]}
-        self.assertEqual(cluster_rules, {(("namespaces", "nodes"), ("get", "list", "watch"))})
+        self.assertIn((("",), ("services/proxy",), ("get",)), runtime_rules)
+        cluster_rules = {
+            (tuple(rule["apiGroups"]), tuple(rule["resources"]), tuple(rule["verbs"]))
+            for rule in cluster_role["rules"]
+        }
+        self.assertEqual(
+            cluster_rules,
+            {
+                (("",), ("namespaces", "nodes", "pods", "services"), ("get", "list", "watch")),
+                (("apps",), ("deployments",), ("get", "list", "watch")),
+            },
+        )
+        self.assertFalse(
+            any("services/proxy" in rule[1] for rule in cluster_rules),
+        )
 
         text = str(documents).lower()
         self.assertNotIn("secrets", text)
+        self.assertNotIn("configmaps", text)
         self.assertNotIn("create", text)
         self.assertNotIn("update", text)
         self.assertNotIn("patch", text)

@@ -1053,8 +1053,9 @@ The workload observability reader RBAC is intentionally narrow:
 - service account: `devdeploy-observability-reader`
 - allowed reads: `services` with `get`, `list`, `watch`
 - allowed proxy reads: `services/proxy` with `get`
+- allowed workload inventory: cluster-wide `get`, `list`, and `watch` for namespaces, nodes, Pods, Services, and Deployments
 
-It does not grant cluster-admin, workload writes, Secret reads, RBAC management, CRD management, namespace management, or writes outside `monitoring`.
+It does not grant cluster-admin, workload writes, Secret or ConfigMap reads, impersonation, RBAC management, CRD management, or namespace management. Service proxy access is namespaced: observability backends in `monitoring` and owner-scoped app previews in `devdeploy-apps`; cluster-wide access is inventory-only.
 
 The Grafana admin password is generated into the Kubernetes Secret `monitoring/devdeploy-grafana-admin`. The launcher does not print the password, write it to status JSON, or store it in repository files. Grafana is useful for local inspection but is not required for DevDeploy Monitoring and Logs pages.
 

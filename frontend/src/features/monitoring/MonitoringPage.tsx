@@ -13,7 +13,6 @@ import { MetricChart } from "@/components/shared/MetricChart";
 import { StatCard } from "@/components/shared/StatCard";
 import type { MetricSeries, ObservabilityComponentHealth } from "@/types";
 
-const DEFAULT_NAMESPACE = "devdeploy-apps";
 const DEFAULT_RANGE = "15m";
 const DEFAULT_AUTO_REFRESH = "5s";
 
@@ -120,22 +119,6 @@ function chartData(series: MetricSeries, scale?: (value: number) => number) {
   }));
 }
 
-function seriesEmptyDescriptionKey(series: MetricSeries | undefined) {
-  if (!series) {
-    return "monitoring.empty.noData";
-  }
-  if (series.status === "unavailable") {
-    return "monitoring.empty.metricUnavailable";
-  }
-  if (series.key === "error_rate") {
-    return "monitoring.empty.errorMetrics";
-  }
-  if (series.key === "request_rate") {
-    return "monitoring.empty.requestMetrics";
-  }
-  return "monitoring.empty.noData";
-}
-
 function HealthCard({ isLoading, label, health }: { isLoading: boolean; label: string; health?: ObservabilityComponentHealth }) {
   const { t } = useTranslation();
   const available = Boolean(health?.available);
@@ -180,9 +163,8 @@ function TimeSeriesCard({
 }) {
   const { t } = useTranslation();
   const data = series ? chartData(series, definition.scale) : [];
-  const hasData = data.length > 0;
 
-  if (!hasData) {
+  if (series?.status === "unavailable") {
     return (
       <Card className={definition.key === "pod_restarts" ? "xl:col-span-2" : undefined}>
         <CardHeader>
@@ -191,9 +173,9 @@ function TimeSeriesCard({
         </CardHeader>
         <CardContent>
           <EmptyState
-            description={isLoading ? t("monitoring.empty.loading") : t(seriesEmptyDescriptionKey(series))}
+            description={t("monitoring.empty.metricUnavailable")}
             icon={<Activity className="h-5 w-5" />}
-            title={isLoading ? t("common.loading") : t("monitoring.empty.title")}
+            title={t("monitoring.empty.title")}
           />
         </CardContent>
       </Card>
@@ -210,6 +192,7 @@ function TimeSeriesCard({
         label={t(definition.labelKey)}
         title={t(definition.titleKey)}
         type={definition.type}
+        emptyMessage={isLoading ? t("monitoring.empty.loading") : t("monitoring.empty.noDataInRange")}
       />
     </div>
   );
@@ -219,28 +202,29 @@ export function MonitoringPage() {
   const { t } = useTranslation();
   const [range, setRange] = useState(DEFAULT_RANGE);
   const [autoRefresh, setAutoRefresh] = useState(DEFAULT_AUTO_REFRESH);
-  const [namespace, setNamespace] = useState(DEFAULT_NAMESPACE);
-  const healthQuery = useQuery({ queryKey: ["observability", "health"], queryFn: observabilityApi.health });
+  const [namespace, setNamespace] = useState("");
+  const healthQuery = useQuery({ queryKey: ["observability", "status"], queryFn: observabilityApi.status });
   const prometheusReady = Boolean(healthQuery.data?.prometheus.available);
   const clusterMetricsQuery = useQuery({
     queryKey: ["observability", "metrics", "cluster"],
     queryFn: observabilityApi.clusterMetrics,
-    enabled: prometheusReady
+    enabled: prometheusReady && Boolean(namespace)
   });
   const namespaceMetricsQuery = useQuery({
     queryKey: ["observability", "metrics", "namespace", namespace],
     queryFn: () => observabilityApi.namespaceMetrics(namespace),
-    enabled: prometheusReady
+    enabled: prometheusReady && Boolean(namespace)
   });
   const timeSeriesQuery = useQuery({
     queryKey: ["observability", "metrics", "timeseries", namespace, range],
     queryFn: () => observabilityApi.metricsTimeseries({ namespace, range }),
-    enabled: prometheusReady
+    enabled: prometheusReady && Boolean(namespace)
   });
   const namespacesQuery = useQuery({ queryKey: ["observability", "namespaces"], queryFn: observabilityApi.namespaces });
-  const namespaceOptions = namespacesQuery.data?.map((item) => ({ value: item.name, label: item.name })) ?? [{ value: namespace, label: namespace }];
-  const firstError = healthQuery.error ?? clusterMetricsQuery.error ?? namespaceMetricsQuery.error ?? timeSeriesQuery.error;
-  const isLoading = healthQuery.isLoading || clusterMetricsQuery.isLoading || namespaceMetricsQuery.isLoading || timeSeriesQuery.isLoading;
+  const namespaces = useMemo(() => namespacesQuery.data ?? [], [namespacesQuery.data]);
+  const namespaceOptions = namespaces.map((item) => ({ value: item.name, label: item.name }));
+  const firstError = healthQuery.error ?? namespacesQuery.error ?? clusterMetricsQuery.error ?? namespaceMetricsQuery.error ?? timeSeriesQuery.error;
+  const isLoading = healthQuery.isLoading || !namespace || clusterMetricsQuery.isLoading || namespaceMetricsQuery.isLoading || timeSeriesQuery.isLoading;
   const isFetching = healthQuery.isFetching || clusterMetricsQuery.isFetching || namespaceMetricsQuery.isFetching || timeSeriesQuery.isFetching || namespacesQuery.isFetching;
   const unavailable = isLoading ? "..." : t("common.unavailable");
   const clusterMetrics = clusterMetricsQuery.data;
@@ -263,6 +247,12 @@ export function MonitoringPage() {
     () => refreshIntervalOptions.map((item) => ({ value: item.value, label: t(item.labelKey) })),
     [t]
   );
+
+  useEffect(() => {
+    if (!namespace && namespaces.length) {
+      setNamespace(namespaces[0].name);
+    }
+  }, [namespace, namespaces]);
 
   const refresh = useCallback(() => {
     if (isFetching) {
@@ -308,7 +298,7 @@ export function MonitoringPage() {
             />
             <Select
               aria-label={t("common.namespace")}
-              options={namespaceOptions.some((item) => item.value === namespace) ? namespaceOptions : [{ value: namespace, label: namespace }, ...namespaceOptions]}
+              options={namespaceOptions}
               value={namespace}
               onChange={(event) => setNamespace(event.target.value)}
             />
@@ -333,10 +323,11 @@ export function MonitoringPage() {
         </span>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <HealthCard health={healthQuery.data?.kubernetes} isLoading={healthQuery.isLoading} label={t("observability.kubernetes")} />
         <HealthCard health={healthQuery.data?.prometheus} isLoading={healthQuery.isLoading} label={t("observability.prometheus")} />
         <HealthCard health={healthQuery.data?.loki} isLoading={healthQuery.isLoading} label={t("observability.loki")} />
+        <HealthCard health={healthQuery.data?.grafana} isLoading={healthQuery.isLoading} label={t("observability.grafana")} />
       </div>
 
       {firstError ? (

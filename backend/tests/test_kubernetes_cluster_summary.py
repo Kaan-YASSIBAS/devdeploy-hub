@@ -79,6 +79,52 @@ class KubernetesClusterSummaryServiceTestCase(unittest.TestCase):
         self.assertEqual(summary["nodes_count"], 1)
         self.assertEqual(summary["ready_nodes_count"], 1)
 
+    def test_empty_namespace_is_a_valid_zero_count_summary(self) -> None:
+        core_api = FakeCoreApi()
+        core_api.list_namespaced_pod = lambda namespace: SimpleNamespace(items=[])
+        core_api.list_namespaced_service = lambda namespace: SimpleNamespace(items=[])
+        apps_api = FakeAppsApi()
+        apps_api.list_namespaced_deployment = lambda namespace: SimpleNamespace(items=[])
+        service = KubernetesService()
+        service.__dict__["_core_api"] = core_api
+        service.__dict__["_apps_api"] = apps_api
+
+        summary = service.get_cluster_summary(namespace="empty-team")
+
+        self.assertEqual(summary["pods_count"], 0)
+        self.assertEqual(summary["deployments_count"], 0)
+        self.assertEqual(summary["services_count"], 0)
+        self.assertEqual(summary["nodes_count"], 1)
+
+    def test_namespace_list_prefers_configured_workload_namespace_without_filtering(self) -> None:
+        def namespace(name):
+            return SimpleNamespace(
+                metadata=SimpleNamespace(
+                    name=name,
+                    creation_timestamp=None,
+                    labels={},
+                ),
+                status=SimpleNamespace(phase="Active"),
+            )
+
+        service = KubernetesService()
+        service.__dict__["_core_api"] = SimpleNamespace(
+            list_namespace=lambda: SimpleNamespace(
+                items=[namespace("monitoring"), namespace("devdeploy-apps"), namespace("default")]
+            )
+        )
+
+        with patch(
+            "app.services.kubernetes_service.settings.workload_namespace",
+            "devdeploy-apps",
+        ):
+            result = service.list_namespaces()
+
+        self.assertEqual(
+            [item["name"] for item in result],
+            ["devdeploy-apps", "default", "monitoring"],
+        )
+
 
 class KubernetesClusterSummaryApiTestCase(unittest.TestCase):
     def setUp(self) -> None:
@@ -109,7 +155,7 @@ class KubernetesClusterSummaryApiTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), result)
 
-    def test_forbidden_is_reported_as_degraded_service_availability(self) -> None:
+    def test_forbidden_is_distinct_from_service_unavailability(self) -> None:
         def forbidden(*, namespace):
             raise ApiException(status=403, reason="Forbidden")
 
@@ -119,8 +165,11 @@ class KubernetesClusterSummaryApiTestCase(unittest.TestCase):
                 "/api/v1/observability/cluster/summary",
                 params={"namespace": "devdeploy-apps"},
             )
-        self.assertEqual(response.status_code, 503)
-        self.assertEqual(response.json()["detail"], "Kubernetes API request failed: Forbidden")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json()["detail"],
+            "Kubernetes read permission is denied for the selected namespace.",
+        )
 
     def test_invalid_namespace_is_rejected_before_client_creation(self) -> None:
         with patch("app.api.v1.observability.KubernetesService") as factory:

@@ -26,6 +26,8 @@ from app.services.gitops.status_reader import (
     WorkloadSnapshot,
 )
 from app.services.deployment_preview_service import (
+    PreviewForbiddenError,
+    PreviewServiceUnavailableError,
     PreviewTimeoutError,
     PreviewUpstreamError,
     ServiceProxyResponse,
@@ -1469,7 +1471,30 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertNotIn("cluster_ip", body["service"])
         self.assertNotIn("10.96.0.99", str(body))
         self.assertNotIn("token", body["preview_url"].lower())
-        self.assertIn("HttpOnly", response.headers["set-cookie"])
+        cookie = response.headers["set-cookie"]
+        self.assertIn("HttpOnly", cookie)
+        self.assertIn("Max-Age=120", cookie)
+        self.assertIn("SameSite=lax", cookie)
+        self.assertIn(
+            f"Path=/api/v1/deployment-records/{deployment['id']}/preview/",
+            cookie,
+        )
+
+    def test_preview_cookie_secure_attribute_follows_server_configuration(self) -> None:
+        deployment = self.create_deployment()
+        self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = (
+            self.ready_workload_snapshot()
+        )
+
+        with patch(
+            "app.api.v1.endpoints.deployment_records.settings.preview_cookie_secure",
+            True,
+        ):
+            response = self.client.get(
+                f"/api/v1/deployment-records/{deployment['id']}/access"
+            )
+
+        self.assertIn("Secure", response.headers["set-cookie"])
 
     def test_owner_can_preview_ready_app_without_forwarding_browser_headers(self) -> None:
         deployment = self.create_deployment()
@@ -1643,6 +1668,27 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(unavailable.status_code, 502)
         self.assertNotIn("control-plane", unavailable.text)
         self.assertNotIn("certificate", unavailable.text)
+
+    def test_preview_distinguishes_rbac_denial_and_service_unavailability(self) -> None:
+        deployment = self.create_deployment()
+        self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = (
+            self.ready_workload_snapshot()
+        )
+        access = self.client.get(f"/api/v1/deployment-records/{deployment['id']}/access")
+        preview_url = access.json()["preview_url"]
+
+        self.preview_proxy.error = PreviewForbiddenError("raw RBAC detail")
+        forbidden = self.client.get(preview_url)
+
+        self.preview_proxy.error = PreviewServiceUnavailableError("raw endpoint detail")
+        unavailable = self.client.get(preview_url)
+
+        self.assertEqual(forbidden.status_code, 403)
+        self.assertEqual(forbidden.json()["detail"], "Workload Service proxy access is denied.")
+        self.assertNotIn("raw RBAC", forbidden.text)
+        self.assertEqual(unavailable.status_code, 503)
+        self.assertEqual(unavailable.json()["detail"], "The app preview service is unavailable.")
+        self.assertNotIn("raw endpoint", unavailable.text)
 
     def test_preview_rejects_records_outside_managed_workload_namespace(self) -> None:
         payload = self.deployment_payload()

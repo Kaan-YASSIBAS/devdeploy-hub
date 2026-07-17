@@ -24,6 +24,7 @@ type MetricChartProps = {
   label: string;
   color?: string;
   type?: "area" | "bar";
+  emptyMessage?: string;
 };
 
 export function MetricChart({
@@ -33,7 +34,8 @@ export function MetricChart({
   dataKey,
   label,
   color = "#22d3ee",
-  type = "area"
+  type = "area",
+  emptyMessage
 }: MetricChartProps) {
   const gradientId = useId().replace(/:/g, "");
 
@@ -44,7 +46,7 @@ export function MetricChart({
         {description ? <CardDescription>{description}</CardDescription> : null}
       </CardHeader>
       <CardContent>
-        <div className="h-72">
+        <div className="relative h-72">
           <ResponsiveContainer width="100%" height="100%">
             {type === "bar" ? (
               <BarChart data={data}>
@@ -92,6 +94,11 @@ export function MetricChart({
               </AreaChart>
             )}
           </ResponsiveContainer>
+          {!data.length && emptyMessage ? (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-slate-400">
+              {emptyMessage}
+            </div>
+          ) : null}
         </div>
       </CardContent>
     </Card>

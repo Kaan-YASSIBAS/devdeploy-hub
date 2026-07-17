@@ -422,7 +422,7 @@ class KubernetesGitOpsStatusReaderTestCase(unittest.TestCase):
             allow_in_cluster=False,
         )
 
-        configuration = api_client.call_args.args[0]
+        configuration = api_client.call_args.kwargs["configuration"]
         self.assertEqual(configuration.api_key["authorization"], "raw-test-token")
         self.assertEqual(configuration.api_key_prefix["authorization"], "Bearer")
         self.assertEqual(configuration.api_key["BearerToken"], "raw-test-token")

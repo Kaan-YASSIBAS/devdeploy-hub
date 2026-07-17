@@ -343,7 +343,7 @@
     "quickActions": "Quick actions",
     "quickActionsDescription": "Common platform tasks for the current environment.",
     "actions": {
-      "registerApplication": "Register service",
+      "viewServices": "View services",
       "createDeployment": "Create deployment",
       "viewLogs": "View logs",
       "openMonitoring": "Open monitoring"
@@ -510,6 +510,13 @@
         "degraded": "Degraded",
         "drifted": "Out of sync",
         "unknown": "Unknown"
+      },
+      "reconcileSummary": {
+        "synced": "Desired and runtime state agree.",
+        "progressing": "Reconciliation is still in progress.",
+        "degraded": "Reconciliation needs attention.",
+        "drifted": "Runtime differs from desired state.",
+        "unknown": "Reconciliation evidence is incomplete."
       },
       "archive": {
         "action": "Archive",
@@ -968,6 +975,7 @@
       "title": "No metric data",
       "loading": "Loading metric points from Prometheus.",
       "noData": "No metric data available for this time range.",
+      "noDataInRange": "No data in this time range.",
       "metricUnavailable": "This Prometheus query is currently unavailable.",
       "requestMetrics": "Request metrics are not exposed by the service yet.",
       "errorMetrics": "No 5xx error metrics. The system has not produced server errors or the service is not exposing 5xx metrics."

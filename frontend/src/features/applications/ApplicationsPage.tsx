@@ -201,7 +201,10 @@ export function ApplicationsPage() {
       header: t("applications.domain.fields.updated"),
       render: (service) => formatDate(service.updated_at)
     },
-    {
+    ...(filteredServices.some(
+      (service) => Boolean(service.archived_at) || service.runtime_status?.display_status === "not_found"
+    )
+      ? [{
       key: "actions",
       header: t("common.actions"),
       render: (service) => {
@@ -232,7 +235,8 @@ export function ApplicationsPage() {
           </Button>
         ) : null;
       }
-    }
+    } satisfies Column<ServiceDefinition>]
+      : [])
   ];
 
   const untrackedColumns: Column<UntrackedServiceRuntime>[] = [

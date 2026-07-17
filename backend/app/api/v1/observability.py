@@ -19,12 +19,14 @@ from app.schemas.observability import (
 )
 from app.services.kubernetes_service import KubernetesService
 from app.services.loki_service import LokiService
-from app.services.observability_errors import ObservabilityUnavailableError
+from app.services.observability_errors import (
+    ObservabilityRestrictedError,
+    ObservabilityUnavailableError,
+)
 from app.services.observability_query import (
     validate_metric_range,
     validate_metric_step,
     validate_namespace,
-    validate_optional_namespace,
     validate_pod_name,
 )
 from app.services.prometheus_service import PrometheusQueryError, PrometheusService
@@ -42,9 +44,19 @@ def _unavailable(detail: str) -> HTTPException:
 def _call_observability(operation):
     try:
         return operation()
+    except ObservabilityRestrictedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Observability read permission is denied for the selected scope.",
+        ) from exc
     except ObservabilityUnavailableError as exc:
         raise _unavailable(str(exc)) from exc
     except ApiException as exc:
+        if exc.status == 403:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Kubernetes read permission is denied for the selected namespace.",
+            ) from exc
         detail = exc.reason or str(exc.status)
         raise _unavailable(f"Kubernetes API request failed: {detail}") from exc
 
@@ -112,12 +124,12 @@ def list_namespaces(current_user: User = Depends(get_current_user)) -> list[dict
 
 @router.get("/kubernetes/pods", response_model=list[PodSummary])
 def list_pods(
-    namespace: str | None = Query(default=None),
+    namespace: str = Query(default=DEFAULT_WORKLOAD_NAMESPACE),
     current_user: User = Depends(get_current_user),
 ) -> list[dict]:
     _require_observability_admin(current_user)
     try:
-        safe_namespace = validate_optional_namespace(namespace)
+        safe_namespace = validate_namespace(namespace)
     except ObservabilityUnavailableError as exc:
         raise _bad_request(str(exc)) from exc
     return _call_observability(lambda: KubernetesService().list_pods(namespace=safe_namespace))
@@ -125,12 +137,12 @@ def list_pods(
 
 @router.get("/kubernetes/deployments", response_model=list[DeploymentSummary])
 def list_deployments(
-    namespace: str | None = Query(default=None),
+    namespace: str = Query(default=DEFAULT_WORKLOAD_NAMESPACE),
     current_user: User = Depends(get_current_user),
 ) -> list[dict]:
     _require_observability_admin(current_user)
     try:
-        safe_namespace = validate_optional_namespace(namespace)
+        safe_namespace = validate_namespace(namespace)
     except ObservabilityUnavailableError as exc:
         raise _bad_request(str(exc)) from exc
     return _call_observability(lambda: KubernetesService().list_deployments(namespace=safe_namespace))
@@ -138,12 +150,12 @@ def list_deployments(
 
 @router.get("/kubernetes/services", response_model=list[ServiceSummary])
 def list_services(
-    namespace: str | None = Query(default=None),
+    namespace: str = Query(default=DEFAULT_WORKLOAD_NAMESPACE),
     current_user: User = Depends(get_current_user),
 ) -> list[dict]:
     _require_observability_admin(current_user)
     try:
-        safe_namespace = validate_optional_namespace(namespace)
+        safe_namespace = validate_namespace(namespace)
     except ObservabilityUnavailableError as exc:
         raise _bad_request(str(exc)) from exc
     return _call_observability(lambda: KubernetesService().list_services(namespace=safe_namespace))
@@ -190,6 +202,11 @@ def get_metrics_timeseries(
         )
     except PrometheusQueryError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except ObservabilityRestrictedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Prometheus read permission is denied.",
+        ) from exc
     except ObservabilityUnavailableError as exc:
         raise _unavailable(str(exc)) from exc
 

@@ -12,6 +12,7 @@ from kubernetes.config.kube_config import KubeConfigLoader
 from kubernetes.config.config_exception import ConfigException
 
 from app.core.config import settings
+from app.services.kubernetes_client_auth import configure_bearer_token_refresh
 from app.services.observability_errors import (
     ObservabilityMalformedResponseError,
     ObservabilityRestrictedError,
@@ -191,7 +192,7 @@ class KubernetesServiceProxyTransport:
             if settings.observability_workload_kubeconfig_context:
                 load_options["context"] = settings.observability_workload_kubeconfig_context.strip()
             config.load_kube_config(**load_options)
-            KubernetesServiceProxyTransport._normalize_authorization_header(configuration)
+            configure_bearer_token_refresh(configuration, required=True)
         except (ConfigException, OSError, ValueError) as exc:
             KubernetesServiceProxyTransport._load_json_kubeconfig_fallback(
                 kubeconfig_path,
@@ -206,22 +207,11 @@ class KubernetesServiceProxyTransport:
                 context=settings.observability_workload_kubeconfig_context,
                 original_error=exc,
             )
-        return client.ApiClient(configuration)
+        return client.ApiClient(configuration=configuration)
 
     @staticmethod
     def _normalize_authorization_header(configuration: client.Configuration) -> None:
-        authorization = configuration.api_key.get("authorization") or configuration.api_key.get("BearerToken")
-        if not authorization:
-            return
-        token = authorization.strip()
-        while token.lower().startswith("bearer "):
-            token = token[7:].strip()
-        if not token:
-            return
-        configuration.api_key["authorization"] = token
-        configuration.api_key_prefix["authorization"] = "Bearer"
-        configuration.api_key["BearerToken"] = token
-        configuration.api_key_prefix["BearerToken"] = "Bearer"
+        configure_bearer_token_refresh(configuration)
 
     @staticmethod
     def _load_json_kubeconfig_fallback(

@@ -130,6 +130,7 @@ export function DeploymentsPage() {
   const [deployResponse, setDeployResponse] = useState<GitOpsAppDeployResponse | null>(null);
   const [pollTimedOut, setPollTimedOut] = useState(false);
   const [accessByDeployment, setAccessByDeployment] = useState<Record<number, DeploymentAccess>>({});
+  const [openingPreviewId, setOpeningPreviewId] = useState<number | null>(null);
   const [destroyTarget, setDestroyTarget] = useState<DeploymentRecord | null>(null);
   const [destroyConfirmName, setDestroyConfirmName] = useState("");
   const [destroyInProgress, setDestroyInProgress] = useState<DeploymentRecord | null>(null);
@@ -334,19 +335,29 @@ export function DeploymentsPage() {
     onError: () => toast.error(t("deployments.records.access.error"))
   });
 
-  const openPreview = (access: DeploymentAccess) => {
-    if (!access.available || !access.preview_url) return;
-    try {
-      const previewWindow = window.open(
-        deploymentRecordsApi.previewUrl(access.preview_url),
-        "_blank",
-        "noopener,noreferrer"
-      );
-      if (!previewWindow) {
-        toast.error(t("deployments.records.access.openError"));
-      }
-    } catch {
+  const openPreview = async (deploymentId: number) => {
+    if (openingPreviewId !== null) return;
+    const previewWindow = window.open("about:blank", "_blank");
+    if (!previewWindow) {
       toast.error(t("deployments.records.access.openError"));
+      return;
+    }
+    previewWindow.opener = null;
+    setOpeningPreviewId(deploymentId);
+    try {
+      const access = await deploymentRecordsApi.access(deploymentId);
+      setAccessByDeployment((current) => ({ ...current, [deploymentId]: access }));
+      if (!access.available || !access.preview_url) {
+        previewWindow.close();
+        toast.error(t("deployments.records.access.openError"));
+        return;
+      }
+      previewWindow.location.replace(deploymentRecordsApi.previewUrl(access.preview_url));
+    } catch {
+      previewWindow.close();
+      toast.error(t("deployments.records.access.openError"));
+    } finally {
+      setOpeningPreviewId(null);
     }
   };
 
@@ -547,11 +558,13 @@ export function DeploymentsPage() {
           return <Badge variant="muted">{t("deployments.records.reconcileState.unknown")}</Badge>;
         }
         return (
-          <div className="max-w-[240px] space-y-1.5">
+          <div className="max-w-[220px] space-y-1.5" title={reconcile.message}>
             <Badge variant={reconcileVariant(reconcile.status)}>
               {t(`deployments.records.reconcileState.${reconcile.status}`)}
             </Badge>
-            <p className="break-words text-xs text-slate-500">{reconcile.message}</p>
+            <p className="truncate text-xs text-slate-500">
+              {t(`deployments.records.reconcileSummary.${reconcile.status}`)}
+            </p>
           </div>
         );
       }
@@ -686,9 +699,10 @@ export function DeploymentsPage() {
                 {access.available && access.preview_url ? (
                   <Button
                     aria-label={t("deployments.records.access.openAction")}
+                    disabled={openingPreviewId !== null}
                     size="sm"
                     variant="outline"
-                    onClick={() => openPreview(access)}
+                    onClick={() => void openPreview(record.id)}
                   >
                     <ExternalLink className="h-4 w-4" />
                     {t("deployments.records.access.openAction")}
