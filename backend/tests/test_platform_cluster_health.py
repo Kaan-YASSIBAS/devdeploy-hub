@@ -1,14 +1,21 @@
 import unittest
+from unittest.mock import Mock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from kubernetes import client
+from kubernetes.client.exceptions import ApiException
 
 from app.api.v1.endpoints.platform import (
     get_platform_cluster_health_service,
     router,
 )
 from app.core.deps import get_current_user
-from app.services.platform_cluster_health import PlatformClusterHealthService
+from app.services.gitops.status_reader import GitOpsStatusError
+from app.services.platform_cluster_health import (
+    KubernetesVersionApiProbe,
+    PlatformClusterHealthService,
+)
 
 
 class FakeProbe:
@@ -85,6 +92,72 @@ class PlatformClusterHealthApiTestCase(unittest.TestCase):
         self.assertTrue(
             any("only devdeploy-workload" in item.lower() for item in body["workload"]["recovery_steps"])
         )
+
+    def test_permission_neutral_probe_uses_kubernetes_version_endpoint(self) -> None:
+        api_client = Mock(spec=client.ApiClient)
+        version_api = Mock()
+
+        with patch(
+            "app.services.platform_cluster_health.client.VersionApi",
+            return_value=version_api,
+        ) as version_api_factory:
+            KubernetesVersionApiProbe(api_client).check_api()
+
+        version_api_factory.assert_called_once_with(api_client)
+        version_api.get_code.assert_called_once_with(_request_timeout=(3, 5))
+
+    def test_forbidden_probe_is_reachable_and_does_not_reopen_setup_gate(self) -> None:
+        self.authenticate()
+        self.management_probe.error = ApiException(status=403, reason="Forbidden")
+
+        response = self.get_health()
+
+        management = response.json()["management"]
+        self.assertEqual(management["status"], "degraded")
+        self.assertTrue(management["api_reachable"])
+        self.assertEqual(management["reason"], "api_forbidden")
+        self.assertTrue(response.json()["platform_ready"])
+        self.assertNotIn("Forbidden", str(response.json()))
+
+    def test_authentication_failure_is_reachable_but_blocks_readiness(self) -> None:
+        self.authenticate()
+        self.management_probe.error = ApiException(status=401, reason="Unauthorized")
+
+        response = self.get_health()
+
+        management = response.json()["management"]
+        self.assertEqual(management["status"], "degraded")
+        self.assertTrue(management["api_reachable"])
+        self.assertEqual(management["reason"], "authentication_failed")
+        self.assertFalse(response.json()["platform_ready"])
+
+    def test_required_api_health_failure_is_reachable_but_blocks_readiness(self) -> None:
+        self.authenticate()
+        self.management_probe.error = ApiException(status=503, reason="Service Unavailable")
+
+        response = self.get_health()
+
+        management = response.json()["management"]
+        self.assertEqual(management["status"], "degraded")
+        self.assertTrue(management["api_reachable"])
+        self.assertEqual(management["reason"], "api_degraded")
+        self.assertFalse(response.json()["platform_ready"])
+
+    def test_configuration_failure_is_distinct_from_transport_failure(self) -> None:
+        self.authenticate()
+        self.management_probe.error = GitOpsStatusError(
+            "status_reader_unavailable",
+            "sensitive configuration detail",
+        )
+
+        response = self.get_health()
+
+        management = response.json()["management"]
+        self.assertEqual(management["status"], "unknown")
+        self.assertFalse(management["api_reachable"])
+        self.assertEqual(management["reason"], "configuration_unavailable")
+        self.assertFalse(response.json()["platform_ready"])
+        self.assertNotIn("sensitive", str(response.json()).lower())
 
     def test_management_failure_is_sanitized(self) -> None:
         self.authenticate()

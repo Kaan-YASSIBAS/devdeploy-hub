@@ -26,6 +26,7 @@ from app.services.deployment_recovery_service import (
     KubernetesRecoveredWorkloadReadinessClient,
     RecoveredWorkloadReadinessClient,
 )
+from app.services.deployment_reconcile_status import DeploymentReconcileStatusService
 from app.services.gitops.kubernetes_status_reader import KubernetesGitOpsStatusReader
 from app.services.product_runtime_status import ProductRuntimeStatusService, WorkloadRuntimeReader
 
@@ -167,4 +168,16 @@ def get_deployment_drift_service(
     return DeploymentDriftService(
         manifest_reader=manifest_reader,
         runtime_service=runtime_service,
+    )
+
+
+def get_deployment_reconcile_status_service(
+    root_reader: RootApplicationObservationReader | None = Depends(
+        get_management_root_application_reader
+    ),
+) -> DeploymentReconcileStatusService:
+    return DeploymentReconcileStatusService(
+        root_reader=root_reader,
+        root_application_name=settings.argocd_root_application_name,
+        root_application_namespace=settings.argocd_namespace,
     )

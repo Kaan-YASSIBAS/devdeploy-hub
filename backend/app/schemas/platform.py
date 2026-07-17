@@ -9,6 +9,10 @@ PlatformClusterStatus = Literal["healthy", "degraded", "unreachable", "unknown"]
 PlatformClusterHealthReason = Literal[
     "ok",
     "kubeconfig_unreachable",
+    "configuration_unavailable",
+    "api_forbidden",
+    "authentication_failed",
+    "api_degraded",
     "api_unreachable",
     "api_port_unpublished",
     "unknown",

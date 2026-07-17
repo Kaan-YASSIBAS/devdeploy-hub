@@ -4,7 +4,14 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
-IntegrationStatus = Literal["connected", "not_configured", "error", "optional"]
+IntegrationStatus = Literal[
+    "connected",
+    "degraded",
+    "not_configured",
+    "unavailable",
+    "error",
+    "optional",
+]
 
 
 class ProfileSettingsResponse(BaseModel):

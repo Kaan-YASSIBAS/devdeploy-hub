@@ -107,6 +107,16 @@ export type DeploymentDriftStatus = {
   message: string;
 };
 
+export type DeploymentReconcileStatus = {
+  status: "synced" | "progressing" | "degraded" | "drifted" | "unknown";
+  observed_revision: string | null;
+  sync_status: string | null;
+  health_status: string | null;
+  commit_observed: boolean;
+  checked_at: string;
+  message: string;
+};
+
 export type UntrackedDeploymentRuntime = {
   name: string;
   namespace: string;
@@ -196,6 +206,7 @@ export type DeploymentRecord = {
   updated_at: string;
   runtime_status: DeploymentRuntimeStatus | null;
   drift_status: DeploymentDriftStatus | null;
+  reconcile_status: DeploymentReconcileStatus | null;
 };
 
 export type DeploymentRecordUpdateInput = Partial<{
@@ -691,7 +702,13 @@ export type ApiTokenCreateResponse = {
   item: ApiToken;
 };
 
-export type IntegrationStatus = "connected" | "not_configured" | "error" | "optional";
+export type IntegrationStatus =
+  | "connected"
+  | "degraded"
+  | "not_configured"
+  | "unavailable"
+  | "error"
+  | "optional";
 
 export type IntegrationStatusItem = {
   key: "github" | "argocd" | "kubernetes" | "prometheus" | "loki" | "grafana";
@@ -772,6 +789,10 @@ export type PlatformClusterHealthStatus = "healthy" | "degraded" | "unreachable"
 export type PlatformClusterHealthReason =
   | "ok"
   | "kubeconfig_unreachable"
+  | "configuration_unavailable"
+  | "api_forbidden"
+  | "authentication_failed"
+  | "api_degraded"
   | "api_unreachable"
   | "api_port_unpublished"
   | "unknown";

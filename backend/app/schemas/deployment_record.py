@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.schemas.runtime_status import DeploymentRuntimeStatusRead
 from app.schemas.deployment_drift import DeploymentDriftStatusRead
+from app.schemas.deployment_reconcile import DeploymentReconcileStatusRead
 from app.schemas.telemetry import HttpTelemetryConfig, disabled_telemetry
 
 
@@ -159,6 +160,7 @@ class DeploymentRecordRead(BaseModel):
     updated_at: datetime
     runtime_status: DeploymentRuntimeStatusRead | None = None
     drift_status: DeploymentDriftStatusRead | None = None
+    reconcile_status: DeploymentReconcileStatusRead | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

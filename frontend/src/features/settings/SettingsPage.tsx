@@ -61,11 +61,11 @@ function integrationVariant(status: IntegrationStatus) {
     return "success";
   }
 
-  if (status === "error") {
+  if (status === "error" || status === "unavailable") {
     return "danger";
   }
 
-  if (status === "optional") {
+  if (status === "optional" || status === "degraded") {
     return "warning";
   }
 

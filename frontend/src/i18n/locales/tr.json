@@ -322,10 +322,10 @@
         "not_configured": "Kubernetes client yapılandırması mevcut değil."
       },
       "argocd": {
-        "healthy": "Release Application görülebiliyor.",
-        "degraded": "Argo CD mevcut ama release Application eksik.",
-        "unavailable": "Argo CD Application durumu okunamadı.",
-        "not_configured": "Bu cluster içinde Argo CD yapılandırılmadı."
+        "healthy": "Yapılandırılmış Root Application Synced ve Healthy durumda.",
+        "degraded": "Yapılandırılmış Argo CD Root Application bozulmuş veya senkron dışı.",
+        "unavailable": "Management cluster Root Application durumu okunamadı.",
+        "not_configured": "Yapılandırılmış Argo CD Root Application bulunamadı."
       },
       "prometheus": {
         "healthy": "Prometheus API erişilebilir.",
@@ -503,6 +503,13 @@
           "runtime_missing": "Runtime eksik",
           "unknown": "Bilinmiyor"
         }
+      },
+      "reconcileState": {
+        "synced": "Senkronize",
+        "progressing": "İlerliyor",
+        "degraded": "Bozulmuş",
+        "drifted": "Senkron dışı",
+        "unknown": "Bilinmiyor"
       },
       "archive": {
         "action": "Arşivle",
@@ -1205,7 +1212,9 @@
       "configuredExternally": "Kubernetes secretları veya ortam değişkenleri üzerinden yapılandırılır.",
       "status": {
         "connected": "Bağlı",
+        "degraded": "Bozulmuş",
         "not_configured": "Yapılandırılmadı",
+        "unavailable": "Erişilemiyor",
         "error": "Hata",
         "optional": "Opsiyonel"
       },
@@ -1216,8 +1225,10 @@
           "error": "GitHub workflow API kontrolü başarısız."
         },
         "argocd": {
-          "connected": "Release Application backend tarafından görülebiliyor.",
-          "not_configured": "Argo CD namespace'i veya release Application eksik.",
+          "connected": "Yapılandırılmış Root Application senkronize ve sağlıklı.",
+          "degraded": "Yapılandırılmış Root Application mevcut ancak sağlıklı ve senkronize değil.",
+          "not_configured": "Yapılandırılmış Argo CD namespace'i veya Root Application eksik.",
+          "unavailable": "Root Application durumuna geçici olarak erişilemiyor.",
           "error": "Argo CD durumu mevcut RBAC ile okunamadı."
         },
         "kubernetes": {

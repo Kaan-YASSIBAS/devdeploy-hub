@@ -13,6 +13,7 @@ from app.core.deps import get_current_user, get_db
 from app.api.v1.runtime_status import (
     get_deployment_destroy_runtime_cleanup_service,
     get_deployment_drift_service,
+    get_deployment_reconcile_status_service,
     get_deployment_recovery_verification_service,
     get_product_runtime_status_service,
     get_workload_service_proxy_client,
@@ -32,6 +33,7 @@ from app.schemas.deployment_record import (
 from app.schemas.deployment_access import DeploymentAccessRead
 from app.schemas.runtime_status import UntrackedDeploymentListResponse
 from app.services.deployment_record_service import DeploymentRecordService
+from app.services.deployment_reconcile_status import DeploymentReconcileStatusService
 from app.services.deployment_access_service import DeploymentAccessService
 from app.services.deployment_drift import DeploymentDriftService
 from app.services.deployment_preview_service import (
@@ -99,12 +101,20 @@ def _read_response(
     deployment: DeploymentRecord,
     runtime_service: ProductRuntimeStatusService,
     drift_service: DeploymentDriftService,
+    reconcile_service: DeploymentReconcileStatusService,
 ) -> DeploymentRecordRead:
     response = DeploymentRecordRead.model_validate(deployment)
+    runtime_status = runtime_service.deployment_status(deployment)
+    drift_status = drift_service.evaluate(deployment)
     return response.model_copy(
         update={
-            "runtime_status": runtime_service.deployment_status(deployment),
-            "drift_status": drift_service.evaluate(deployment),
+            "runtime_status": runtime_status,
+            "drift_status": drift_status,
+            "reconcile_status": reconcile_service.evaluate(
+                deployment,
+                runtime_status,
+                drift_status,
+            ),
         }
     )
 
@@ -139,10 +149,13 @@ def list_deployment_records(
     current_user: User = Depends(get_current_user),
     runtime_service: ProductRuntimeStatusService = Depends(get_product_runtime_status_service),
     drift_service: DeploymentDriftService = Depends(get_deployment_drift_service),
+    reconcile_service: DeploymentReconcileStatusService = Depends(
+        get_deployment_reconcile_status_service
+    ),
 ) -> list[DeploymentRecordRead]:
     deployments = DeploymentRecordService(db).list_for_user(current_user, archive_filter)
     return [
-        _read_response(deployment, runtime_service, drift_service)
+        _read_response(deployment, runtime_service, drift_service, reconcile_service)
         for deployment in deployments
     ]
 
@@ -164,9 +177,12 @@ def get_deployment_record(
     current_user: User = Depends(get_current_user),
     runtime_service: ProductRuntimeStatusService = Depends(get_product_runtime_status_service),
     drift_service: DeploymentDriftService = Depends(get_deployment_drift_service),
+    reconcile_service: DeploymentReconcileStatusService = Depends(
+        get_deployment_reconcile_status_service
+    ),
 ) -> DeploymentRecordRead:
     deployment = DeploymentRecordService(db).get(deployment_id, current_user)
-    return _read_response(deployment, runtime_service, drift_service)
+    return _read_response(deployment, runtime_service, drift_service, reconcile_service)
 
 
 @router.get("/{deployment_id}/access", response_model=DeploymentAccessRead)

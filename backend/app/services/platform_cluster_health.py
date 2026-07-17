@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import Protocol
 
 from kubernetes import client
+from kubernetes.client.exceptions import ApiException
 
 from app.schemas.platform import PlatformClusterHealthItem, PlatformClusterHealthResponse
 from app.services.gitops.kubernetes_status_reader import KubernetesGitOpsStatusReader
@@ -99,7 +100,10 @@ class PlatformClusterHealthService:
         return PlatformClusterHealthResponse(
             management=management,
             workload=workload,
-            platform_ready=management.api_reachable and workload.api_reachable,
+            platform_ready=(
+                PlatformClusterHealthService._allows_platform_ready(management)
+                and PlatformClusterHealthService._allows_platform_ready(workload)
+            ),
         )
 
     @staticmethod
@@ -131,11 +135,18 @@ class PlatformClusterHealthService:
         try:
             probe.check_api()
         except GitOpsStatusError:
-            return PlatformClusterHealthService._unreachable_item(
+            return PlatformClusterHealthService._configuration_item(
                 cluster_name=cluster_name,
                 context=context,
                 role=role,
-                reason="kubeconfig_unreachable",
+                checked_at=checked_at,
+            )
+        except ApiException as exc:
+            return PlatformClusterHealthService._api_error_item(
+                cluster_name=cluster_name,
+                context=context,
+                role=role,
+                http_status=exc.status,
                 checked_at=checked_at,
             )
         except Exception:
@@ -157,6 +168,84 @@ class PlatformClusterHealthService:
             message=f"{PlatformClusterHealthService._role_label(role)} cluster API is reachable.",
             checked_at=checked_at,
         )
+
+    @staticmethod
+    def _configuration_item(
+        *,
+        cluster_name: str,
+        context: str,
+        role: str,
+        checked_at: datetime,
+    ) -> PlatformClusterHealthItem:
+        return PlatformClusterHealthItem(
+            cluster_name=cluster_name,
+            context=context,
+            role=role,
+            status="unknown",
+            api_reachable=False,
+            reason="configuration_unavailable",
+            message=(
+                f"{PlatformClusterHealthService._role_label(role)} cluster API configuration "
+                "is unavailable."
+            ),
+            recommended_action=LAUNCHER_RECOMMENDATION,
+            checked_at=checked_at,
+        )
+
+    @staticmethod
+    def _api_error_item(
+        *,
+        cluster_name: str,
+        context: str,
+        role: str,
+        http_status: int | None,
+        checked_at: datetime,
+    ) -> PlatformClusterHealthItem:
+        if http_status == 403:
+            reason = "api_forbidden"
+            message = (
+                f"{PlatformClusterHealthService._role_label(role)} cluster API is reachable, "
+                "but an optional diagnostic request was forbidden."
+            )
+            recommended_action = "Review the backend read-only Kubernetes permissions."
+        elif http_status == 401:
+            reason = "authentication_failed"
+            message = (
+                f"{PlatformClusterHealthService._role_label(role)} cluster API is reachable, "
+                "but authentication failed."
+            )
+            recommended_action = "Reconcile the launcher-managed Kubernetes credentials."
+        elif http_status:
+            reason = "api_degraded"
+            message = (
+                f"{PlatformClusterHealthService._role_label(role)} cluster API is reachable, "
+                "but its health probe returned an unhealthy response."
+            )
+            recommended_action = LAUNCHER_RECOMMENDATION
+        else:
+            return PlatformClusterHealthService._unreachable_item(
+                cluster_name=cluster_name,
+                context=context,
+                role=role,
+                reason="api_unreachable",
+                checked_at=checked_at,
+            )
+
+        return PlatformClusterHealthItem(
+            cluster_name=cluster_name,
+            context=context,
+            role=role,
+            status="degraded",
+            api_reachable=True,
+            reason=reason,
+            message=message,
+            recommended_action=recommended_action,
+            checked_at=checked_at,
+        )
+
+    @staticmethod
+    def _allows_platform_ready(item: PlatformClusterHealthItem) -> bool:
+        return item.status == "healthy" or item.reason == "api_forbidden"
 
     @staticmethod
     def _unreachable_item(

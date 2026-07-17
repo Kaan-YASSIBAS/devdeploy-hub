@@ -165,6 +165,7 @@ $LogsDir = Join-Path $LocalRoot "logs"
 $KindDir = Join-Path $LocalRoot "kind"
 $ToolsDir = Join-Path $LocalRoot "tools"
 $KubeconfigDir = Join-Path $LocalRoot "kubeconfig"
+$ImageIdentityDir = Join-Path $LocalRoot "images"
 $StatusPath = Join-Path $StatusDir "launcher-status.json"
 $LogPath = Join-Path $LogsDir "devdeploy-launcher.log"
 $MgmtKindConfigPath = Join-Path $KindDir "devdeploy-mgmt.yaml"
@@ -180,6 +181,7 @@ $PostgresDatabase = "devdeploy"
 $PostgresUsername = "devdeploy"
 $PostgresPassword = "local-devdeploy-password"
 $BackendImage = "devdeploy-backend:local"
+$BackendImageIdentityPath = Join-Path $ImageIdentityDir "devdeploy-backend.json"
 $BackendContextPath = Join-Path $RepoRoot "backend"
 $BackendDockerfilePath = Join-Path $BackendContextPath "Dockerfile"
 $BackendRequirementsPath = Join-Path $BackendContextPath "requirements.txt"
@@ -191,6 +193,8 @@ $BackendManifestPath = Join-Path $RepoRoot "platform\management\backend"
 $BackendAlembicConfigPath = "/app/alembic.ini"
 $BackendAlembicScriptPath = "/app/alembic"
 $FrontendImage = "devdeploy-frontend:local"
+$FrontendImageIdentityPath = Join-Path $ImageIdentityDir "devdeploy-frontend.json"
+$ManagementImageIdentityAnnotation = "devdeploy.io/local-image-identity"
 $FrontendBuildApiBaseUrl = "/api/v1"
 $FrontendContextPath = Join-Path $RepoRoot "frontend"
 $FrontendDockerfilePath = Join-Path $FrontendContextPath "Dockerfile"
@@ -2038,11 +2042,14 @@ function New-ManagementBackendImageStatus {
         dockerfile                   = "backend/Dockerfile"
         context                      = "backend"
         local_image_present          = $false
+        local_image_id               = $null
         build_attempted              = $false
         build_succeeded              = $false
         load_attempted               = $false
         load_succeeded               = $false
         loaded_to_management_cluster = $false
+        loaded_image_id              = $null
+        rollout_identity_verified    = $false
         target_cluster               = "devdeploy-mgmt"
         status                       = "not_checked"
         message                      = "Backend image build has not been requested."
@@ -2063,6 +2070,245 @@ function Test-ManagementBackendImagePresent {
 
     $result = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @("image", "inspect", "--format", "{{.Id}}", $BackendImage) -TimeoutSeconds 30
     return [bool]($result.exit_code -eq 0 -and -not $result.timed_out -and -not [string]::IsNullOrWhiteSpace($result.stdout))
+}
+
+function Get-LocalDockerImageId {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Image
+    )
+
+    $result = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @("image", "inspect", "--format", "{{.Id}}", $Image) -TimeoutSeconds 30
+    $imageId = ([string]$result.stdout).Trim()
+    if ($result.exit_code -ne 0 -or $result.timed_out -or $imageId -notmatch '^sha256:[0-9a-f]{64}$') {
+        return $null
+    }
+    return [string]$imageId
+}
+
+function Get-KindLoadedImageIdentity {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Image
+    )
+
+    $result = Invoke-ReadOnlyCommand -FileName "docker" -Arguments @(
+        "exec",
+        "devdeploy-mgmt-control-plane",
+        "crictl",
+        "inspecti",
+        $Image
+    ) -TimeoutSeconds 60 -PreserveStandardOutput $true
+    if ($result.exit_code -ne 0 -or $result.timed_out -or [string]::IsNullOrWhiteSpace([string]$result.stdout)) {
+        return [ordered]@{ success = $false; image_id = $null; message = "The kind-loaded image identity could not be read." }
+    }
+
+    try {
+        $parsed = ([string]$result.stdout).Trim([char]0xFEFF).Trim() | ConvertFrom-Json
+        $statusProperty = $parsed.PSObject.Properties["status"]
+        $idProperty = if ($null -ne $statusProperty -and $null -ne $statusProperty.Value) {
+            $statusProperty.Value.PSObject.Properties["id"]
+        }
+        else {
+            $null
+        }
+        $imageId = if ($null -ne $idProperty) { ([string]$idProperty.Value).Trim() } else { "" }
+        if ($imageId -notmatch '^sha256:[0-9a-f]{64}$') {
+            throw "invalid_image_identity"
+        }
+        return [ordered]@{ success = $true; image_id = [string]$imageId; message = "The kind-loaded image identity was verified." }
+    }
+    catch {
+        return [ordered]@{ success = $false; image_id = $null; message = "The kind-loaded image metadata was malformed." }
+    }
+}
+
+function Save-ManagementImageIdentity {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Image,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ImageId
+    )
+
+    if ($ImageId -notmatch '^sha256:[0-9a-f]{64}$') {
+        throw "Refusing to persist an invalid management image identity."
+    }
+    $document = [ordered]@{
+        schema_version = "1"
+        image = [string]$Image
+        image_id = [string]$ImageId
+        target_cluster = "devdeploy-mgmt"
+        node_container = "devdeploy-mgmt-control-plane"
+        recorded_at = [string](Get-Timestamp)
+    }
+    Set-ContentAtomicUtf8 -Path $Path -Value ($document | ConvertTo-Json -Depth 4)
+}
+
+function Resolve-ManagementImageIdentity {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Image,
+
+        [Parameter(Mandatory = $true)]
+        [string]$IdentityPath
+    )
+
+    $loaded = Get-KindLoadedImageIdentity -Image $Image
+    if (-not [bool]$loaded.success) {
+        return $loaded
+    }
+    Save-ManagementImageIdentity -Path $IdentityPath -Image $Image -ImageId ([string]$loaded.image_id)
+    return $loaded
+}
+
+function Set-ManagementDeploymentImageIdentity {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Deployment,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ImageId
+    )
+
+    $getResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @(
+        "--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace,
+        "get", "deployment", $Deployment, "--output", "json"
+    ) -TimeoutSeconds 30 -PreserveStandardOutput $true
+    if ($getResult.exit_code -ne 0 -or $getResult.timed_out) {
+        return [ordered]@{ success = $false; changed = $false; previous_generation = 0; message = "The Deployment image identity could not be read." }
+    }
+
+    try {
+        $deploymentObject = ([string]$getResult.stdout) | ConvertFrom-Json
+        $previousGeneration = [int64]$deploymentObject.metadata.generation
+        $annotationsProperty = $deploymentObject.spec.template.metadata.PSObject.Properties["annotations"]
+        $annotationProperty = if ($null -ne $annotationsProperty -and $null -ne $annotationsProperty.Value) {
+            $annotationsProperty.Value.PSObject.Properties[$ManagementImageIdentityAnnotation]
+        }
+        else {
+            $null
+        }
+        $currentImageId = if ($null -ne $annotationProperty) { [string]$annotationProperty.Value } else { "" }
+    }
+    catch {
+        return [ordered]@{ success = $false; changed = $false; previous_generation = 0; message = "The Deployment image identity response was malformed." }
+    }
+
+    if ($currentImageId -eq $ImageId) {
+        return [ordered]@{ success = $true; changed = $false; previous_generation = $previousGeneration; message = "The Deployment already references the loaded image identity." }
+    }
+
+    $patchDocument = [ordered]@{
+        spec = [ordered]@{
+            template = [ordered]@{
+                metadata = [ordered]@{
+                    annotations = [ordered]@{
+                        $ManagementImageIdentityAnnotation = [string]$ImageId
+                    }
+                }
+            }
+        }
+    }
+    $patchJson = $patchDocument | ConvertTo-Json -Depth 8 -Compress
+    $patchResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @(
+        "--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace,
+        "patch", "deployment", $Deployment, "--type", "merge", "--patch", $patchJson
+    ) -TimeoutSeconds 60
+    if ($patchResult.exit_code -ne 0 -or $patchResult.timed_out) {
+        return [ordered]@{ success = $false; changed = $false; previous_generation = $previousGeneration; message = "The Deployment pod-template image identity could not be reconciled." }
+    }
+    return [ordered]@{ success = $true; changed = $true; previous_generation = $previousGeneration; message = "The Deployment pod template was updated for the loaded image identity." }
+}
+
+function Test-ManagementDeploymentImageIdentity {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Deployment,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Selector,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ImageId,
+
+        [int64]$PreviousGeneration = 0,
+
+        [bool]$IdentityChanged = $false
+    )
+
+    $deploymentResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @(
+        "--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace,
+        "get", "deployment", $Deployment, "--output", "json"
+    ) -TimeoutSeconds 30 -PreserveStandardOutput $true
+    $podsResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @(
+        "--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace,
+        "get", "pods", "--selector", $Selector, "--output", "json"
+    ) -TimeoutSeconds 30 -PreserveStandardOutput $true
+    $replicaSetsResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @(
+        "--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace,
+        "get", "replicasets", "--selector", $Selector, "--output", "json"
+    ) -TimeoutSeconds 30 -PreserveStandardOutput $true
+    $failedResults = @(@($deploymentResult, $podsResult, $replicaSetsResult) | Where-Object { $_.exit_code -ne 0 -or $_.timed_out })
+    if ($failedResults.Count -gt 0) {
+        return [ordered]@{ success = $false; message = "The rolled out image identity could not be verified." }
+    }
+
+    try {
+        $deploymentObject = ([string]$deploymentResult.stdout) | ConvertFrom-Json
+        $podsObject = ([string]$podsResult.stdout) | ConvertFrom-Json
+        $replicaSetsObject = ([string]$replicaSetsResult.stdout) | ConvertFrom-Json
+        $deploymentAnnotation = [string]$deploymentObject.spec.template.metadata.annotations.PSObject.Properties[$ManagementImageIdentityAnnotation].Value
+        $generationAdvanced = [bool](-not $IdentityChanged -or [int64]$deploymentObject.metadata.generation -gt $PreviousGeneration)
+        $matchingPods = @($podsObject.items | Where-Object {
+            $annotationsProperty = $_.metadata.PSObject.Properties["annotations"]
+            $annotationProperty = if ($null -ne $annotationsProperty -and $null -ne $annotationsProperty.Value) {
+                $annotationsProperty.Value.PSObject.Properties[$ManagementImageIdentityAnnotation]
+            }
+            else {
+                $null
+            }
+            $deletionTimestampProperty = $_.metadata.PSObject.Properties["deletionTimestamp"]
+            ($null -eq $deletionTimestampProperty -or $null -eq $deletionTimestampProperty.Value) -and
+            $null -ne $annotationProperty -and
+            [string]$annotationProperty.Value -eq $ImageId -and
+            [string]$_.status.containerStatuses[0].imageID -eq $ImageId -and
+            [bool]$_.status.containerStatuses[0].ready
+        })
+        $matchingReplicaSets = @($replicaSetsObject.items | Where-Object {
+            $annotationsProperty = $_.spec.template.metadata.PSObject.Properties["annotations"]
+            $annotationProperty = if ($null -ne $annotationsProperty -and $null -ne $annotationsProperty.Value) {
+                $annotationsProperty.Value.PSObject.Properties[$ManagementImageIdentityAnnotation]
+            }
+            else {
+                $null
+            }
+            $owner = @($_.metadata.ownerReferences | Where-Object { $_.kind -eq "Deployment" -and $_.name -eq $Deployment })
+            $availableReplicasProperty = $_.status.PSObject.Properties["availableReplicas"]
+            $null -ne $annotationProperty -and
+            [string]$annotationProperty.Value -eq $ImageId -and
+            $owner.Count -eq 1 -and
+            $null -ne $availableReplicasProperty -and
+            [int]$availableReplicasProperty.Value -ge 1
+        })
+        $success = [bool](
+            $deploymentAnnotation -eq $ImageId -and
+            $generationAdvanced -and
+            $matchingPods.Count -ge 1 -and
+            $matchingReplicaSets.Count -ge 1
+        )
+        return [ordered]@{
+            success = $success
+            message = if ($success) { "The new ReplicaSet and Ready pod use the loaded image identity." } else { "The ready workload does not yet use the loaded image identity." }
+        }
+    }
+    catch {
+        return [ordered]@{ success = $false; message = "The rolled out image identity response was malformed." }
+    }
 }
 
 function Invoke-ManagementBackendImageBuild {
@@ -2150,7 +2396,7 @@ function Invoke-ManagementBackendImageBuild {
     $status["build_succeeded"] = $true
     Add-Check -Id "backend_image_build" -Label "Management backend image build" -Status "ok" -Message "Management backend image build completed successfully." -Details @{
         required = $true
-        image    = $BackendImage
+        image    = $script:BackendImage
         context  = "backend"
     }
 
@@ -2166,6 +2412,8 @@ function Invoke-ManagementBackendImageBuild {
         }
         return $status
     }
+
+    $status["local_image_id"] = Get-LocalDockerImageId -Image $BackendImage
 
     $status["status"] = "ready"
     $status["message"] = "Backend image devdeploy-backend:local was built and verified in the local Docker daemon."
@@ -2184,11 +2432,14 @@ function New-ManagementFrontendImageStatus {
         context                      = "frontend"
         build_api_base_url           = $FrontendBuildApiBaseUrl
         local_image_present          = $false
+        local_image_id               = $null
         build_attempted              = $false
         build_succeeded              = $false
         load_attempted               = $false
         load_succeeded               = $false
         loaded_to_management_cluster = $false
+        loaded_image_id              = $null
+        rollout_identity_verified    = $false
         target_cluster               = "devdeploy-mgmt"
         status                       = "not_checked"
         message                      = "Frontend image build has not been requested."
@@ -2316,6 +2567,8 @@ function Invoke-ManagementFrontendImageBuild {
         return $status
     }
 
+    $status["local_image_id"] = Get-LocalDockerImageId -Image $FrontendImage
+
     $status["status"] = "ready"
     $status["message"] = "Frontend image devdeploy-frontend:local was built with /api/v1 and verified in the local Docker daemon."
     $status["checked_at"] = [string](Get-Timestamp)
@@ -2370,6 +2623,8 @@ function Invoke-ManagementFrontendImageLoad {
         }
         return $status
     }
+
+    $status["local_image_id"] = Get-LocalDockerImageId -Image $FrontendImage
 
     Add-Check -Id "frontend_image_local" -Label "Local management frontend image" -Status "ok" -Message "Local image devdeploy-frontend:local exists." -Details @{
         required = $true
@@ -2428,8 +2683,22 @@ function Invoke-ManagementFrontendImageLoad {
         return $status
     }
 
+    $loadedIdentity = Resolve-ManagementImageIdentity -Image $FrontendImage -IdentityPath $FrontendImageIdentityPath
+    if (-not [bool]$loadedIdentity.success) {
+        $status["status"] = "error"
+        $status["message"] = "The frontend image was loaded, but its kind runtime identity could not be verified."
+        $status["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "frontend_image_identity" -Label "Management frontend loaded image identity" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required       = $true
+            image          = $FrontendImage
+            target_cluster = "devdeploy-mgmt"
+        }
+        return $status
+    }
+
     $status["load_succeeded"] = $true
     $status["loaded_to_management_cluster"] = $true
+    $status["loaded_image_id"] = [string]$loadedIdentity.image_id
     $status["status"] = "ready"
     $status["message"] = "Frontend image devdeploy-frontend:local was loaded into devdeploy-mgmt."
     $status["checked_at"] = [string](Get-Timestamp)
@@ -2437,6 +2706,7 @@ function Invoke-ManagementFrontendImageLoad {
         required       = $true
         image          = $FrontendImage
         target_cluster = "devdeploy-mgmt"
+        image_id       = [string]$loadedIdentity.image_id
     }
     return $status
 }
@@ -2484,6 +2754,8 @@ function Invoke-ManagementBackendImageLoad {
         }
         return $status
     }
+
+    $status["local_image_id"] = Get-LocalDockerImageId -Image $BackendImage
 
     Add-Check -Id "backend_image_local" -Label "Local management backend image" -Status "ok" -Message "Local image devdeploy-backend:local exists." -Details @{
         required = $true
@@ -2542,8 +2814,22 @@ function Invoke-ManagementBackendImageLoad {
         return $status
     }
 
+    $loadedIdentity = Resolve-ManagementImageIdentity -Image $script:BackendImage -IdentityPath $BackendImageIdentityPath
+    if (-not [bool]$loadedIdentity.success) {
+        $status["status"] = "error"
+        $status["message"] = "The backend image was loaded, but its kind runtime identity could not be verified."
+        $status["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "backend_image_identity" -Label "Management backend loaded image identity" -Status "failed" -Message ([string]$status["message"]) -Details @{
+            required       = $true
+            image          = $BackendImage
+            target_cluster = "devdeploy-mgmt"
+        }
+        return $status
+    }
+
     $status["load_succeeded"] = $true
     $status["loaded_to_management_cluster"] = $true
+    $status["loaded_image_id"] = [string]$loadedIdentity.image_id
     $status["status"] = "ready"
     $status["message"] = "Backend image devdeploy-backend:local was loaded into devdeploy-mgmt."
     $status["checked_at"] = [string](Get-Timestamp)
@@ -2551,6 +2837,7 @@ function Invoke-ManagementBackendImageLoad {
         required       = $true
         image          = $BackendImage
         target_cluster = "devdeploy-mgmt"
+        image_id       = [string]$loadedIdentity.image_id
     }
     return $status
 }
@@ -3337,7 +3624,7 @@ function Invoke-BootstrapManagementBackend {
     $backendImage["local_image_present"] = $localImagePresent
     Add-Check -Id "management_backend_image_prerequisite" -Label "Management backend image prerequisite" -Status $(if ($localImagePresent) { "ok" } else { "warning" }) -Message $(if ($localImagePresent) { "Local image devdeploy-backend:local exists; rollout readiness will verify cluster availability." } else { "Local image could not be verified; rollout readiness will determine whether the image is available in devdeploy-mgmt." }) -Details @{
         required = $false
-        image    = $BackendImage
+        image    = $script:BackendImage
     }
 
     $kustomizationPath = Join-Path $BackendManifestPath "kustomization.yaml"
@@ -3382,6 +3669,25 @@ function Invoke-BootstrapManagementBackend {
         manifests_path = $BackendManifestRelativePath
     }
 
+    $loadedIdentity = Resolve-ManagementImageIdentity -Image $script:BackendImage -IdentityPath $BackendImageIdentityPath
+    if (-not [bool]$loadedIdentity.success) {
+        $backend["status"] = "error"
+        $backend["message"] = "The kind-loaded backend image identity could not be verified. Run -LoadManagementBackendImage before bootstrapping."
+        $backend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_backend_image_identity" -Label "Management backend image identity" -Status "failed" -Message ([string]$backend["message"]) -Details @{
+            required = $true
+            image    = $script:BackendImage
+        }
+        return New-ManagementBackendBootstrapResult -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+    $backendImage["loaded_to_management_cluster"] = $true
+    $backendImage["loaded_image_id"] = [string]$loadedIdentity.image_id
+    Add-Check -Id "management_backend_image_identity" -Label "Management backend image identity" -Status "ok" -Message "The kind-loaded backend image identity was verified." -Details @{
+        required = $true
+        image    = $script:BackendImage
+        image_id = [string]$loadedIdentity.image_id
+    }
+
     Write-LauncherLog "Applying only platform/management/backend to devdeploy-mgmt."
     if (-not $Quiet) {
         Write-Host "Applying management backend manifests to devdeploy-mgmt..."
@@ -3407,6 +3713,23 @@ function Invoke-BootstrapManagementBackend {
         target_cluster = "devdeploy-mgmt"
     }
 
+    $identityUpdate = Set-ManagementDeploymentImageIdentity -Deployment "devdeploy-backend" -ImageId ([string]$loadedIdentity.image_id)
+    if (-not [bool]$identityUpdate.success) {
+        $backend["status"] = "error"
+        $backend["message"] = [string]$identityUpdate.message
+        $backend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_backend_rollout_identity" -Label "Management backend rollout identity" -Status "failed" -Message ([string]$backend["message"]) -Details @{
+            required = $true
+            image_id = [string]$loadedIdentity.image_id
+        }
+        return New-ManagementBackendBootstrapResult -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+    Add-Check -Id "management_backend_rollout_identity" -Label "Management backend rollout identity" -Status "ok" -Message ([string]$identityUpdate.message) -Details @{
+        required             = $true
+        image_id             = [string]$loadedIdentity.image_id
+        pod_template_changed = [bool]$identityUpdate.changed
+    }
+
     $rolloutResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace, "rollout", "status", "deployment/devdeploy-backend", "--timeout=240s") -TimeoutSeconds 270
     if ($rolloutResult.exit_code -ne 0 -or $rolloutResult.timed_out) {
         $backend["status"] = "error"
@@ -3421,6 +3744,23 @@ function Invoke-BootstrapManagementBackend {
         return New-ManagementBackendBootstrapResult -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
     }
 
+    $identityVerification = Test-ManagementDeploymentImageIdentity -Deployment "devdeploy-backend" -Selector "app.kubernetes.io/name=devdeploy-backend,app.kubernetes.io/component=backend" -ImageId ([string]$loadedIdentity.image_id) -PreviousGeneration ([int64]$identityUpdate.previous_generation) -IdentityChanged ([bool]$identityUpdate.changed)
+    if (-not [bool]$identityVerification.success) {
+        $backend["status"] = "error"
+        $backend["message"] = [string]$identityVerification.message
+        $backend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_backend_rollout_image_verify" -Label "Management backend rollout image verification" -Status "failed" -Message ([string]$backend["message"]) -Details @{
+            required = $true
+            image_id = [string]$loadedIdentity.image_id
+        }
+        return New-ManagementBackendBootstrapResult -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+    $backendImage["rollout_identity_verified"] = $true
+    Add-Check -Id "management_backend_rollout_image_verify" -Label "Management backend rollout image verification" -Status "ok" -Message ([string]$identityVerification.message) -Details @{
+        required = $true
+        image_id = [string]$loadedIdentity.image_id
+    }
+
     $backend["rollout_succeeded"] = $true
     $backendImage["loaded_to_management_cluster"] = $true
     $backendImage["target_cluster"] = "devdeploy-mgmt"
@@ -3431,7 +3771,7 @@ function Invoke-BootstrapManagementBackend {
         required   = $true
         namespace  = $PostgresNamespace
         deployment = "devdeploy-backend"
-        image      = $BackendImage
+        image      = $script:BackendImage
     }
 
     $serviceResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace, "get", "service", "devdeploy-backend", "--output", "name") -TimeoutSeconds 20
@@ -4064,6 +4404,25 @@ function Invoke-BootstrapManagementFrontend {
         rendered_kinds = $renderedKinds
     }
 
+    $loadedIdentity = Resolve-ManagementImageIdentity -Image $FrontendImage -IdentityPath $FrontendImageIdentityPath
+    if (-not [bool]$loadedIdentity.success) {
+        $frontend["status"] = "error"
+        $frontend["message"] = "The kind-loaded frontend image identity could not be verified. Run -LoadManagementFrontendImage before bootstrapping."
+        $frontend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_frontend_image_identity" -Label "Management frontend image identity" -Status "failed" -Message ([string]$frontend["message"]) -Details @{
+            required = $true
+            image    = $FrontendImage
+        }
+        return New-ManagementFrontendBootstrapResult -Frontend $frontend -FrontendImage $frontendImageStatus -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+    $frontendImageStatus["loaded_to_management_cluster"] = $true
+    $frontendImageStatus["loaded_image_id"] = [string]$loadedIdentity.image_id
+    Add-Check -Id "management_frontend_image_identity" -Label "Management frontend image identity" -Status "ok" -Message "The kind-loaded frontend image identity was verified." -Details @{
+        required = $true
+        image    = $FrontendImage
+        image_id = [string]$loadedIdentity.image_id
+    }
+
     Write-LauncherLog "Applying only platform/management/frontend to devdeploy-mgmt."
     if (-not $Quiet) {
         Write-Host "Applying management frontend manifests to devdeploy-mgmt..."
@@ -4089,6 +4448,23 @@ function Invoke-BootstrapManagementFrontend {
         target_cluster = "devdeploy-mgmt"
     }
 
+    $identityUpdate = Set-ManagementDeploymentImageIdentity -Deployment "devdeploy-frontend" -ImageId ([string]$loadedIdentity.image_id)
+    if (-not [bool]$identityUpdate.success) {
+        $frontend["status"] = "error"
+        $frontend["message"] = [string]$identityUpdate.message
+        $frontend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_frontend_rollout_identity" -Label "Management frontend rollout identity" -Status "failed" -Message ([string]$frontend["message"]) -Details @{
+            required = $true
+            image_id = [string]$loadedIdentity.image_id
+        }
+        return New-ManagementFrontendBootstrapResult -Frontend $frontend -FrontendImage $frontendImageStatus -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+    Add-Check -Id "management_frontend_rollout_identity" -Label "Management frontend rollout identity" -Status "ok" -Message ([string]$identityUpdate.message) -Details @{
+        required             = $true
+        image_id             = [string]$loadedIdentity.image_id
+        pod_template_changed = [bool]$identityUpdate.changed
+    }
+
     $rolloutResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $PostgresNamespace, "rollout", "status", "deployment/devdeploy-frontend", "--timeout=240s") -TimeoutSeconds 270
     if ($rolloutResult.exit_code -ne 0 -or $rolloutResult.timed_out) {
         $frontend["status"] = "error"
@@ -4101,6 +4477,23 @@ function Invoke-BootstrapManagementFrontend {
             error      = $rolloutResult.stderr
         }
         return New-ManagementFrontendBootstrapResult -Frontend $frontend -FrontendImage $frontendImageStatus -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+
+    $identityVerification = Test-ManagementDeploymentImageIdentity -Deployment "devdeploy-frontend" -Selector "app.kubernetes.io/name=devdeploy-frontend,app.kubernetes.io/component=frontend" -ImageId ([string]$loadedIdentity.image_id) -PreviousGeneration ([int64]$identityUpdate.previous_generation) -IdentityChanged ([bool]$identityUpdate.changed)
+    if (-not [bool]$identityVerification.success) {
+        $frontend["status"] = "error"
+        $frontend["message"] = [string]$identityVerification.message
+        $frontend["checked_at"] = [string](Get-Timestamp)
+        Add-Check -Id "management_frontend_rollout_image_verify" -Label "Management frontend rollout image verification" -Status "failed" -Message ([string]$frontend["message"]) -Details @{
+            required = $true
+            image_id = [string]$loadedIdentity.image_id
+        }
+        return New-ManagementFrontendBootstrapResult -Frontend $frontend -FrontendImage $frontendImageStatus -Backend $backend -BackendImage $backendImage -BackendSecret $backendSecret -Ingress $ingress -Postgres $postgres
+    }
+    $frontendImageStatus["rollout_identity_verified"] = $true
+    Add-Check -Id "management_frontend_rollout_image_verify" -Label "Management frontend rollout image verification" -Status "ok" -Message ([string]$identityVerification.message) -Details @{
+        required = $true
+        image_id = [string]$loadedIdentity.image_id
     }
 
     $frontend["rollout_succeeded"] = $true
@@ -13265,6 +13658,7 @@ New-LocalDirectory -Path $LogsDir
 New-LocalDirectory -Path $KindDir
 New-LocalDirectory -Path $ToolsDir
 New-LocalDirectory -Path $KubeconfigDir
+New-LocalDirectory -Path $ImageIdentityDir
 $priorPlatformBootstrap = Get-PersistedPlatformBootstrapStatus
 
 if ($PlanWorkloadRebootstrap) {

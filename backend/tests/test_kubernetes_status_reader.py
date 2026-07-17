@@ -73,6 +73,22 @@ def root_application(*, conditions=None) -> dict:
             "sync": {"status": "Synced", "revision": COMMIT_SHA},
             "health": {"status": "Healthy"},
             "conditions": conditions or [],
+            "resources": [
+                {
+                    "group": "apps",
+                    "kind": "Deployment",
+                    "namespace": "devdeploy-apps",
+                    "name": "payment-api",
+                    "status": "Synced",
+                },
+                {
+                    "group": "",
+                    "kind": "Service",
+                    "namespace": "devdeploy-apps",
+                    "name": "payment-api",
+                    "status": "Synced",
+                },
+            ],
         },
     }
 
@@ -161,6 +177,8 @@ class KubernetesGitOpsStatusReaderTestCase(unittest.TestCase):
         self.assertEqual(result.root_application.observed_revision, COMMIT_SHA)
         self.assertEqual(result.root_application.sync_status, "Synced")
         self.assertEqual(result.root_application.health_status, "Healthy")
+        self.assertEqual(len(result.root_application.resources), 2)
+        self.assertEqual(result.root_application.resources[0].kind, "Deployment")
         self.assertTrue(result.workload.deployment_exists)
         self.assertEqual(result.workload.deployment_image, "ghcr.io/example/payment-api:v1")
         self.assertEqual(result.workload.container_port, 8080)

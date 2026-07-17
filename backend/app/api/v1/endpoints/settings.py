@@ -14,6 +14,8 @@ from app.schemas.settings import (
     WorkspaceSettingsUpdate,
 )
 from app.services.settings_service import SettingsService
+from app.api.v1.runtime_status import get_management_root_application_reader
+from app.services.deployment_destroy_service import RootApplicationObservationReader
 
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -96,6 +98,9 @@ def delete_api_token(
 @router.get("/integrations", response_model=list[IntegrationStatusResponse])
 def list_integrations(
     current_user: User = Depends(get_current_user),
+    root_application_reader: RootApplicationObservationReader | None = Depends(
+        get_management_root_application_reader
+    ),
 ) -> list[IntegrationStatusResponse]:
     _ = current_user
-    return SettingsService.list_integrations()
+    return SettingsService.list_integrations(root_application_reader)

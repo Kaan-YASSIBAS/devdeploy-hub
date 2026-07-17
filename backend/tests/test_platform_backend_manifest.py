@@ -67,6 +67,93 @@ class PlatformBackendManifestTestCase(unittest.TestCase):
         self.assertEqual(observability_secret["secret"]["secretName"], "devdeploy-backend-workload-kubeconfig")
         self.assertTrue(observability_secret["secret"]["optional"])
 
+    def test_backend_uses_narrow_projected_management_api_identity(self) -> None:
+        repository_root = Path(__file__).resolve().parents[2]
+        deployment = yaml.safe_load(
+            (repository_root / "platform" / "management" / "backend" / "deployment.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+        pod_spec = deployment["spec"]["template"]["spec"]
+        self.assertEqual(pod_spec["serviceAccountName"], "devdeploy-backend")
+        self.assertFalse(pod_spec["automountServiceAccountToken"])
+
+        backend = next(item for item in pod_spec["containers"] if item["name"] == "backend")
+        management_mount = next(
+            item for item in backend["volumeMounts"] if item["name"] == "management-api-token"
+        )
+        self.assertEqual(
+            management_mount["mountPath"],
+            "/var/run/secrets/kubernetes.io/serviceaccount",
+        )
+        self.assertTrue(management_mount["readOnly"])
+
+        management_volume = next(
+            item for item in pod_spec["volumes"] if item["name"] == "management-api-token"
+        )
+        sources = management_volume["projected"]["sources"]
+        self.assertTrue(any("serviceAccountToken" in source for source in sources))
+        self.assertTrue(any("configMap" in source for source in sources))
+        self.assertNotIn("hostPath", management_volume)
+
+    def test_backend_root_application_rbac_is_exact_and_read_only(self) -> None:
+        repository_root = Path(__file__).resolve().parents[2]
+        resources = {}
+        for document in yaml.safe_load_all(
+            (repository_root / "platform" / "management" / "backend" / "rbac.yaml").read_text(
+                encoding="utf-8"
+            )
+        ):
+            resources[(document["kind"], document["metadata"]["name"])] = document
+
+        role = resources[("Role", "devdeploy-backend-root-application-reader")]
+        self.assertEqual(role["metadata"]["namespace"], "argocd")
+        self.assertEqual(
+            role["rules"],
+            [
+                {
+                    "apiGroups": ["argoproj.io"],
+                    "resources": ["applications"],
+                    "resourceNames": ["devdeploy-workloads-root"],
+                    "verbs": ["get"],
+                }
+            ],
+        )
+
+        binding = resources[("RoleBinding", "devdeploy-backend-root-application-reader")]
+        self.assertEqual(binding["metadata"]["namespace"], "argocd")
+        self.assertEqual(
+            binding["subjects"],
+            [
+                {
+                    "kind": "ServiceAccount",
+                    "name": "devdeploy-backend",
+                    "namespace": "devdeploy",
+                }
+            ],
+        )
+
+        all_rules = [
+            rule
+            for document in resources.values()
+            if document["kind"] in {"Role", "ClusterRole"}
+            for rule in document.get("rules", [])
+        ]
+        self.assertFalse(
+            any(
+                rule.get("apiGroups") == [""]
+                and any(resource in rule.get("resources", []) for resource in ("namespaces", "secrets"))
+                for rule in all_rules
+            )
+        )
+        self.assertFalse(
+            any(
+                verb in {"create", "update", "patch", "delete", "deletecollection", "impersonate"}
+                for rule in all_rules
+                for verb in rule.get("verbs", [])
+            )
+        )
+
     def test_backend_config_uses_observability_service_proxy_not_cluster_ip_urls(self) -> None:
         repository_root = Path(__file__).resolve().parents[2]
         configmap = yaml.safe_load(

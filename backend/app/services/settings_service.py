@@ -19,6 +19,7 @@ from app.schemas.settings import (
 from app.services.kubernetes_service import KubernetesService
 from app.services.observability_errors import ObservabilityUnavailableError
 from app.services.observability_status_service import ObservabilityStatusService
+from app.services.argocd_integration_status import read_argocd_integration_status
 
 
 DEFAULT_WORKSPACE_NAME = "DevDeploy Hub Workspace"
@@ -107,10 +108,14 @@ class SettingsService:
         return query.first()
 
     @staticmethod
-    def list_integrations() -> list[IntegrationStatusResponse]:
+    def list_integrations(root_application_reader=None) -> list[IntegrationStatusResponse]:
         return [
             SettingsService._safe_integration_status("github", "GitHub", SettingsService._github_status),
-            SettingsService._safe_integration_status("argocd", "Argo CD", SettingsService._argocd_status),
+            SettingsService._safe_integration_status(
+                "argocd",
+                "Argo CD",
+                lambda: SettingsService._argocd_status(root_application_reader),
+            ),
             SettingsService._safe_integration_status("kubernetes", "Kubernetes", SettingsService._kubernetes_status),
             SettingsService._safe_integration_status("prometheus", "Prometheus", SettingsService._prometheus_status),
             SettingsService._safe_integration_status("loki", "Loki", SettingsService._loki_status),
@@ -215,42 +220,13 @@ class SettingsService:
         )
 
     @staticmethod
-    def _argocd_status() -> IntegrationStatusResponse:
-        service = KubernetesService()
-        try:
-            if not service.namespace_exists("argocd"):
-                return IntegrationStatusResponse(
-                    key="argocd",
-                    name="Argo CD",
-                    status="not_configured",
-                    detail="The argocd namespace was not found.",
-                )
-            if not service.argocd_application_exists("devdeploy-hub-release"):
-                return IntegrationStatusResponse(
-                    key="argocd",
-                    name="Argo CD",
-                    status="not_configured",
-                    detail="The devdeploy-hub-release Application was not found.",
-                )
-        except ObservabilityUnavailableError as exc:
-            return IntegrationStatusResponse(
-                key="argocd",
-                name="Argo CD",
-                status="not_configured",
-                detail=str(exc),
-            )
-        except ApiException as exc:
-            return IntegrationStatusResponse(
-                key="argocd",
-                name="Argo CD",
-                status="error",
-                detail=f"Argo CD Application check failed: {exc.reason or exc.status}",
-            )
+    def _argocd_status(root_application_reader=None) -> IntegrationStatusResponse:
+        status = read_argocd_integration_status(root_application_reader)
         return IntegrationStatusResponse(
             key="argocd",
             name="Argo CD",
-            status="connected",
-            detail="The devdeploy-hub-release Application is visible.",
+            status=status.status,
+            detail=status.detail,
         )
 
     @staticmethod

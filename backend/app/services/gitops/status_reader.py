@@ -59,6 +59,15 @@ class GitOpsStatusRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class ArgoResourceSnapshot:
+    group: str
+    kind: str
+    namespace: str
+    name: str
+    sync_status: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RootApplicationSnapshot:
     exists: bool
     observed_revision: str | None = None
@@ -67,6 +76,7 @@ class RootApplicationSnapshot:
     failure_detected: bool = False
     operation_phase: str | None = None
     operation_revision: str | None = None
+    resources: tuple[ArgoResourceSnapshot, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -6,6 +6,7 @@ from kubernetes.client.exceptions import ApiException
 from kubernetes.config.config_exception import ConfigException
 
 from app.services.gitops.status_reader import (
+    ArgoResourceSnapshot,
     GitOpsStatusError,
     GitOpsStatusRequest,
     GitOpsStatusSnapshot,
@@ -241,6 +242,7 @@ class KubernetesGitOpsStatusReader:
         operation = operation_state.get("operation") if isinstance(operation_state.get("operation"), dict) else {}
         operation_sync = operation.get("sync") if isinstance(operation.get("sync"), dict) else {}
         conditions = status.get("conditions") if isinstance(status.get("conditions"), list) else []
+        resources = status.get("resources") if isinstance(status.get("resources"), list) else []
         failure_detected = any(
             isinstance(condition, dict) and condition.get("type") in ARGOCD_FAILURE_CONDITIONS
             for condition in conditions
@@ -255,6 +257,20 @@ class KubernetesGitOpsStatusReader:
             operation_revision=(
                 self._string_or_none(operation_sync_result.get("revision"))
                 or self._string_or_none(operation_sync.get("revision"))
+            ),
+            resources=tuple(
+                ArgoResourceSnapshot(
+                    group=self._string_or_none(resource.get("group")) or "",
+                    kind=self._string_or_none(resource.get("kind")) or "",
+                    namespace=self._string_or_none(resource.get("namespace")) or "",
+                    name=self._string_or_none(resource.get("name")) or "",
+                    sync_status=self._string_or_none(resource.get("status")),
+                )
+                for resource in resources
+                if isinstance(resource, dict)
+                and self._string_or_none(resource.get("kind"))
+                and self._string_or_none(resource.get("namespace"))
+                and self._string_or_none(resource.get("name"))
             ),
         )
 

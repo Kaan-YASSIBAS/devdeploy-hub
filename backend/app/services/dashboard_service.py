@@ -16,6 +16,7 @@ from app.schemas.dashboard import (
 )
 from app.schemas.gitops_deployment import DeploymentListItem
 from app.schemas.runtime_status import DeploymentRuntimeStatusRead
+from app.services.argocd_integration_status import read_argocd_integration_status
 from app.services.deployment_drift import DeploymentDriftService, UnavailableGitOpsManifestReader
 from app.services.kubernetes_service import KubernetesService
 from app.services.loki_service import LokiService
@@ -34,6 +35,7 @@ class DashboardService:
         *,
         runtime_service: ProductRuntimeStatusService | None = None,
         drift_service: DeploymentDriftService | None = None,
+        root_application_reader=None,
     ):
         self.db = db
         self.services = ServiceDefinitionRepository(db)
@@ -43,6 +45,7 @@ class DashboardService:
             manifest_reader=UnavailableGitOpsManifestReader(),
             runtime_service=self.runtime_service,
         )
+        self.root_application_reader = root_application_reader
 
     def summary(self, current_user: User) -> DashboardSummaryResponse:
         services = self.services.list_for_owner(current_user.id, archive_filter="active")
@@ -245,43 +248,13 @@ class DashboardService:
             detail="Kubernetes API is reachable.",
         )
 
-    @staticmethod
-    def _argocd_health() -> DashboardClusterHealthItem:
-        service = KubernetesService()
-        try:
-            if not service.namespace_exists("argocd"):
-                return DashboardClusterHealthItem(
-                    key="argocd",
-                    name="Argo CD",
-                    status="not_configured",
-                    detail="The argocd namespace was not found.",
-                )
-            if not service.argocd_application_exists("devdeploy-hub-release"):
-                return DashboardClusterHealthItem(
-                    key="argocd",
-                    name="Argo CD",
-                    status="degraded",
-                    detail="The devdeploy-hub-release Application was not found.",
-                )
-        except ObservabilityUnavailableError as exc:
-            return DashboardClusterHealthItem(
-                key="argocd",
-                name="Argo CD",
-                status="not_configured",
-                detail=str(exc),
-            )
-        except ApiException as exc:
-            return DashboardClusterHealthItem(
-                key="argocd",
-                name="Argo CD",
-                status="unavailable",
-                detail=f"Argo CD Application check failed: {exc.reason or exc.status}",
-            )
+    def _argocd_health(self) -> DashboardClusterHealthItem:
+        status = read_argocd_integration_status(self.root_application_reader)
         return DashboardClusterHealthItem(
             key="argocd",
             name="Argo CD",
-            status="healthy",
-            detail="The release Application is visible.",
+            status="healthy" if status.status == "connected" else status.status,
+            detail=status.detail,
         )
 
     @staticmethod

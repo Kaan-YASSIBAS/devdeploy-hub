@@ -322,10 +322,10 @@
         "not_configured": "Kubernetes client configuration is not available."
       },
       "argocd": {
-        "healthy": "The release Application is visible.",
-        "degraded": "Argo CD is present but the release Application is missing.",
-        "unavailable": "Argo CD Application status could not be read.",
-        "not_configured": "Argo CD is not configured in this cluster."
+        "healthy": "The configured Root Application is Synced and Healthy.",
+        "degraded": "The configured Argo CD Root Application is degraded or out of sync.",
+        "unavailable": "The management-cluster Root Application status could not be read.",
+        "not_configured": "The configured Argo CD Root Application was not found."
       },
       "prometheus": {
         "healthy": "Prometheus API is reachable.",
@@ -503,6 +503,13 @@
           "runtime_missing": "Runtime missing",
           "unknown": "Unknown"
         }
+      },
+      "reconcileState": {
+        "synced": "Synced",
+        "progressing": "Progressing",
+        "degraded": "Degraded",
+        "drifted": "Out of sync",
+        "unknown": "Unknown"
       },
       "archive": {
         "action": "Archive",
@@ -1205,7 +1212,9 @@
       "configuredExternally": "Configured through Kubernetes secrets or environment variables.",
       "status": {
         "connected": "Connected",
+        "degraded": "Degraded",
         "not_configured": "Not configured",
+        "unavailable": "Unavailable",
         "error": "Error",
         "optional": "Optional"
       },
@@ -1216,8 +1225,10 @@
           "error": "GitHub workflow API check failed."
         },
         "argocd": {
-          "connected": "The release Application is visible to the backend.",
-          "not_configured": "Argo CD namespace or release Application is missing.",
+          "connected": "The configured Root Application is Synced and Healthy.",
+          "degraded": "The configured Root Application is present but not healthy and synchronized.",
+          "not_configured": "The configured Argo CD namespace or Root Application is missing.",
+          "unavailable": "The Root Application status is temporarily unreachable.",
           "error": "Argo CD status could not be read with current RBAC."
         },
         "kubernetes": {
