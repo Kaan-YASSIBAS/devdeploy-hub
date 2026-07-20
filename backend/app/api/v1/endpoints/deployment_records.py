@@ -8,6 +8,7 @@ from app.api.v1.endpoints.gitops import (
     GitOpsDeployRepositoryConfig,
     get_deploy_workload_operation_service,
     get_gitops_deploy_repository_config,
+    prepare_gitops_repository,
 )
 from app.core.deps import get_current_user, get_db
 from app.api.v1.runtime_status import (
@@ -60,7 +61,8 @@ from app.services.gitops.destroy_operation import (
     DestroyWorkloadOperationResult,
     DestroyWorkloadOperationService,
 )
-from app.services.gitops.git_adapter import sanitize_git_output
+from app.services.gitops.git_adapter import GitAdapter, sanitize_git_output
+from app.services.gitops.managed_repository import ManagedGitRepositoryError
 from app.services.preview_session import (
     PREVIEW_SESSION_COOKIE,
     PREVIEW_SESSION_TTL_SECONDS,
@@ -123,6 +125,28 @@ def _read_response(
 
 def get_destroy_workload_operation_service() -> DestroyWorkloadOperationService:
     return DestroyWorkloadOperationService()
+
+
+def _deploy_operation_for_repository(
+    operation_service: DeployWorkloadOperationService,
+    git_adapter: GitAdapter | None,
+) -> DeployWorkloadOperationService:
+    if git_adapter is not None and type(operation_service) is DeployWorkloadOperationService:
+        return DeployWorkloadOperationService(git_adapter=git_adapter)
+    return operation_service
+
+
+def _destroy_operation_for_repository(
+    operation_service: DestroyWorkloadOperationService,
+    git_adapter: GitAdapter | None,
+) -> DestroyWorkloadOperationService:
+    if git_adapter is not None and type(operation_service) is DestroyWorkloadOperationService:
+        return DestroyWorkloadOperationService(git_adapter=git_adapter)
+    return operation_service
+
+
+def _repository_unavailable_response(error: ManagedGitRepositoryError) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=error.message)
 
 
 def _runtime_cleanup_read(runtime_cleanup) -> DeploymentRuntimeCleanupRead:
@@ -436,23 +460,27 @@ def _recover_destroyed_deployment_record(
         )
 
     try:
-        result = operation_service.execute(
-            DeployWorkloadOperationRequest(
-                repo_root=config.repo_root,
-                source_root_relative=config.source_root_relative,
-                expected_branch=config.expected_branch,
-                remote_name=config.remote_name,
-                remote_branch=config.remote_branch,
-                app_name=deployment.app_name,
-                image=deployment.image,
-                replicas=deployment.replicas,
-                container_port=deployment.container_port,
-                service_port=deployment.service_port,
-                service_type=deployment.service_type,
-                namespace=deployment.namespace,
-                write_mode="restore_destroyed",
+        with prepare_gitops_repository(config) as repository:
+            service = _deploy_operation_for_repository(operation_service, repository.git_adapter)
+            result = service.execute(
+                DeployWorkloadOperationRequest(
+                    repo_root=repository.repo_root,
+                    source_root_relative=config.source_root_relative,
+                    expected_branch=config.expected_branch,
+                    remote_name=config.remote_name,
+                    remote_branch=config.remote_branch,
+                    app_name=deployment.app_name,
+                    image=deployment.image,
+                    replicas=deployment.replicas,
+                    container_port=deployment.container_port,
+                    service_port=deployment.service_port,
+                    service_type=deployment.service_type,
+                    namespace=deployment.namespace,
+                    write_mode="restore_destroyed",
+                )
             )
-        )
+    except ManagedGitRepositoryError as error:
+        raise _repository_unavailable_response(error) from None
     except Exception:
         response = DeploymentRecordRecoverResponse(
             status="internal_error",
@@ -632,23 +660,27 @@ def _regenerate_deployment_record(
     )
 
     try:
-        result = operation_service.execute(
-            DeployWorkloadOperationRequest(
-                repo_root=config.repo_root,
-                source_root_relative=config.source_root_relative,
-                expected_branch=config.expected_branch,
-                remote_name=config.remote_name,
-                remote_branch=config.remote_branch,
-                app_name=deployment.app_name,
-                image=deployment.image,
-                replicas=deployment.replicas,
-                container_port=deployment.container_port,
-                service_port=deployment.service_port,
-                service_type=deployment.service_type,
-                namespace=deployment.namespace,
-                write_mode=action,
+        with prepare_gitops_repository(config) as repository:
+            service = _deploy_operation_for_repository(operation_service, repository.git_adapter)
+            result = service.execute(
+                DeployWorkloadOperationRequest(
+                    repo_root=repository.repo_root,
+                    source_root_relative=config.source_root_relative,
+                    expected_branch=config.expected_branch,
+                    remote_name=config.remote_name,
+                    remote_branch=config.remote_branch,
+                    app_name=deployment.app_name,
+                    image=deployment.image,
+                    replicas=deployment.replicas,
+                    container_port=deployment.container_port,
+                    service_port=deployment.service_port,
+                    service_type=deployment.service_type,
+                    namespace=deployment.namespace,
+                    write_mode=action,
+                )
             )
-        )
+    except ManagedGitRepositoryError as error:
+        raise _repository_unavailable_response(error) from None
     except Exception:
         response = DeploymentRecordRecoverResponse(
             status="internal_error",
@@ -785,16 +817,20 @@ def destroy_deployment_record(
         )
 
     try:
-        result = operation_service.execute(
-            DestroyWorkloadOperationRequest(
-                repo_root=config.repo_root,
-                source_root_relative=config.source_root_relative,
-                expected_branch=config.expected_branch,
-                remote_name=config.remote_name,
-                remote_branch=config.remote_branch,
-                app_name=deployment.app_name,
+        with prepare_gitops_repository(config) as repository:
+            service = _destroy_operation_for_repository(operation_service, repository.git_adapter)
+            result = service.execute(
+                DestroyWorkloadOperationRequest(
+                    repo_root=repository.repo_root,
+                    source_root_relative=config.source_root_relative,
+                    expected_branch=config.expected_branch,
+                    remote_name=config.remote_name,
+                    remote_branch=config.remote_branch,
+                    app_name=deployment.app_name,
+                )
             )
-        )
+    except ManagedGitRepositoryError as error:
+        raise _repository_unavailable_response(error) from None
     except Exception:
         response = DeploymentRecordDestroyResponse(
             status="internal_error",

@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path, PureWindowsPath
@@ -25,8 +26,9 @@ from app.services.gitops.deploy_operation import (
 )
 from app.services.gitops.discovery import GitOpsAppDiscoveryService
 from app.services.gitops.errors import GitOpsWriterError
-from app.services.gitops.git_adapter import sanitize_git_output
+from app.services.gitops.git_adapter import GitAdapter, sanitize_git_output
 from app.services.gitops.manifests import WORKLOAD_NAMESPACE
+from app.services.gitops.managed_repository import GitHubManagedRepository, ManagedGitRepositoryError
 from app.services.gitops.product_records import (
     GitOpsProductRecordService,
     ProductRecordPersistenceError,
@@ -59,11 +61,15 @@ ERROR_STATUS_CODES = {
 
 @dataclass(frozen=True, slots=True)
 class GitOpsDeployRepositoryConfig:
-    repo_root: str
+    repo_root: str | None
     source_root_relative: str
     expected_branch: str
     remote_name: str
     remote_branch: str
+    provider: str = "local_path"
+    github_owner: str | None = None
+    github_repo: str | None = None
+    github_token: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,17 +80,68 @@ class GitOpsStatusReaderConfig:
 
 
 def get_gitops_deploy_repository_config() -> GitOpsDeployRepositoryConfig:
-    if not settings.gitops_repo_root or not settings.gitops_repo_root.strip():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="The GitOps repository is not configured.",
+    if settings.gitops_repo_root and settings.gitops_repo_root.strip():
+        return GitOpsDeployRepositoryConfig(
+            repo_root=settings.gitops_repo_root,
+            source_root_relative=settings.gitops_source_root,
+            expected_branch=settings.gitops_branch,
+            remote_name=settings.gitops_remote,
+            remote_branch=settings.gitops_remote_branch,
         )
-    return GitOpsDeployRepositoryConfig(
-        repo_root=settings.gitops_repo_root,
-        source_root_relative=settings.gitops_source_root,
-        expected_branch=settings.gitops_branch,
-        remote_name=settings.gitops_remote,
-        remote_branch=settings.gitops_remote_branch,
+    if settings.gitops_enabled:
+        if not settings.github_workflow_token or not settings.github_workflow_token.strip():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The GitOps GitHub token is not configured.",
+            )
+        return GitOpsDeployRepositoryConfig(
+            repo_root=None,
+            source_root_relative=settings.gitops_source_root,
+            expected_branch=settings.gitops_branch,
+            remote_name=settings.gitops_remote,
+            remote_branch=settings.gitops_remote_branch,
+            provider="managed_github_clone",
+            github_owner=settings.github_owner,
+            github_repo=settings.github_repo,
+            github_token=settings.github_workflow_token,
+        )
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="The GitOps repository is not configured.",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedGitOpsRepository:
+    repo_root: str
+    git_adapter: GitAdapter | None = None
+
+
+@contextmanager
+def prepare_gitops_repository(config: GitOpsDeployRepositoryConfig):
+    if config.provider == "local_path":
+        if not config.repo_root:
+            raise ManagedGitRepositoryError("repo_not_configured", "The GitOps repository is not configured.")
+        yield PreparedGitOpsRepository(repo_root=config.repo_root)
+        return
+    if config.provider != "managed_github_clone":
+        raise ManagedGitRepositoryError("repo_provider_invalid", "The configured GitOps repository provider is invalid.")
+    with GitHubManagedRepository().lease(
+        owner=config.github_owner or "",
+        repo=config.github_repo or "",
+        branch=config.expected_branch,
+        token=config.github_token or "",
+    ) as lease:
+        yield PreparedGitOpsRepository(
+            repo_root=str(lease.repo_root),
+            git_adapter=GitAdapter(github_token=lease.github_token),
+        )
+
+
+def _repository_unavailable_response(error: ManagedGitRepositoryError) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=error.message,
     )
 
 
@@ -195,10 +252,13 @@ def list_gitops_apps(
 ) -> GitOpsAppListResponse:
     _ = current_user
     try:
-        apps = discovery_service.discover(
-            repo_root=config.repo_root,
-            source_root_relative=config.source_root_relative,
-        )
+        with prepare_gitops_repository(config) as repository:
+            apps = discovery_service.discover(
+                repo_root=repository.repo_root,
+                source_root_relative=config.source_root_relative,
+            )
+    except ManagedGitRepositoryError as error:
+        raise _repository_unavailable_response(error) from None
     except GitOpsWriterError as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -273,23 +333,31 @@ def create_gitops_app(
     operation_service: DeployWorkloadOperationService = Depends(get_deploy_workload_operation_service),
     product_record_service: GitOpsProductRecordService = Depends(get_gitops_product_record_service),
 ) -> GitOpsAppCreateResponse | JSONResponse:
-    # V1 local-first mode uses one server-configured worktree; per-user repository ownership is future work.
+    # V1 local-first mode uses a server-configured repository provider; per-user repository ownership is future work.
     try:
-        result = operation_service.execute(
-            DeployWorkloadOperationRequest(
-                repo_root=config.repo_root,
-                source_root_relative=config.source_root_relative,
-                expected_branch=config.expected_branch,
-                remote_name=config.remote_name,
-                remote_branch=config.remote_branch,
-                app_name=payload.app_name,
-                image=payload.image,
-                replicas=payload.replicas,
-                container_port=payload.container_port,
-                service_port=payload.service_port,
-                service_type=payload.service_type,
+        with prepare_gitops_repository(config) as repository:
+            service = (
+                DeployWorkloadOperationService(git_adapter=repository.git_adapter)
+                if repository.git_adapter is not None and type(operation_service) is DeployWorkloadOperationService
+                else operation_service
             )
-        )
+            result = service.execute(
+                DeployWorkloadOperationRequest(
+                    repo_root=repository.repo_root,
+                    source_root_relative=config.source_root_relative,
+                    expected_branch=config.expected_branch,
+                    remote_name=config.remote_name,
+                    remote_branch=config.remote_branch,
+                    app_name=payload.app_name,
+                    image=payload.image,
+                    replicas=payload.replicas,
+                    container_port=payload.container_port,
+                    service_port=payload.service_port,
+                    service_type=payload.service_type,
+                )
+            )
+    except ManagedGitRepositoryError as error:
+        raise _repository_unavailable_response(error) from None
     except Exception:
         response = GitOpsAppCreateResponse(
             status="internal_error",

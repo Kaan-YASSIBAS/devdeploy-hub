@@ -144,7 +144,7 @@ spec:
                         fieldPath: metadata.namespace
         - name: backend-tmp
           emptyDir:
-            sizeLimit: 64Mi
+            sizeLimit: 512Mi
         - name: observability-workload-kubeconfig
           secret:
             secretName: devdeploy-backend-workload-kubeconfig

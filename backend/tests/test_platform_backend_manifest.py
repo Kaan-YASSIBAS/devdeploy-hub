@@ -60,7 +60,7 @@ class PlatformBackendManifestTestCase(unittest.TestCase):
         self.assertTrue(observability_mount["readOnly"])
         self.assertFalse(any("hostPath" in volume for volume in pod_spec["volumes"]))
         temp_volume = next(item for item in pod_spec["volumes"] if item["name"] == "backend-tmp")
-        self.assertEqual(temp_volume["emptyDir"], {"sizeLimit": "64Mi"})
+        self.assertEqual(temp_volume["emptyDir"], {"sizeLimit": "512Mi"})
         observability_secret = next(
             item for item in pod_spec["volumes"] if item["name"] == "observability-workload-kubeconfig"
         )

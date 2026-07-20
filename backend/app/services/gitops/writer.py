@@ -37,7 +37,7 @@ class GitOpsWorkloadWriter:
         *,
         render_validator: RenderValidator | None = None,
     ):
-        self.paths = GitOpsRepositoryPaths.from_source_root(source_root)
+        self.paths = GitOpsRepositoryPaths.from_source_root(source_root, create_apps_root=True)
         self.render_validator = render_validator or StructuralRenderValidator()
 
     def create(self, request: WorkloadWriteRequest) -> WorkloadWriteResult:

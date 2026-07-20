@@ -1,7 +1,9 @@
 from dataclasses import dataclass
+import os
 from pathlib import Path, PureWindowsPath
 import re
 import subprocess
+import tempfile
 from typing import Sequence
 
 from app.services.gitops.errors import GitOpsWriterError
@@ -77,8 +79,9 @@ def sanitize_git_output(value: object) -> str:
 
 
 class GitAdapter:
-    def __init__(self, *, timeout_seconds: int = GIT_TIMEOUT_SECONDS):
+    def __init__(self, *, timeout_seconds: int = GIT_TIMEOUT_SECONDS, github_token: str | None = None):
         self.timeout_seconds = timeout_seconds
+        self.github_token = github_token.strip() if github_token and github_token.strip() else None
 
     def create_commit(self, request: GitCommitRequest) -> GitCommitResult:
         repo_root = self._validate_repository(request.repo_root)
@@ -401,6 +404,7 @@ class GitAdapter:
                 errors="replace",
                 timeout=self.timeout_seconds,
                 check=False,
+                env=self._git_environment(),
             )
         except (OSError, subprocess.TimeoutExpired):
             return _GitCommandResult(
@@ -414,7 +418,43 @@ class GitAdapter:
             stderr=completed.stderr,
         )
 
+    def _git_environment(self) -> dict[str, str] | None:
+        if not self.github_token:
+            return None
+        env = os.environ.copy()
+        env.update(_git_askpass_environment(self.github_token))
+        return env
+
     @staticmethod
     def _safe_failure_message(message: str, result: _GitCommandResult) -> str:
         diagnostic = sanitize_git_output(result.stderr or result.stdout)
         return f"{message} {diagnostic}".strip() if diagnostic else message
+
+def _git_askpass_environment(github_token: str) -> dict[str, str]:
+    askpass = _ensure_git_askpass_script()
+    return {
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_ASKPASS": str(askpass),
+        "DEVDEPLOY_GIT_USERNAME": "x-access-token",
+        "DEVDEPLOY_GIT_PASSWORD": github_token,
+    }
+
+
+def _ensure_git_askpass_script() -> Path:
+    directory = Path(tempfile.gettempdir()) / "devdeploy-git"
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    script = directory / "askpass.sh"
+    content = (
+        "#!/bin/sh\n"
+        "case \"$1\" in\n"
+        "  *Username*) printf '%s' \"${DEVDEPLOY_GIT_USERNAME:-x-access-token}\" ;;\n"
+        "  *) printf '%s' \"$DEVDEPLOY_GIT_PASSWORD\" ;;\n"
+        "esac\n"
+    )
+    if not script.exists() or script.read_text(encoding="utf-8") != content:
+        script.write_text(content, encoding="utf-8", newline="\n")
+    try:
+        script.chmod(0o700)
+    except OSError:
+        pass
+    return script

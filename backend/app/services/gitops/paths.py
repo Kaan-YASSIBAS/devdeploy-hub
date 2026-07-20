@@ -20,7 +20,7 @@ class GitOpsRepositoryPaths:
     root_kustomization: Path
 
     @classmethod
-    def from_source_root(cls, source_root: Path | str) -> "GitOpsRepositoryPaths":
+    def from_source_root(cls, source_root: Path | str, *, create_apps_root: bool = False) -> "GitOpsRepositoryPaths":
         try:
             resolved_source = Path(source_root).resolve(strict=True)
         except (OSError, RuntimeError):
@@ -35,13 +35,31 @@ class GitOpsRepositoryPaths:
                 "The configured GitOps source root is not a directory.",
             )
 
+        apps_path = resolved_source / "apps"
         try:
-            resolved_apps = (resolved_source / "apps").resolve(strict=True)
+            resolved_apps = apps_path.resolve(strict=True)
         except (OSError, RuntimeError):
-            raise GitOpsWriterError(
-                "repo_not_configured",
-                "The configured GitOps apps directory is missing or unavailable.",
-            ) from None
+            if not create_apps_root:
+                raise GitOpsWriterError(
+                    "repo_not_configured",
+                    "The configured GitOps apps directory is missing or unavailable.",
+                ) from None
+            try:
+                candidate_apps = apps_path.resolve(strict=False)
+                if not _is_within(candidate_apps, resolved_source):
+                    raise GitOpsWriterError(
+                        "unsafe_path",
+                        "The GitOps apps directory resolves outside the configured source root.",
+                    )
+                apps_path.mkdir()
+                resolved_apps = apps_path.resolve(strict=True)
+            except GitOpsWriterError:
+                raise
+            except (OSError, RuntimeError):
+                raise GitOpsWriterError(
+                    "repo_not_configured",
+                    "The configured GitOps apps directory could not be prepared.",
+                ) from None
 
         if not resolved_apps.is_dir() or not _is_within(resolved_apps, resolved_source):
             raise GitOpsWriterError(

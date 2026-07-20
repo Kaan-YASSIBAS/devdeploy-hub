@@ -103,6 +103,16 @@ class GitOpsWriterTestCase(unittest.TestCase):
 
         self.assertEqual(app_dir.parent, paths.apps_root)
         self.assertEqual(app_dir.name, "nginx-demo")
+    def test_writer_prepares_missing_empty_apps_directory(self) -> None:
+        self.apps_root.rmdir()
+        writer = GitOpsWorkloadWriter(self.source_root)
+
+        result = writer.create(WorkloadWriteRequest(app_name="nginx-demo", image="nginx:latest"))
+
+        self.assertTrue(self.apps_root.is_dir())
+        self.assertTrue(result.app_dir.is_dir())
+        root = yaml.safe_load((self.source_root / "kustomization.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(root["resources"], ["apps/nginx-demo"])
 
     def test_path_traversal_is_rejected(self) -> None:
         paths = GitOpsRepositoryPaths.from_source_root(self.source_root)
