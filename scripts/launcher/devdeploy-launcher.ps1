@@ -10775,7 +10775,7 @@ function New-GitOpsRootApplicationStatus {
         destination_server            = $ExpectedWorkloadArgoCDEndpoint
         destination_namespace         = $WorkloadManagedNamespace
         sync_policy                   = "automated"
-        prune_enabled                 = $false
+        prune_enabled                 = $true
         self_heal_enabled              = $true
         create_namespace              = $false
         application_present           = $false
@@ -10788,7 +10788,10 @@ function New-GitOpsRootApplicationStatus {
         destination_namespace_match   = $null
         automated_sync_enabled        = $null
         prune_disabled                = $null
+        allow_empty_enabled           = $null
         create_namespace_disabled     = $null
+        prune_propagation_foreground  = $null
+        prune_last                    = $null
         sync_status                    = $null
         health_status                  = $null
         synced                         = $null
@@ -11122,10 +11125,11 @@ function Invoke-BootstrapGitOpsRootApplication {
             }
             syncPolicy = [ordered]@{
                 automated = [ordered]@{
-                    prune    = $false
-                    selfHeal = $true
+                    prune      = $true
+                    selfHeal   = $true
+                    allowEmpty = $true
                 }
-                syncOptions = @("CreateNamespace=false")
+                syncOptions = @("CreateNamespace=false", "PrunePropagationPolicy=foreground", "PruneLast=true")
             }
         }
     }
@@ -11174,11 +11178,12 @@ function Invoke-BootstrapGitOpsRootApplication {
 
     $specMatches = $false
     if ($applicationPresent) {
-        $specResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $ArgoCDNamespace, "get", "application", $GitOpsRootApplicationName, "--output", "jsonpath={.spec.project}|{.spec.source.repoURL}|{.spec.source.targetRevision}|{.spec.source.path}|{.spec.destination.server}|{.spec.destination.namespace}|{.spec.syncPolicy.automated.prune}|{.spec.syncPolicy.automated.selfHeal}|{.spec.syncPolicy.syncOptions[*]}") -TimeoutSeconds 20 -PreserveStandardOutput $true
+        $specResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $ArgoCDNamespace, "get", "application", $GitOpsRootApplicationName, "--output", "jsonpath={.spec.project}|{.spec.source.repoURL}|{.spec.source.targetRevision}|{.spec.source.path}|{.spec.destination.server}|{.spec.destination.namespace}|{.spec.syncPolicy.automated.prune}|{.spec.syncPolicy.automated.selfHeal}|{.spec.syncPolicy.automated.allowEmpty}|{.spec.syncPolicy.syncOptions[*]}") -TimeoutSeconds 20 -PreserveStandardOutput $true
         if ($specResult.exit_code -eq 0 -and -not $specResult.timed_out) {
-            $specParts = @(([string]$specResult.stdout) -split '\|', 9)
-            if ($specParts.Count -eq 9) {
-                $specMatches = [bool]((([string]$specParts[0]).Trim()) -eq "default" -and (([string]$specParts[1]).Trim()) -eq [string]$status["source_repo_url_sanitized"] -and (([string]$specParts[2]).Trim()) -eq $GitOpsTargetRevision -and (([string]$specParts[3]).Trim()) -eq $GitOpsSourcePath -and (([string]$specParts[4]).Trim()) -eq $ExpectedWorkloadArgoCDEndpoint -and (([string]$specParts[5]).Trim()) -eq $WorkloadManagedNamespace -and (([string]$specParts[6]).Trim().ToLowerInvariant()) -eq "false" -and (([string]$specParts[7]).Trim().ToLowerInvariant()) -eq "true" -and @(([string]$specParts[8]) -split '\s+') -contains "CreateNamespace=false")
+            $specParts = @(([string]$specResult.stdout) -split '\|', 10)
+            if ($specParts.Count -eq 10) {
+                $actualSyncOptions = @(([string]$specParts[9]) -split '\s+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                $specMatches = [bool]((([string]$specParts[0]).Trim()) -eq "default" -and (([string]$specParts[1]).Trim()) -eq [string]$status["source_repo_url_sanitized"] -and (([string]$specParts[2]).Trim()) -eq $GitOpsTargetRevision -and (([string]$specParts[3]).Trim()) -eq $GitOpsSourcePath -and (([string]$specParts[4]).Trim()) -eq $ExpectedWorkloadArgoCDEndpoint -and (([string]$specParts[5]).Trim()) -eq $WorkloadManagedNamespace -and (([string]$specParts[6]).Trim().ToLowerInvariant()) -eq "true" -and (([string]$specParts[7]).Trim().ToLowerInvariant()) -eq "true" -and (([string]$specParts[8]).Trim().ToLowerInvariant()) -eq "true" -and $actualSyncOptions -contains "CreateNamespace=false" -and $actualSyncOptions -contains "PrunePropagationPolicy=foreground" -and $actualSyncOptions -contains "PruneLast=true")
             }
         }
     }
@@ -11194,9 +11199,13 @@ function Invoke-BootstrapGitOpsRootApplication {
         target_revision = $GitOpsTargetRevision
         destination_server = $ExpectedWorkloadArgoCDEndpoint
         destination_namespace = $WorkloadManagedNamespace
-        prune_enabled = $false
+        prune_enabled = $true
+        prune_disabled = $false
         self_heal_enabled = $true
+        allow_empty_enabled = $true
         create_namespace = $false
+        prune_propagation_policy = "foreground"
+        prune_last = $true
     }
 
     $applicationsResult = Invoke-ReadOnlyCommand -FileName "kubectl" -Arguments @("--context", "kind-devdeploy-mgmt", "--namespace", $ArgoCDNamespace, "get", "applications.argoproj.io", "--output", "jsonpath={.items[*].metadata.name}") -TimeoutSeconds 20
@@ -11431,6 +11440,7 @@ function Invoke-VerifyGitOpsRootApplication {
         $actualDestinationNamespace = [string](Get-ObjectPropertyValue -InputObject $destination -Name "namespace")
         $pruneValue = Get-ObjectPropertyValue -InputObject $automated -Name "prune"
         $selfHealValue = Get-ObjectPropertyValue -InputObject $automated -Name "selfHeal"
+        $allowEmptyValue = Get-ObjectPropertyValue -InputObject $automated -Name "allowEmpty"
         $syncOptionsValue = Get-ObjectPropertyValue -InputObject $syncPolicy -Name "syncOptions"
         $syncOptions = @($syncOptionsValue | ForEach-Object { [string]$_ })
         $actualSyncStatus = [string](Get-ObjectPropertyValue -InputObject $sync -Name "status")
@@ -11453,15 +11463,19 @@ function Invoke-VerifyGitOpsRootApplication {
         $status["destination_server_match"] = [bool]($actualDestinationServer -eq $ExpectedWorkloadArgoCDEndpoint)
         $status["destination_namespace_match"] = [bool]($actualDestinationNamespace -eq $WorkloadManagedNamespace)
         $status["automated_sync_enabled"] = [bool]($null -ne $automated)
-        $status["prune_disabled"] = [bool]($null -ne $automated -and ($null -eq $pruneValue -or -not [bool]$pruneValue))
+        $status["prune_enabled"] = [bool]($null -ne $automated -and $null -ne $pruneValue -and [bool]$pruneValue)
+        $status["prune_disabled"] = [bool](-not $status["prune_enabled"])
         $status["self_heal_enabled"] = [bool]($null -ne $automated -and $null -ne $selfHealValue -and [bool]$selfHealValue)
+        $status["allow_empty_enabled"] = [bool]($null -ne $automated -and $null -ne $allowEmptyValue -and [bool]$allowEmptyValue)
         $status["create_namespace_disabled"] = [bool]($syncOptions -contains "CreateNamespace=false")
+        $status["prune_propagation_foreground"] = [bool]($syncOptions -contains "PrunePropagationPolicy=foreground")
+        $status["prune_last"] = [bool]($syncOptions -contains "PruneLast=true")
         $status["sync_status"] = $actualSyncStatus
         $status["health_status"] = $actualHealthStatus
         $status["synced"] = [bool]($actualSyncStatus -eq "Synced")
         $status["healthy"] = [bool]($actualHealthStatus -eq "Healthy")
 
-        $specReady = [bool]($actualNamespace -eq $ArgoCDNamespace -and $status["project_match"] -and $status["source_repo_match"] -and $status["source_path_match"] -and $status["target_revision_match"] -and $status["destination_server_match"] -and $status["destination_namespace_match"] -and $status["automated_sync_enabled"] -and $status["prune_disabled"] -and $status["self_heal_enabled"] -and $status["create_namespace_disabled"])
+        $specReady = [bool]($actualNamespace -eq $ArgoCDNamespace -and $status["project_match"] -and $status["source_repo_match"] -and $status["source_path_match"] -and $status["target_revision_match"] -and $status["destination_server_match"] -and $status["destination_namespace_match"] -and $status["automated_sync_enabled"] -and $status["prune_enabled"] -and $status["self_heal_enabled"] -and $status["allow_empty_enabled"] -and $status["create_namespace_disabled"] -and $status["prune_propagation_foreground"] -and $status["prune_last"])
         $runtimeReady = [bool]($status["synced"] -and $status["healthy"])
     }
 
@@ -11474,9 +11488,13 @@ function Invoke-VerifyGitOpsRootApplication {
         destination_server_match      = $status["destination_server_match"]
         destination_namespace_match   = $status["destination_namespace_match"]
         automated_sync_enabled        = $status["automated_sync_enabled"]
+        prune_enabled                 = $status["prune_enabled"]
         prune_disabled                = $status["prune_disabled"]
         self_heal_enabled             = $status["self_heal_enabled"]
+        allow_empty_enabled           = $status["allow_empty_enabled"]
         create_namespace_disabled     = $status["create_namespace_disabled"]
+        prune_propagation_foreground  = $status["prune_propagation_foreground"]
+        prune_last                    = $status["prune_last"]
         read_only                     = $true
     }
 

@@ -428,9 +428,9 @@ class KubernetesWorkloadRuntimeCleanupClientTestCase(unittest.TestCase):
         )
         sync_body = custom_api.patch_calls[1]["body"]["operation"]["sync"]
         self.assertEqual(sync_body["revision"], "f" * 40)
-        self.assertFalse(sync_body["prune"])
+        self.assertTrue(sync_body["prune"])
         self.assertNotIn("force", sync_body)
-        self.assertNotIn("syncOptions", sync_body)
+        self.assertEqual(sync_body["syncOptions"], ["PrunePropagationPolicy=foreground", "PruneLast=true"])
 
 
 if __name__ == "__main__":

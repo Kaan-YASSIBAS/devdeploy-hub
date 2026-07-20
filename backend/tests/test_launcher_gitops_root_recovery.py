@@ -227,6 +227,19 @@ class LauncherGitOpsRootRecoveryTests(unittest.TestCase):
         self.assertNotIn('"--context", "kind-devdeploy-workload", "apply"', body)
         self.assertNotIn('"delete"', body)
 
+    def test_root_application_policy_prunes_empty_desired_state(self) -> None:
+        body = self.function_body("Invoke-BootstrapGitOpsRootApplication")
+        verification = self.function_body("Invoke-VerifyGitOpsRootApplication")
+
+        self.assertIn('prune      = $true', body)
+        self.assertIn('selfHeal   = $true', body)
+        self.assertIn('allowEmpty = $true', body)
+        self.assertIn('"CreateNamespace=false", "PrunePropagationPolicy=foreground", "PruneLast=true"', body)
+        self.assertIn('$status["prune_enabled"]', verification)
+        self.assertIn('$status["allow_empty_enabled"]', verification)
+        self.assertIn('$status["prune_propagation_foreground"]', verification)
+        self.assertIn('$status["prune_last"]', verification)
+
     def test_repository_validation_and_verify_mode_are_non_mutating(self) -> None:
         repository = self.function_body("Get-PersistedGitOpsRepositoryStatus")
         validator = self.function_body("Test-GitOpsManagedSourceTree")

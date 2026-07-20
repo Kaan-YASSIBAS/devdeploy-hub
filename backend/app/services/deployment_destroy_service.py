@@ -112,7 +112,11 @@ class KubernetesRootApplicationReconciler:
                 "operation": {
                     "sync": {
                         "revision": revision.lower(),
-                        "prune": False,
+                        "prune": True,
+                        "syncOptions": [
+                            "PrunePropagationPolicy=foreground",
+                            "PruneLast=true",
+                        ],
                     }
                 }
             },
