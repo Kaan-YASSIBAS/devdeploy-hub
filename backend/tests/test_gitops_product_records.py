@@ -163,6 +163,34 @@ class GitOpsProductRecordsTestCase(unittest.TestCase):
             all(item["service_definition_id"] == service_items[0]["id"] for item in deployment_items)
         )
 
+    def test_archived_owned_service_is_reactivated_before_linking_new_gitops_deployment(self) -> None:
+        self.assertEqual(self.deploy().status_code, 202)
+        service = self.client.get("/api/v1/services").json()[0]
+        archived = self.client.post(f"/api/v1/services/{service['id']}/archive")
+        self.assertEqual(archived.status_code, 200, archived.text)
+        self.assertIsNotNone(archived.json()["archived_at"])
+        self.operation_service.result = self.operation_service.success_result("c" * 40)
+
+        response = self.deploy(
+            image="ghcr.io/example/payment-api:v3.0.0",
+            replicas=1,
+            service_port=8082,
+        )
+
+        self.assertEqual(response.status_code, 202, response.text)
+        active_services = self.client.get("/api/v1/services").json()
+        archived_services = self.client.get("/api/v1/services", params={"archive_filter": "archived"}).json()
+        deployments = self.client.get("/api/v1/deployment-records").json()
+        self.assertEqual(len(active_services), 1)
+        self.assertEqual(archived_services, [])
+        self.assertEqual(active_services[0]["id"], service["id"])
+        self.assertIsNone(active_services[0]["archived_at"])
+        self.assertEqual(active_services[0]["default_image"], "ghcr.io/example/payment-api:v3.0.0")
+        self.assertEqual(active_services[0]["default_replicas"], 1)
+        self.assertEqual(active_services[0]["default_port"], 8082)
+        self.assertEqual(len(deployments), 2)
+        self.assertTrue(all(item["service_definition_id"] == service["id"] for item in deployments))
+
     def test_gitops_conflict_does_not_create_duplicate_product_records(self) -> None:
         self.assertEqual(self.deploy().status_code, 202)
         self.operation_service.result = DeployWorkloadOperationResult(

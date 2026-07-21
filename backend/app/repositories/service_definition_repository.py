@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Query, Session
 
+from app.models.deployment_record import DeploymentRecord
 from app.models.service_definition import ServiceDefinition
 from app.schemas.archive import ArchiveFilter
 
@@ -16,6 +17,24 @@ class ServiceDefinitionRepository:
             self.db.query(ServiceDefinition)
             .filter(ServiceDefinition.owner_id == owner_id, ServiceDefinition.name == name)
             .first()
+        )
+
+    def list_archived_with_active_deployment_links(self, owner_id: int) -> list[ServiceDefinition]:
+        return (
+            self.db.query(ServiceDefinition)
+            .join(
+                DeploymentRecord,
+                DeploymentRecord.service_definition_id == ServiceDefinition.id,
+            )
+            .filter(
+                ServiceDefinition.owner_id == owner_id,
+                ServiceDefinition.archived_at.is_not(None),
+                DeploymentRecord.owner_id == owner_id,
+                DeploymentRecord.archived_at.is_(None),
+                DeploymentRecord.desired_state != "destroyed",
+            )
+            .distinct()
+            .all()
         )
 
     @staticmethod

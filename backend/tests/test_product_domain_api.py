@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.v1.endpoints import deployment_records, services
 from app.api.v1.runtime_status import (
     get_deployment_destroy_runtime_cleanup_service,
+    get_deployment_drift_service,
     get_deployment_recovery_verification_service,
     get_product_runtime_status_service,
     get_workload_service_proxy_client,
@@ -33,6 +34,7 @@ from app.services.deployment_preview_service import (
     ServiceProxyResponse,
 )
 from app.services.deployment_destroy_service import DeploymentRuntimeCleanupResult
+from app.services.deployment_drift import DeploymentDriftService, GitOpsManifestSnapshot
 from app.services.deployment_recovery_service import DeploymentRecoveryVerificationResult
 from app.services.preview_session import (
     PREVIEW_SESSION_COOKIE,
@@ -59,6 +61,18 @@ class FakeWorkloadRuntimeReader:
         if self.error is not None:
             raise self.error
         return self.discovered
+
+
+class FakeGitOpsManifestReader:
+    def __init__(self):
+        self.snapshot = GitOpsManifestSnapshot(
+            status="missing",
+            message="One or more required GitOps workload manifests are missing.",
+        )
+
+    def read(self, deployment):
+        _ = deployment
+        return self.snapshot
 
 
 class FakeRecoverOperationService:
@@ -193,6 +207,7 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.db.refresh(self.user_b)
         self.current_user = self.user_a
         self.runtime_reader = FakeWorkloadRuntimeReader()
+        self.manifest_reader = FakeGitOpsManifestReader()
         self.recover_operation = FakeRecoverOperationService()
         self.destroy_operation = FakeDestroyOperationService()
         self.destroy_cleanup = FakeDestroyRuntimeCleanupService()
@@ -211,6 +226,13 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.app.dependency_overrides[get_product_runtime_status_service] = lambda: ProductRuntimeStatusService(
             reader=self.runtime_reader,
             workload_namespace="devdeploy-apps",
+        )
+        self.app.dependency_overrides[get_deployment_drift_service] = lambda: DeploymentDriftService(
+            manifest_reader=self.manifest_reader,
+            runtime_service=ProductRuntimeStatusService(
+                reader=self.runtime_reader,
+                workload_namespace="devdeploy-apps",
+            ),
         )
         self.app.dependency_overrides[
             get_workload_service_proxy_client
@@ -357,6 +379,77 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(updated.json()["desired_state"], "pending")
         self.assertEqual(updated.json()["commit_sha"], "a" * 40)
 
+    def test_deployment_record_create_reactivates_archived_service_definition(self) -> None:
+        service = self.create_service("payments-api")
+        archived = self.client.post(f"/api/v1/services/{service['id']}/archive")
+        self.assertEqual(archived.status_code, 200, archived.text)
+        self.assertIsNotNone(archived.json()["archived_at"])
+
+        deployment = self.create_deployment(service["id"])
+
+        active_services = self.client.get("/api/v1/services").json()
+        self.assertEqual(len(active_services), 1)
+        self.assertEqual(active_services[0]["id"], service["id"])
+        self.assertIsNone(active_services[0]["archived_at"])
+        self.assertEqual(deployment["service_definition_id"], service["id"])
+
+    def test_services_api_repairs_existing_active_deployment_linked_to_archived_service(self) -> None:
+        service = self.create_service("payments-api")
+        archived = self.client.post(f"/api/v1/services/{service['id']}/archive")
+        self.assertEqual(archived.status_code, 200, archived.text)
+        deployment = DeploymentRecord(
+            owner_id=self.user_a.id,
+            service_definition_id=service["id"],
+            app_name="payments-api",
+            image="ghcr.io/example/payments:v1",
+            replicas=1,
+            container_port=80,
+            service_port=80,
+            service_type="ClusterIP",
+            namespace="devdeploy-apps",
+            desired_state="pending",
+        )
+        self.db.add(deployment)
+        self.db.commit()
+        self.runtime_reader.discovered = (
+            NamedWorkloadSnapshot(
+                "payments-api",
+                WorkloadSnapshot(
+                    deployment_exists=True,
+                    service_exists=True,
+                    desired_replicas=1,
+                    ready_replicas=1,
+                    available_replicas=1,
+                    updated_replicas=1,
+                    pod_count=1,
+                    running_pod_count=1,
+                    ready_pod_count=1,
+                    expected_service_port_exists=True,
+                    service_type="ClusterIP",
+                    service_cluster_ip="10.96.0.10",
+                    service_ports=(ServicePortSnapshot("http", 80, "http", "TCP"),),
+                ),
+            ),
+            NamedWorkloadSnapshot(
+                "runtime-only",
+                WorkloadSnapshot(
+                    service_exists=True,
+                    expected_service_port_exists=True,
+                    service_type="ClusterIP",
+                    service_cluster_ip="10.96.0.11",
+                    service_ports=(ServicePortSnapshot("http", 80, "http", "TCP"),),
+                ),
+            ),
+        )
+
+        active_services = self.client.get("/api/v1/services")
+        untracked_services = self.client.get("/api/v1/services/untracked")
+
+        self.assertEqual(active_services.status_code, 200, active_services.text)
+        self.assertEqual([item["id"] for item in active_services.json()], [service["id"]])
+        self.assertIsNone(active_services.json()[0]["archived_at"])
+        self.assertEqual(untracked_services.status_code, 200, untracked_services.text)
+        self.assertEqual([item["name"] for item in untracked_services.json()["items"]], ["runtime-only"])
     def test_user_cannot_list_get_or_update_another_users_records(self) -> None:
         service = self.create_service()
         deployment = self.create_deployment(service["id"])

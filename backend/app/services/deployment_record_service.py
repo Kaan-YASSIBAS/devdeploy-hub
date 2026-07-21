@@ -39,6 +39,9 @@ class DeploymentRecordService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service definition not found")
         if service.owner_id != expected_owner_id or (user.role != "admin" and service.owner_id != user.id):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Service definition access denied")
+        if service.archived_at is not None:
+            service.archived_at = None
+            self.db.flush()
         return service
 
     def create(self, payload: DeploymentRecordCreate, owner: User) -> DeploymentRecord:

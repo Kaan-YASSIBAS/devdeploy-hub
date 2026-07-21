@@ -74,6 +74,8 @@ class GitOpsProductRecordService:
                     },
                 )
             else:
+                if service.archived_at is not None:
+                    service_defaults["archived_at"] = None
                 self.services.update(service, service_defaults)
 
             deployment = self.deployments.create(
