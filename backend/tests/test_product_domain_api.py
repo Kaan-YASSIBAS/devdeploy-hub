@@ -450,6 +450,43 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertIsNone(active_services.json()[0]["archived_at"])
         self.assertEqual(untracked_services.status_code, 200, untracked_services.text)
         self.assertEqual([item["name"] for item in untracked_services.json()["items"]], ["runtime-only"])
+
+    def test_services_api_archives_service_linked_only_to_destroyed_deployments(self) -> None:
+        service = self.create_service("payments-api")
+        deployment = self.create_deployment(service["id"])
+        record = self.db.get(DeploymentRecord, deployment["id"])
+        self.assertIsNotNone(record)
+        record.desired_state = "destroyed"
+        record.archived_at = self.fixed_datetime()
+        self.db.commit()
+
+        active_services = self.client.get("/api/v1/services").json()
+        archived_services = self.client.get("/api/v1/services", params={"archive_filter": "archived"}).json()
+
+        self.assertEqual(active_services, [])
+        self.assertEqual([item["id"] for item in archived_services], [service["id"]])
+        self.assertIsNotNone(archived_services[0]["archived_at"])
+
+    def test_services_api_keeps_service_active_when_another_deployment_still_uses_it(self) -> None:
+        service = self.create_service("payments-api")
+        first = self.create_deployment(service["id"])
+        second_response = self.client.post(
+            "/api/v1/deployment-records",
+            json={**self.deployment_payload(service["id"]), "app_name": "payments-worker"},
+        )
+        self.assertEqual(second_response.status_code, 201, second_response.text)
+        record = self.db.get(DeploymentRecord, first["id"])
+        self.assertIsNotNone(record)
+        record.desired_state = "destroyed"
+        record.archived_at = self.fixed_datetime()
+        self.db.commit()
+
+        active_services = self.client.get("/api/v1/services").json()
+        archived_services = self.client.get("/api/v1/services", params={"archive_filter": "archived"}).json()
+
+        self.assertEqual([item["id"] for item in active_services], [service["id"]])
+        self.assertEqual(archived_services, [])
+
     def test_user_cannot_list_get_or_update_another_users_records(self) -> None:
         service = self.create_service()
         deployment = self.create_deployment(service["id"])
@@ -488,6 +525,11 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(listed.json(), [])
         self.assertEqual(fetched.status_code, 200)
         self.assertEqual(fetched.json()["archived_at"], archived.json()["archived_at"])
+        active_services = self.client.get("/api/v1/services").json()
+        archived_services = self.client.get("/api/v1/services", params={"archive_filter": "archived"}).json()
+        self.assertEqual(active_services, [])
+        self.assertEqual([item["id"] for item in archived_services], [service["id"]])
+        self.assertIsNotNone(archived_services[0]["archived_at"])
         self.assertEqual(archived_again.status_code, 200)
         self.assertEqual(archived_again.json()["archived_at"], archived.json()["archived_at"])
 
@@ -496,7 +538,8 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(denied.status_code, 403)
 
     def test_deployment_archive_is_owner_scoped_idempotent_and_hidden_from_list(self) -> None:
-        deployment = self.create_deployment()
+        service = self.create_service("payments-api")
+        deployment = self.create_deployment(service["id"])
 
         archived = self.client.post(
             f"/api/v1/deployment-records/{deployment['id']}/archive"
@@ -513,6 +556,11 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(listed.json(), [])
         self.assertEqual(fetched.status_code, 200)
         self.assertEqual(fetched.json()["archived_at"], archived.json()["archived_at"])
+        active_services = self.client.get("/api/v1/services").json()
+        archived_services = self.client.get("/api/v1/services", params={"archive_filter": "archived"}).json()
+        self.assertEqual(active_services, [])
+        self.assertEqual([item["id"] for item in archived_services], [service["id"]])
+        self.assertIsNotNone(archived_services[0]["archived_at"])
         self.assertEqual(archived_again.status_code, 200)
         self.assertEqual(archived_again.json()["archived_at"], archived.json()["archived_at"])
 
@@ -576,6 +624,8 @@ class ProductDomainApiTestCase(unittest.TestCase):
         deployment = self.create_deployment(service["id"])
         destroyed = self.client.post(f"/api/v1/deployment-records/{deployment['id']}/destroy")
         self.assertEqual(destroyed.status_code, 202, destroyed.text)
+        archived_services = self.client.get("/api/v1/services", params={"archive_filter": "archived"}).json()
+        self.assertEqual([item["id"] for item in archived_services], [service["id"]])
         self.recover_operation.requests.clear()
         self.recovery_verification.calls.clear()
 
@@ -607,6 +657,9 @@ class ProductDomainApiTestCase(unittest.TestCase):
             len(self.client.get("/api/v1/deployment-records", params={"archive_filter": "all"}).json()),
             1,
         )
+        active_services = self.client.get("/api/v1/services").json()
+        self.assertEqual([item["id"] for item in active_services], [service["id"]])
+        self.assertIsNone(active_services[0]["archived_at"])
         operation_request = self.recover_operation.requests[0]
         self.assertEqual(operation_request.write_mode, "restore_destroyed")
         self.assertEqual(operation_request.app_name, deployment["app_name"])
@@ -1009,10 +1062,13 @@ class ProductDomainApiTestCase(unittest.TestCase):
             len(self.client.get("/api/v1/deployment-records", params={"archive_filter": "all"}).json()),
             1,
         )
-        self.assertEqual(
-            len(self.client.get("/api/v1/services", params={"archive_filter": "all"}).json()),
-            1,
-        )
+        active_services = self.client.get("/api/v1/services").json()
+        archived_services = self.client.get("/api/v1/services", params={"archive_filter": "archived"}).json()
+        all_services = self.client.get("/api/v1/services", params={"archive_filter": "all"}).json()
+        self.assertEqual(active_services, [])
+        self.assertEqual([item["id"] for item in archived_services], [service["id"]])
+        self.assertIsNotNone(archived_services[0]["archived_at"])
+        self.assertEqual(len(all_services), 1)
         self.assertEqual(
             self.destroy_cleanup.calls,
             [{"app_name": "payments-api", "namespace": "devdeploy-apps", "destroy_commit_sha": "e" * 40}],
@@ -1020,6 +1076,25 @@ class ProductDomainApiTestCase(unittest.TestCase):
         operation_request = self.destroy_operation.requests[0]
         self.assertEqual(operation_request.app_name, "payments-api")
         self.assertEqual(operation_request.source_root_relative, "gitops/workloads/devdeploy-apps")
+
+    def test_destroying_one_of_multiple_active_records_keeps_shared_service_active(self) -> None:
+        service = self.create_service("payments-api")
+        first = self.create_deployment(service["id"])
+        second_response = self.client.post(
+            "/api/v1/deployment-records",
+            json={**self.deployment_payload(service["id"]), "app_name": "payments-worker"},
+        )
+        self.assertEqual(second_response.status_code, 201, second_response.text)
+
+        response = self.client.post(f"/api/v1/deployment-records/{first['id']}/destroy")
+
+        self.assertEqual(response.status_code, 202, response.text)
+        active_services = self.client.get("/api/v1/services").json()
+        archived_services = self.client.get("/api/v1/services", params={"archive_filter": "archived"}).json()
+        active_deployments = self.client.get("/api/v1/deployment-records").json()
+        self.assertEqual([item["id"] for item in active_services], [service["id"]])
+        self.assertEqual(archived_services, [])
+        self.assertEqual([item["app_name"] for item in active_deployments], ["payments-worker"])
 
     def test_destroy_no_changes_archives_record_without_empty_commit(self) -> None:
         deployment = self.create_deployment()
@@ -1078,9 +1153,12 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertIsNotNone(updated["archived_at"])
 
     def test_destroyed_archived_record_can_retry_pending_runtime_cleanup(self) -> None:
-        deployment = self.create_deployment()
+        service = self.create_service("payments-api")
+        deployment = self.create_deployment(service["id"])
         response = self.client.post(f"/api/v1/deployment-records/{deployment['id']}/destroy")
         self.assertEqual(response.status_code, 202)
+        archived_services = self.client.get("/api/v1/services", params={"archive_filter": "archived"}).json()
+        self.assertEqual([item["id"] for item in archived_services], [service["id"]])
         self.destroy_operation.requests.clear()
         self.destroy_cleanup.calls.clear()
         self.destroy_cleanup.result = DeploymentRuntimeCleanupResult(
@@ -1096,6 +1174,8 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(retry.status_code, 202)
         self.assertEqual(retry.json()["status"], "destroyed")
         self.assertEqual(self.destroy_operation.requests, [])
+        archived_after_retry = self.client.get("/api/v1/services", params={"archive_filter": "archived"}).json()
+        self.assertEqual([item["id"] for item in archived_after_retry], [service["id"]])
         self.assertEqual(
             self.destroy_cleanup.calls,
             [{"app_name": "payments-api", "namespace": "devdeploy-apps", "destroy_commit_sha": "e" * 40}],

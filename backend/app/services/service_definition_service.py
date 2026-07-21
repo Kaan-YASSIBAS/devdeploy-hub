@@ -94,16 +94,27 @@ class ServiceDefinitionService:
             self.db.commit()
         return repaired
 
+    def archive_active_services_linked_only_to_inactive_deployments(self, owner_id: int) -> int:
+        archived = 0
+        for service in self.services.list_active_with_only_inactive_deployment_links(owner_id):
+            service.archived_at = utc_now()
+            archived += 1
+        if archived:
+            self.db.commit()
+        return archived
+
     def list_for_user(
         self,
         user: User,
         archive_filter: ArchiveFilter = "active",
     ) -> list[ServiceDefinition]:
+        self.archive_active_services_linked_only_to_inactive_deployments(user.id)
         if archive_filter != "archived":
             self.repair_archived_services_linked_to_active_deployments(user.id)
         return self.services.list_for_owner(user.id, archive_filter)
 
     def list_owned(self, user: User) -> list[ServiceDefinition]:
+        self.archive_active_services_linked_only_to_inactive_deployments(user.id)
         self.repair_archived_services_linked_to_active_deployments(user.id)
         return self.services.list_for_owner(user.id)
 

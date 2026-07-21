@@ -1,4 +1,5 @@
-from sqlalchemy.orm import Query, Session
+from sqlalchemy import exists, or_
+from sqlalchemy.orm import Query, Session, aliased
 
 from app.models.deployment_record import DeploymentRecord
 from app.models.service_definition import ServiceDefinition
@@ -32,6 +33,34 @@ class ServiceDefinitionRepository:
                 DeploymentRecord.owner_id == owner_id,
                 DeploymentRecord.archived_at.is_(None),
                 DeploymentRecord.desired_state != "destroyed",
+            )
+            .distinct()
+            .all()
+        )
+
+    def list_active_with_only_inactive_deployment_links(self, owner_id: int) -> list[ServiceDefinition]:
+        active_deployment = aliased(DeploymentRecord)
+        active_link_exists = exists().where(
+            active_deployment.service_definition_id == ServiceDefinition.id,
+            active_deployment.owner_id == owner_id,
+            active_deployment.archived_at.is_(None),
+            active_deployment.desired_state != "destroyed",
+        )
+        return (
+            self.db.query(ServiceDefinition)
+            .join(
+                DeploymentRecord,
+                DeploymentRecord.service_definition_id == ServiceDefinition.id,
+            )
+            .filter(
+                ServiceDefinition.owner_id == owner_id,
+                ServiceDefinition.archived_at.is_(None),
+                DeploymentRecord.owner_id == owner_id,
+                or_(
+                    DeploymentRecord.archived_at.is_not(None),
+                    DeploymentRecord.desired_state == "destroyed",
+                ),
+                ~active_link_exists,
             )
             .distinct()
             .all()

@@ -72,6 +72,17 @@ class DeploymentRecordRepository:
             .count()
         )
 
+    def count_active_non_destroyed_for_service_definition(self, service_definition_id: int) -> int:
+        return (
+            self.db.query(DeploymentRecord)
+            .filter(
+                DeploymentRecord.service_definition_id == service_definition_id,
+                DeploymentRecord.archived_at.is_(None),
+                DeploymentRecord.desired_state != "destroyed",
+            )
+            .count()
+        )
+
     def delete(self, deployment: DeploymentRecord) -> None:
         self.db.delete(deployment)
         self.db.flush()

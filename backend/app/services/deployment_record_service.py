@@ -44,6 +44,28 @@ class DeploymentRecordService:
             self.db.flush()
         return service
 
+    def _archive_service_definition_if_unreferenced(self, service_definition_id: int | None) -> bool:
+        if service_definition_id is None:
+            return False
+        service = self.services.get_by_id(service_definition_id)
+        if service is None or service.archived_at is not None:
+            return False
+        if self.deployments.count_active_non_destroyed_for_service_definition(service_definition_id):
+            return False
+        service.archived_at = utc_now()
+        self.db.flush()
+        return True
+
+    def _reactivate_service_definition(self, service_definition_id: int | None) -> bool:
+        if service_definition_id is None:
+            return False
+        service = self.services.get_by_id(service_definition_id)
+        if service is None or service.archived_at is None:
+            return False
+        service.archived_at = None
+        self.db.flush()
+        return True
+
     def create(self, payload: DeploymentRecordCreate, owner: User) -> DeploymentRecord:
         self._owned_service(
             payload.service_definition_id,
@@ -103,8 +125,12 @@ class DeploymentRecordService:
 
     def archive(self, deployment_id: int, user: User) -> DeploymentRecord:
         deployment = self.get_owned(deployment_id, user)
+        changed = False
         if deployment.archived_at is None:
             deployment.archived_at = utc_now()
+            changed = True
+        changed = self._archive_service_definition_if_unreferenced(deployment.service_definition_id) or changed
+        if changed:
             self.db.commit()
             self.db.refresh(deployment)
         return self.deployments.get_by_id(deployment.id) or deployment
@@ -152,6 +178,7 @@ class DeploymentRecordService:
         if commit_sha is not None:
             data["commit_sha"] = commit_sha.lower()
         updated = self.deployments.update(deployment, data)
+        self._reactivate_service_definition(updated.service_definition_id)
         self.db.commit()
         self.db.refresh(updated)
         return self.deployments.get_by_id(updated.id) or updated
@@ -193,6 +220,7 @@ class DeploymentRecordService:
         if commit_sha is not None:
             data["commit_sha"] = commit_sha.lower()
         updated = self.deployments.update(deployment, data)
+        self._archive_service_definition_if_unreferenced(updated.service_definition_id)
         self.db.commit()
         self.db.refresh(updated)
         return self.deployments.get_by_id(updated.id) or updated
