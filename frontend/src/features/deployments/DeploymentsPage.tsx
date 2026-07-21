@@ -12,6 +12,7 @@ import {
 } from "@/api/client";
 import { CreateGitOpsAppModal } from "@/components/deployments/CreateGitOpsAppModal";
 import { GitOpsDeployStatusCard } from "@/components/deployments/GitOpsDeployStatusCard";
+import { GitOpsOperationTimeline } from "@/components/deployments/GitOpsOperationTimeline";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -36,6 +37,26 @@ import type {
 
 const STATUS_POLL_INTERVAL_MS = 3_000;
 const STATUS_POLL_TIMEOUT_MS = 120_000;
+const DELETE_CLEANUP_TIMEOUT_MS = 120_000;
+const DELETE_COMPLETED_DISMISS_MS = 2_500;
+
+type DestroyProgressPhase = "requesting" | "cleanup_pending" | "completed" | "timed_out";
+
+type DestroyProgressState = {
+  record: DeploymentRecord;
+  phase: DestroyProgressPhase;
+  startedAt: number;
+};
+
+function runtimeIdentity(namespace: string, name: string) {
+  return `${namespace}/${name}`.toLowerCase();
+}
+
+function deleteProgressStep(phase: DestroyProgressPhase): number {
+  if (phase === "requesting") return 0;
+  if (phase === "completed") return 4;
+  return 3;
+}
 
 function isTerminalGitOpsStatus(status: GitOpsAppDeployStatus | undefined) {
   return status === "deployed" || status === "degraded";
@@ -133,29 +154,34 @@ export function DeploymentsPage() {
   const [openingPreviewId, setOpeningPreviewId] = useState<number | null>(null);
   const [destroyTarget, setDestroyTarget] = useState<DeploymentRecord | null>(null);
   const [destroyConfirmName, setDestroyConfirmName] = useState("");
-  const [destroyInProgress, setDestroyInProgress] = useState<DeploymentRecord | null>(null);
+  const [destroyInProgress, setDestroyInProgress] = useState<DestroyProgressState | null>(null);
   const [recoverDestroyedTarget, setRecoverDestroyedTarget] = useState<DeploymentRecord | null>(null);
   const [recoverInProgress, setRecoverInProgress] = useState<DeploymentRecord | null>(null);
   const destroyToastId = useRef<ReturnType<typeof toast.loading> | undefined>(undefined);
   const recoverToastId = useRef<ReturnType<typeof toast.loading> | undefined>(undefined);
+  const deleteCleanupPolling =
+    destroyInProgress?.phase === "cleanup_pending" || destroyInProgress?.phase === "timed_out";
   const recordsQuery = useQuery({
     queryKey: ["deployment-records", archiveFilter],
-    queryFn: () => deploymentRecordsApi.list({ archiveFilter })
+    queryFn: () => deploymentRecordsApi.list({ archiveFilter }),
+    refetchInterval: deleteCleanupPolling ? STATUS_POLL_INTERVAL_MS : false
   });
   const showUntracked = archiveFilter !== "archived";
   const untrackedQuery = useQuery({
     queryKey: ["untracked-deployments"],
     queryFn: deploymentRecordsApi.listUntracked,
-    enabled: showUntracked
+    enabled: showUntracked || Boolean(destroyInProgress),
+    refetchInterval: deleteCleanupPolling ? STATUS_POLL_INTERVAL_MS : false
   });
   const servicesQuery = useQuery({
     queryKey: ["service-definitions", "all"],
-    queryFn: () => serviceDefinitionsApi.list({ archiveFilter: "all" })
+    queryFn: () => serviceDefinitionsApi.list({ archiveFilter: "all" }),
+    refetchInterval: deleteCleanupPolling ? STATUS_POLL_INTERVAL_MS : false
   });
   const records = useMemo(() => recordsQuery.data ?? [], [recordsQuery.data]);
   const untrackedDeployments = useMemo(
-    () => (showUntracked ? untrackedQuery.data?.items ?? [] : []),
-    [showUntracked, untrackedQuery.data]
+    () => ((showUntracked || destroyInProgress) ? untrackedQuery.data?.items ?? [] : []),
+    [destroyInProgress, showUntracked, untrackedQuery.data]
   );
   const services = useMemo(() => servicesQuery.data ?? [], [servicesQuery.data]);
   const servicesById = useMemo(
@@ -285,23 +311,22 @@ export function DeploymentsPage() {
   const destroyMutation = useMutation({
     mutationFn: (record: DeploymentRecord) => deploymentRecordsApi.destroy(record.id),
     onMutate: (record) => {
-      setDestroyInProgress(record);
+      setDestroyInProgress({ record, phase: "requesting", startedAt: Date.now() });
       setDestroyTarget(null);
       setDestroyConfirmName("");
       destroyToastId.current = toast.loading(t("deployments.records.destroy.progress"));
     },
-    onSuccess: async (response) => {
-      const messageKey =
-        response.status === "runtime_cleanup_pending"
-          ? "deployments.records.destroy.pending"
-          : "deployments.records.destroy.success";
+    onSuccess: async (response, record) => {
       if (response.status === "runtime_cleanup_pending") {
-        toast.warning(t(messageKey), { id: destroyToastId.current });
+        toast.warning(t("deployments.records.destroy.pending"), { id: destroyToastId.current });
       } else {
-        toast.success(t(messageKey), { id: destroyToastId.current });
+        toast.loading(t("deployments.records.destroy.progress"), { id: destroyToastId.current });
       }
-      setDestroyInProgress(null);
-      destroyToastId.current = undefined;
+      setDestroyInProgress((current) =>
+        current?.record.id === record.id
+          ? { ...current, phase: "cleanup_pending" }
+          : current
+      );
       await queryClient.invalidateQueries({ queryKey: ["deployment-records"] });
       await queryClient.invalidateQueries({ queryKey: ["service-definitions"] });
       await queryClient.invalidateQueries({ queryKey: ["untracked-deployments"] });
@@ -418,6 +443,103 @@ export function DeploymentsPage() {
     void queryClient.invalidateQueries({ queryKey: ["untracked-services"] });
   }, [liveStatus, queryClient]);
 
+  const pendingDeleteRuntimeKey = destroyInProgress && destroyInProgress.phase !== "completed"
+    ? runtimeIdentity(destroyInProgress.record.namespace, destroyInProgress.record.app_name)
+    : null;
+  const visibleUntrackedDeployments = useMemo(
+    () => untrackedDeployments.filter(
+      (deployment) => runtimeIdentity(deployment.namespace, deployment.name) !== pendingDeleteRuntimeKey
+    ),
+    [pendingDeleteRuntimeKey, untrackedDeployments]
+  );
+
+  useEffect(() => {
+    if (
+      !destroyInProgress ||
+      (destroyInProgress.phase !== "cleanup_pending" && destroyInProgress.phase !== "timed_out")
+    ) {
+      return;
+    }
+
+    const pendingKey = runtimeIdentity(destroyInProgress.record.namespace, destroyInProgress.record.app_name);
+    const activeRecordExists = records.some(
+      (record) =>
+        runtimeIdentity(record.namespace, record.app_name) === pendingKey &&
+        !record.archived_at &&
+        record.desired_state !== "destroyed"
+    );
+    const runtimeResourceExists = untrackedDeployments.some(
+      (deployment) => runtimeIdentity(deployment.namespace, deployment.name) === pendingKey
+    );
+    const matchingService = services.find(
+      (service) => service.name.toLowerCase() === destroyInProgress.record.app_name.toLowerCase()
+    );
+    const managedServiceRuntimeExists = matchingService
+      ? matchingService.runtime_status?.service_found !== false ||
+        matchingService.runtime_status?.related_deployment_found !== false
+      : false;
+    const recordsReady = recordsQuery.isSuccess && recordsQuery.dataUpdatedAt >= destroyInProgress.startedAt;
+    const runtimeReady =
+      untrackedQuery.isSuccess &&
+      untrackedQuery.dataUpdatedAt >= destroyInProgress.startedAt &&
+      untrackedQuery.data?.runtime_available !== false;
+    const servicesReady = servicesQuery.isSuccess && servicesQuery.dataUpdatedAt >= destroyInProgress.startedAt;
+
+    if (
+      !recordsReady ||
+      !runtimeReady ||
+      !servicesReady ||
+      activeRecordExists ||
+      runtimeResourceExists ||
+      managedServiceRuntimeExists
+    ) {
+      return;
+    }
+
+    toast.success(t("deployments.records.destroy.success"), { id: destroyToastId.current });
+    destroyToastId.current = undefined;
+    setDestroyInProgress((current) =>
+      current?.record.id === destroyInProgress.record.id
+        ? { ...current, phase: "completed" }
+        : current
+    );
+    void queryClient.invalidateQueries({ queryKey: ["deployment-records"] });
+    void queryClient.invalidateQueries({ queryKey: ["service-definitions"] });
+    void queryClient.invalidateQueries({ queryKey: ["untracked-deployments"] });
+    void queryClient.invalidateQueries({ queryKey: ["untracked-services"] });
+    void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+    void queryClient.invalidateQueries({ queryKey: ["user-summary"] });
+  }, [destroyInProgress, records, recordsQuery.dataUpdatedAt, recordsQuery.isSuccess, queryClient, services, servicesQuery.dataUpdatedAt, servicesQuery.isSuccess, t, untrackedDeployments, untrackedQuery.data?.runtime_available, untrackedQuery.dataUpdatedAt, untrackedQuery.isSuccess]);
+
+  useEffect(() => {
+    if (!destroyInProgress || destroyInProgress.phase !== "cleanup_pending") {
+      return;
+    }
+
+    const elapsed = Date.now() - destroyInProgress.startedAt;
+    const remaining = Math.max(0, DELETE_CLEANUP_TIMEOUT_MS - elapsed);
+    const timeout = window.setTimeout(() => {
+      toast.warning(t("deployments.records.destroy.timeout"), { id: destroyToastId.current });
+      destroyToastId.current = undefined;
+      setDestroyInProgress((current) =>
+        current?.record.id === destroyInProgress.record.id
+          ? { ...current, phase: "timed_out" }
+          : current
+      );
+    }, remaining);
+
+    return () => window.clearTimeout(timeout);
+  }, [destroyInProgress, t]);
+
+  useEffect(() => {
+    if (destroyInProgress?.phase !== "completed") {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setDestroyInProgress(null), DELETE_COMPLETED_DISMISS_MS);
+    return () => window.clearTimeout(timeout);
+  }, [destroyInProgress?.phase]);
+
   const filteredRecords = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) {
@@ -450,14 +572,14 @@ export function DeploymentsPage() {
 
   const filteredUntracked = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return untrackedDeployments;
-    return untrackedDeployments.filter((deployment) =>
+    if (!query) return visibleUntrackedDeployments;
+    return visibleUntrackedDeployments.filter((deployment) =>
       [deployment.name, deployment.namespace, deployment.display_status]
         .join(" ")
         .toLowerCase()
         .includes(query)
     );
-  }, [search, untrackedDeployments]);
+  }, [search, visibleUntrackedDeployments]);
 
   const columns: Column<DeploymentRecord>[] = [
     {
@@ -666,7 +788,7 @@ export function DeploymentsPage() {
               {destroyEligible ? (
                 <Button
                   aria-label={t("deployments.records.destroy.action")}
-                  disabled={destroyMutation.isPending}
+                  disabled={destroyMutation.isPending || Boolean(destroyInProgress)}
                   size="sm"
                   variant="danger"
                   onClick={() => openDestroyDialog(record)}
@@ -865,9 +987,17 @@ export function DeploymentsPage() {
       {destroyInProgress ? (
         <div className="mb-5 flex items-start gap-3 rounded-lg border border-amber-300/20 bg-amber-400/[0.08] px-4 py-3 text-sm text-amber-50">
           <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-amber-200" />
-          <div>
-            <p className="font-medium text-white">{t("deployments.records.destroy.progressTitle")}</p>
-            <p className="text-amber-100/90">{t("deployments.records.destroy.progress")}</p>
+          <div className="min-w-0 flex-1 space-y-3">
+            <div>
+              <p className="font-medium text-white">{t("deployments.records.destroy.progressTitle")}</p>
+              <p className="text-amber-100/90">{t("deployments.records.destroy.progress")}</p>
+            </div>
+            <GitOpsOperationTimeline
+              activeStep={deleteProgressStep(destroyInProgress.phase)}
+              completed={destroyInProgress.phase === "completed"}
+              kind="delete"
+              timedOut={destroyInProgress.phase === "timed_out"}
+            />
           </div>
         </div>
       ) : null}
@@ -1039,7 +1169,7 @@ export function DeploymentsPage() {
             </div>
             <DialogFooter>
               <Button
-                disabled={destroyMutation.isPending}
+                disabled={destroyMutation.isPending || Boolean(destroyInProgress)}
                 variant="outline"
                 onClick={closeDestroyDialog}
               >

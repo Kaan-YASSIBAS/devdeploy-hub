@@ -552,15 +552,24 @@
         "action": "Yok et",
         "title": "Deployment'ı yok et",
         "description": "{{name}} deployment'ını güvenli DevDeploy akışıyla yok et.",
-        "warning": "Bu işlem uygulama manifest klasörünü GitOps'tan kaldırır ve Deployment kaydını arşivler. Argo CD prune kapalı olduğu için DevDeploy, dar kapsamlı runtime temizliğini yalnızca Argo CD destroy revizyonunu gördükten sonra aynı ada sahip doğrulanmış Deployment ve Service kaynakları için dener.",
+        "warning": "Bu işlem uygulama manifest klasörünü GitOps'tan kaldırır ve Deployment kaydını arşivler. Argo CD sahipli Deployment ve Service kaynaklarını workload cluster'dan prune eder, ardından DevDeploy kaynakların kaldırıldığını doğrular.",
         "confirmLabel": "Onaylamak için {{name}} yaz.",
         "confirmAction": "Deployment'ı yok et",
         "submitting": "Yok ediliyor",
         "progressTitle": "Kaldırma işlemi sürüyor",
-        "progress": "Deployment kaldırılıyor. DevDeploy GitOps değişikliğini gönderiyor, Argo CD senkronizasyonunu bekliyor ve ardından workload kaynaklarını temizliyor. Bu işlem birkaç saniye sürebilir.",
+        "progress": "Deployment kaldırılıyor. DevDeploy GitOps değişikliğini gönderiyor, Argo CD prune bekliyor ve ardından workload kaynaklarını temizliyor. Bu işlem birkaç saniye sürebilir.",
+        "operationDescription": "Deployment kaldırılıyor. DevDeploy app'i Git'ten kaldırır, Argo CD prune bekler ve tamamlandı demeden önce workload cleanup sonucunu doğrular.",
         "success": "Yok etme isteği tamamlandı ve runtime kaynaklarının yokluğu doğrulandı.",
+        "timeout": "İşlem arka planda devam ediyor olabilir. Birazdan yenileyerek durumu kontrol edebilirsin.",
         "pending": "GitOps kaldırma tamamlandı. DevDeploy Argo CD senkronizasyonunu bekliyor; runtime temizliği otomatik olarak yeniden denenebilir.",
-        "error": "Deployment yok edilemedi."
+        "error": "Deployment yok edilemedi.",
+        "progressSteps": {
+          "prepare": "GitOps silme isteği hazırlanıyor",
+          "removeGit": "App Git'ten kaldırılıyor",
+          "waitPrune": "Argo CD prune bekleniyor",
+          "cleanup": "Workload cleanup bekleniyor",
+          "completed": "Tamamlandı"
+        }
       },
       "access": {
         "action": "Erişimi kontrol et",
@@ -718,8 +727,9 @@
       "submitting": "Git'e gönderiliyor",
       "pushedToast": "GitOps commit'i push edildi. Argo CD bekleniyor.",
       "progressTitle": "GitOps deployment ilerlemesi",
+      "operationDescription": "Bu işlem Git commit, Argo CD sync ve Kubernetes rollout adımlarını içerir. Genellikle kısa sürer, bazen biraz gecikebilir.",
       "refreshStatus": "Deployment durumunu yenile",
-      "pollingTimedOut": "Otomatik durum kontrolü iki dakika sonra durdu. Yeniden kontrol etmek için yenile.",
+      "pollingTimedOut": "İşlem arka planda devam ediyor olabilir. Birazdan yenileyerek durumu kontrol edebilirsin.",
       "commit": "Commit",
       "observedRevision": "Gözlemlenen revision",
       "rootSyncHealth": "Root App sync / health",

@@ -552,15 +552,24 @@
         "action": "Destroy",
         "title": "Destroy deployment",
         "description": "Destroy {{name}} through the safe DevDeploy flow.",
-        "warning": "This removes the app manifest folder from GitOps and archives the Deployment record. Because Argo CD prune is disabled, DevDeploy waits for Argo CD to observe the destroy revision before attempting narrowly scoped runtime cleanup for the exact owned Deployment and Service only.",
+        "warning": "This removes the app manifest folder from GitOps and archives the Deployment record. Argo CD prunes the owned Deployment and Service from the workload cluster, then DevDeploy verifies the resources are gone.",
         "confirmLabel": "Type {{name}} to confirm.",
         "confirmAction": "Destroy deployment",
         "submitting": "Destroying",
         "progressTitle": "Destroy in progress",
-        "progress": "Removing deployment. DevDeploy is pushing the GitOps change, waiting for Argo CD synchronization, and then cleaning up workload resources. This may take a few seconds.",
+        "progress": "Removing deployment. DevDeploy is pushing the GitOps change, waiting for Argo CD prune, and then cleaning up workload resources. This may take a few seconds.",
+        "operationDescription": "Removing deployment. DevDeploy removes the app from Git, waits for Argo CD prune, and verifies workload cleanup before reporting completion.",
         "success": "Destroy request completed and runtime absence was verified.",
+        "timeout": "The operation may still be continuing in the background. You can refresh shortly to check the latest status.",
         "pending": "GitOps removal completed. DevDeploy is waiting for Argo CD synchronization; runtime cleanup can be retried automatically.",
-        "error": "Deployment could not be destroyed."
+        "error": "Deployment could not be destroyed.",
+        "progressSteps": {
+          "prepare": "Preparing delete request",
+          "removeGit": "Removing app from Git",
+          "waitPrune": "Waiting for Argo CD prune",
+          "cleanup": "Waiting for workload cleanup",
+          "completed": "Completed"
+        }
       },
       "access": {
         "action": "Check access",
@@ -718,8 +727,9 @@
       "submitting": "Publishing to Git",
       "pushedToast": "GitOps commit pushed. Waiting for Argo CD.",
       "progressTitle": "GitOps deployment progress",
+      "operationDescription": "This operation includes a Git commit, Argo CD sync, and Kubernetes rollout. It usually finishes quickly, but may occasionally take a bit longer.",
       "refreshStatus": "Refresh deployment status",
-      "pollingTimedOut": "Automatic status polling stopped after two minutes. Refresh to check again.",
+      "pollingTimedOut": "The operation may still be continuing in the background. You can refresh shortly to check the latest status.",
       "commit": "Commit",
       "observedRevision": "Observed revision",
       "rootSyncHealth": "Root App sync / health",
@@ -732,6 +742,14 @@
       "notReady": "Not ready",
       "yes": "Yes",
       "no": "No",
+      "progressSteps": {
+        "prepare": "Preparing GitOps request",
+        "writeGit": "Writing desired state to Git",
+        "waitArgo": "Waiting for Argo CD sync",
+        "waitRollout": "Waiting for Kubernetes rollout",
+        "serviceReady": "Service is becoming ready",
+        "completed": "Completed"
+      },
       "validation": {
         "required": "App name and container image are required.",
         "appName": "Use a lowercase Kubernetes app name with letters, numbers, or hyphens (maximum 40 characters).",

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { GitOpsOperationTimeline } from "@/components/deployments/GitOpsOperationTimeline";
 import type { GitOpsAppDeployResponse, GitOpsAppDeployStatus, GitOpsAppStatusResponse } from "@/types";
 
 type GitOpsDeployStatusCardProps = {
@@ -29,6 +30,15 @@ function statusVariant(status: GitOpsAppDeployStatus): BadgeProps["variant"] {
     return "muted";
   }
   return "warning";
+}
+
+function createProgressStep(status: GitOpsAppDeployStatus): number {
+  if (status === "pushed_waiting_for_argocd") return 1;
+  if (status === "argocd_observing") return 2;
+  if (status === "argocd_synced") return 3;
+  if (status === "workload_progressing") return 4;
+  if (status === "deployed") return 5;
+  return 2;
 }
 
 function StatusIcon({ status, isFetching }: { status: GitOpsAppDeployStatus; isFetching: boolean }) {
@@ -82,15 +92,16 @@ export function GitOpsDeployStatusCard({
       <CardContent className="space-y-5">
         <p className="text-sm leading-6 text-slate-300">{statusResponse?.message ?? deployResponse.message}</p>
 
+        <GitOpsOperationTimeline
+          activeStep={createProgressStep(status)}
+          completed={status === "deployed"}
+          kind="create"
+          timedOut={timedOut && status !== "deployed" && status !== "degraded"}
+        />
+
         {errorKey ? (
           <div className="rounded-lg border border-red-300/20 bg-red-500/10 px-4 py-3 text-sm text-red-100" role="alert">
             {t(errorKey)}
-          </div>
-        ) : null}
-
-        {timedOut && status !== "deployed" && status !== "degraded" ? (
-          <div className="rounded-lg border border-amber-300/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-            {t("deployments.gitopsDeploy.pollingTimedOut")}
           </div>
         ) : null}
 

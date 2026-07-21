@@ -5,6 +5,7 @@ import { Dialog, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { GitOpsOperationTimeline } from "@/components/deployments/GitOpsOperationTimeline";
 import type { GitOpsAppDeployInput } from "@/types";
 
 type CreateGitOpsAppModalProps = {
@@ -187,6 +188,8 @@ export function CreateGitOpsAppModal({
             {error}
           </p>
         ) : null}
+
+        {isSubmitting ? <GitOpsOperationTimeline activeStep={1} kind="create" /> : null}
 
         <DialogFooter>
           <Button disabled={isSubmitting} variant="ghost" onClick={() => setOpen(false)}>
