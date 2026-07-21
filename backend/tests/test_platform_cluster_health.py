@@ -119,6 +119,69 @@ class PlatformClusterHealthApiTestCase(unittest.TestCase):
         self.assertTrue(response.json()["platform_ready"])
         self.assertNotIn("Forbidden", str(response.json()))
 
+    def test_management_health_stays_healthy_after_incluster_token_refresh(self) -> None:
+        management_tokens = []
+
+        def load_management(*, client_configuration, **kwargs) -> None:
+            _ = kwargs
+            client_configuration.host = "https://management.example:443"
+            client_configuration.api_key["authorization"] = "bearer management-initial"
+            refresh_count = {"value": 0}
+
+            def refresh(configuration) -> None:
+                refresh_count["value"] += 1
+                configuration.api_key["authorization"] = f"bearer management-rotated-{refresh_count['value']}"
+                configuration.refresh_api_key_hook = refresh
+
+            client_configuration.refresh_api_key_hook = refresh
+
+        def load_workload(*, client_configuration, **kwargs) -> None:
+            _ = kwargs
+            client_configuration.host = "https://workload.example:6443"
+            client_configuration.api_key["authorization"] = "Bearer workload-token"
+
+        class RefreshingVersionApi:
+            def __init__(self, api_client) -> None:
+                self.api_client = api_client
+
+            def get_code(self, **kwargs) -> object:
+                _ = kwargs
+                configuration = self.api_client.configuration
+                auth = configuration.auth_settings()["BearerToken"]["value"]
+                if configuration.host == "https://management.example:443":
+                    management_tokens.append(auth)
+                    if configuration.api_key["authorization"] != configuration.api_key["BearerToken"]:
+                        raise AssertionError("management BearerToken was stale after refresh")
+                return object()
+
+        with (
+            patch(
+                "app.services.gitops.kubernetes_status_reader.config.load_incluster_config",
+                side_effect=load_management,
+            ),
+            patch(
+                "app.services.gitops.kubernetes_status_reader.config.load_kube_config",
+                side_effect=load_workload,
+            ),
+            patch("app.services.platform_cluster_health.client.VersionApi", RefreshingVersionApi),
+        ):
+            service = PlatformClusterHealthService.from_server_config(
+                management_kubeconfig=None,
+                management_kubeconfig_context=None,
+                workload_kubeconfig="workload-kubeconfig.yaml",
+                workload_kubeconfig_context="devdeploy-workload-observability",
+                use_in_cluster_management=True,
+            )
+
+        first = service.read_health()
+        second = service.read_health()
+
+        self.assertEqual(first.management.status, "healthy")
+        self.assertEqual(second.management.status, "healthy")
+        self.assertTrue(first.platform_ready)
+        self.assertTrue(second.platform_ready)
+        self.assertGreaterEqual(len(set(management_tokens)), 2)
+
     def test_authentication_failure_is_reachable_but_blocks_readiness(self) -> None:
         self.authenticate()
         self.management_probe.error = ApiException(status=401, reason="Unauthorized")

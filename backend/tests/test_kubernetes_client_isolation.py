@@ -27,6 +27,22 @@ class KubernetesClientIsolationTestCase(unittest.TestCase):
         client_configuration.refresh_api_key_hook = refresh
 
     @staticmethod
+    def _load_incluster_with_overwriting_refresh_hook(*, client_configuration, **kwargs) -> None:
+        _ = kwargs
+        client_configuration.host = "https://management.example:443"
+        client_configuration.api_key["authorization"] = "bearer management-initial"
+        refresh_count = {"value": 0}
+
+        def refresh(configuration) -> None:
+            refresh_count["value"] += 1
+            configuration.api_key["authorization"] = (
+                f"bearer management-rotated-{refresh_count['value']}"
+            )
+            configuration.refresh_api_key_hook = refresh
+
+        client_configuration.refresh_api_key_hook = refresh
+
+    @staticmethod
     def _load_workload(*, client_configuration, **kwargs) -> None:
         _ = kwargs
         client_configuration.host = "https://workload.example:6443"
@@ -89,6 +105,30 @@ class KubernetesClientIsolationTestCase(unittest.TestCase):
             "workload-token",
         )
         self.assertEqual(management.configuration.host, "https://management.example:443")
+
+    def test_incluster_refresh_hook_keeps_bearer_token_synchronized_after_rotation(self) -> None:
+        with patch(
+            "app.services.gitops.kubernetes_status_reader.config.load_incluster_config",
+            side_effect=self._load_incluster_with_overwriting_refresh_hook,
+        ):
+            management = self._build_management()
+
+        first_auth = management.configuration.auth_settings()["BearerToken"]["value"]
+        self.assertEqual(
+            management.configuration.api_key["authorization"],
+            management.configuration.api_key["BearerToken"],
+        )
+        second_auth = management.configuration.auth_settings()["BearerToken"]["value"]
+
+        self.assertNotEqual(first_auth, second_auth)
+        self.assertEqual(
+            management.configuration.api_key["authorization"],
+            management.configuration.api_key["BearerToken"],
+        )
+        self.assertEqual(
+            second_auth,
+            f"Bearer {management.configuration.api_key['BearerToken']}",
+        )
 
     def test_rotating_management_token_updates_generated_bearer_token(self) -> None:
         with patch(

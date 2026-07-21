@@ -13,6 +13,7 @@ def configure_bearer_token_refresh(
     def refresh(current: client.Configuration) -> None:
         if original_refresh is not None:
             original_refresh(current)
+            current.refresh_api_key_hook = refresh
         _synchronize_bearer_token(current, required=required)
 
     if original_refresh is not None:
