@@ -550,6 +550,7 @@
       },
       "destroy": {
         "action": "Yok et",
+        "dangerLabel": "Tehlikeli işlem",
         "title": "Deployment'ı yok et",
         "description": "{{name}} deployment'ını güvenli DevDeploy akışıyla yok et.",
         "warning": "Bu işlem uygulama manifest klasörünü GitOps'tan kaldırır ve Deployment kaydını arşivler. Argo CD sahipli Deployment ve Service kaynaklarını workload cluster'dan prune eder, ardından DevDeploy kaynakların kaldırıldığını doğrular.",

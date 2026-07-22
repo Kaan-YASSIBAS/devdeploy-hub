@@ -550,6 +550,7 @@
       },
       "destroy": {
         "action": "Destroy",
+        "dangerLabel": "Dangerous action",
         "title": "Destroy deployment",
         "description": "Destroy {{name}} through the safe DevDeploy flow.",
         "warning": "This removes the app manifest folder from GitOps and archives the Deployment record. Argo CD prunes the owned Deployment and Service from the workload cluster, then DevDeploy verifies the resources are gone.",

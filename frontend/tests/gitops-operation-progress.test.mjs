@@ -153,3 +153,42 @@ test("backend errors continue to use safe existing localized messages", () => {
   assert.ok(english.deployments.gitopsDeploy.errors.deployFailed);
   assert.ok(english.deployments.records.destroy.error);
 });
+test("deployment access actions stay grouped separately from destroy", () => {
+  const accessStart = deployments.indexOf('data-testid="deployment-access-actions"');
+  const dangerStart = deployments.indexOf('data-testid="deployment-danger-actions"');
+  assert.ok(accessStart >= 0, "missing access action group");
+  assert.ok(dangerStart > accessStart, "danger actions should render after access actions");
+
+  const accessActions = deployments.slice(accessStart, dangerStart);
+  const dangerActions = sourceBlock(
+    deployments,
+    'data-testid="deployment-danger-actions"',
+    "const untrackedColumns"
+  );
+
+  assert.match(accessActions, /deployments\.records\.access\.action/);
+  assert.match(accessActions, /deployments\.records\.access\.openAction/);
+  assert.doesNotMatch(accessActions, /deployments\.records\.destroy\.action/);
+  assert.match(dangerActions, /deployments\.records\.destroy\.dangerLabel/);
+  assert.match(dangerActions, /deployments\.records\.destroy\.action/);
+  assert.doesNotMatch(dangerActions, /deployments\.records\.access\.openAction/);
+});
+
+test("destroy confirmation copy uses exact normal-cased deployment name", () => {
+  assert.equal(english.deployments.records.destroy.dangerLabel, "Dangerous action");
+  assert.equal(english.deployments.records.destroy.confirmLabel, "Type {{name}} to confirm.");
+  assert.equal(turkish.deployments.records.destroy.dangerLabel, "Tehlikeli işlem");
+  assert.equal(turkish.deployments.records.destroy.confirmLabel, "Onaylamak için {{name}} yaz.");
+
+  const destroyDialogStart = deployments.indexOf('title={t("deployments.records.destroy.title")}');
+  const destroyDialogEnd = deployments.indexOf("      </Dialog>", destroyDialogStart);
+  assert.ok(destroyDialogStart >= 0, "missing destroy dialog start");
+  assert.ok(destroyDialogEnd > destroyDialogStart, "missing destroy dialog end");
+  const destroyDialog = deployments.slice(destroyDialogStart, destroyDialogEnd);
+
+  assert.match(destroyDialog, /<Label className="normal-case" htmlFor="destroy-confirm-name">/);
+  assert.match(destroyDialog, /confirmLabel", \{ name: destroyTarget\.app_name \}/);
+  assert.match(destroyDialog, /destroyConfirmName\.trim\(\) !== destroyTarget\.app_name/);
+  assert.match(destroyDialog, /destroyMutation\.mutate\(destroyTarget\)/);
+  assert.doesNotMatch(destroyDialog, /toUpperCase|text-transform|uppercase/);
+});

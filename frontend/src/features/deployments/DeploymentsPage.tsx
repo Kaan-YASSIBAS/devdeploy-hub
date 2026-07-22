@@ -749,76 +749,20 @@ export function DeploymentsPage() {
         const destroyEligible = canDestroy(record);
         const access = accessByDeployment[record.id];
         return (
-          <div className="min-w-[220px] space-y-2">
-            <div className="flex flex-wrap gap-2">
-              <Button
-                aria-label={t("deployments.records.access.action")}
-                disabled={accessMutation.isPending && accessMutation.variables === record.id}
-                size="sm"
-                variant="outline"
-                onClick={() => accessMutation.mutate(record.id)}
-              >
-                <ExternalLink className="h-4 w-4" />
-                {t("deployments.records.access.action")}
-              </Button>
-              {recoverEligible ? (
+          <div className="min-w-[220px] space-y-3">
+            <div className="space-y-2" data-testid="deployment-access-actions">
+              <div className="flex flex-wrap gap-2">
                 <Button
-                  aria-label={t("deployments.records.recover.action")}
-                  disabled={recoverMutation.isPending && recoverMutation.variables?.id === record.id}
+                  aria-label={t("deployments.records.access.action")}
+                  disabled={accessMutation.isPending && accessMutation.variables === record.id}
                   size="sm"
                   variant="outline"
-                  onClick={() => recoverRecord(record)}
+                  onClick={() => accessMutation.mutate(record.id)}
                 >
-                  <RotateCcw className="h-4 w-4" />
-                  {t("deployments.records.recover.action")}
+                  <ExternalLink className="h-4 w-4" />
+                  {t("deployments.records.access.action")}
                 </Button>
-              ) : null}
-              {reconcileEligible ? (
-                <Button
-                  aria-label={t("deployments.records.reconcile.action")}
-                  disabled={reconcileMutation.isPending && reconcileMutation.variables === record.id}
-                  size="sm"
-                  variant="outline"
-                  onClick={() => reconcileRecord(record)}
-                >
-                  <RefreshCw className="h-4 w-4" />
-                  {t("deployments.records.reconcile.action")}
-                </Button>
-              ) : null}
-              {destroyEligible ? (
-                <Button
-                  aria-label={t("deployments.records.destroy.action")}
-                  disabled={destroyMutation.isPending || Boolean(destroyInProgress)}
-                  size="sm"
-                  variant="danger"
-                  onClick={() => openDestroyDialog(record)}
-                >
-                  <Trash2 className="h-4 w-4" />
-                  {t("deployments.records.destroy.action")}
-                </Button>
-              ) : null}
-              {recoverEligible && record.runtime_status?.display_status === "not_found" ? (
-                <Button
-                  aria-label={t("deployments.records.archive.action")}
-                  disabled={archiveMutation.isPending && archiveMutation.variables === record.id}
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => archiveRecord(record)}
-                >
-                  <Archive className="h-4 w-4" />
-                  {t("deployments.records.archive.action")}
-                </Button>
-              ) : null}
-            </div>
-            {access ? (
-              <div className="space-y-1 border-l border-white/10 pl-2 text-xs">
-                <Badge variant={accessVariant(access.status)}>
-                  {t(`deployments.records.access.status.${access.status}`)}
-                </Badge>
-                <p className="max-w-[260px] text-slate-400">
-                  {t(`deployments.records.access.message.${access.status}`)}
-                </p>
-                {access.available && access.preview_url ? (
+                {access?.available && access.preview_url ? (
                   <Button
                     aria-label={t("deployments.records.access.openAction")}
                     disabled={openingPreviewId !== null}
@@ -830,11 +774,80 @@ export function DeploymentsPage() {
                     {t("deployments.records.access.openAction")}
                   </Button>
                 ) : null}
-                {access.service ? (
-                  <p className="font-mono text-slate-500">
-                    {access.service.name} · {access.service.namespace} · {access.service.port ?? "-"}/{access.service.service_type ?? "-"}
+              </div>
+              {access ? (
+                <div className="space-y-1 border-l border-white/10 pl-2 text-xs">
+                  <Badge variant={accessVariant(access.status)}>
+                    {t(`deployments.records.access.status.${access.status}`)}
+                  </Badge>
+                  <p className="max-w-[260px] text-slate-400">
+                    {t(`deployments.records.access.message.${access.status}`)}
                   </p>
+                  {access.service ? (
+                    <p className="font-mono text-slate-500">
+                      {access.service.name} · {access.service.namespace} · {access.service.port ?? "-"}/{access.service.service_type ?? "-"}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+            {recoverEligible || reconcileEligible ? (
+              <div className="flex flex-wrap gap-2">
+                {recoverEligible ? (
+                  <Button
+                    aria-label={t("deployments.records.recover.action")}
+                    disabled={recoverMutation.isPending && recoverMutation.variables?.id === record.id}
+                    size="sm"
+                    variant="outline"
+                    onClick={() => recoverRecord(record)}
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    {t("deployments.records.recover.action")}
+                  </Button>
                 ) : null}
+                {reconcileEligible ? (
+                  <Button
+                    aria-label={t("deployments.records.reconcile.action")}
+                    disabled={reconcileMutation.isPending && reconcileMutation.variables === record.id}
+                    size="sm"
+                    variant="outline"
+                    onClick={() => reconcileRecord(record)}
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    {t("deployments.records.reconcile.action")}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+            {recoverEligible && record.runtime_status?.display_status === "not_found" ? (
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  aria-label={t("deployments.records.archive.action")}
+                  disabled={archiveMutation.isPending && archiveMutation.variables === record.id}
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => archiveRecord(record)}
+                >
+                  <Archive className="h-4 w-4" />
+                  {t("deployments.records.archive.action")}
+                </Button>
+              </div>
+            ) : null}
+            {destroyEligible ? (
+              <div className="space-y-2 border-t border-red-300/15 pt-2" data-testid="deployment-danger-actions">
+                <p className="text-[11px] font-medium text-red-200/70">
+                  {t("deployments.records.destroy.dangerLabel")}
+                </p>
+                <Button
+                  aria-label={t("deployments.records.destroy.action")}
+                  disabled={destroyMutation.isPending || Boolean(destroyInProgress)}
+                  size="sm"
+                  variant="danger"
+                  onClick={() => openDestroyDialog(record)}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  {t("deployments.records.destroy.action")}
+                </Button>
               </div>
             ) : null}
           </div>
@@ -1157,7 +1170,7 @@ export function DeploymentsPage() {
               {t("deployments.records.destroy.warning")}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="destroy-confirm-name">
+              <Label className="normal-case" htmlFor="destroy-confirm-name">
                 {t("deployments.records.destroy.confirmLabel", { name: destroyTarget.app_name })}
               </Label>
               <Input
