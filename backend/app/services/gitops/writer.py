@@ -6,7 +6,7 @@ import tempfile
 
 from app.services.gitops.errors import GitOpsWriterError
 from app.services.gitops.kustomization import RootKustomizationEditor
-from app.services.gitops.manifests import MANIFEST_FILE_ORDER, generate_workload_manifests
+from app.services.gitops.manifests import MANIFEST_FILE_ORDER, dump_yaml, generate_workload_manifests
 from app.services.gitops.models import WorkloadWriteRequest
 from app.services.gitops.paths import GitOpsRepositoryPaths
 from app.services.gitops.render import RenderValidator, StructuralRenderValidator
@@ -132,6 +132,54 @@ class GitOpsWorkloadWriter:
             raise GitOpsWriterError(
                 "write_failed",
                 "The GitOps workload files could not be recovered safely.",
+            ) from None
+
+        return WorkloadWriteResult(
+            app_name=request.app_name,
+            app_dir=app_dir,
+            written_files=written_files,
+            root_kustomization=self.paths.root_kustomization,
+            changed=True,
+        )
+
+    def update(self, request: WorkloadWriteRequest) -> WorkloadWriteResult:
+        app_dir = self.paths.app_dir(request.app_name)
+        if not app_dir.is_dir():
+            raise GitOpsWriterError("app_missing", "The GitOps workload folder does not exist.")
+
+        generated = generate_workload_manifests(request)
+        self._validate_update_app_dir(app_dir)
+        root_content = self._existing_root_content_for_app(request.app_name)
+        self.render_validator.validate(
+            source_root=self.paths.source_root,
+            app_name=request.app_name,
+            generated_files=generated.files,
+            root_kustomization=root_content,
+        )
+
+        written_files = tuple(app_dir / file_name for file_name in MANIFEST_FILE_ORDER)
+        app_changed = any(
+            not self._matches_content(path, generated.files[path.name])
+            for path in written_files
+        )
+        if not app_changed:
+            return WorkloadWriteResult(
+                app_name=request.app_name,
+                app_dir=app_dir,
+                written_files=written_files,
+                root_kustomization=self.paths.root_kustomization,
+                changed=False,
+            )
+
+        try:
+            for file_name in MANIFEST_FILE_ORDER:
+                target = app_dir / file_name
+                if not self._matches_content(target, generated.files[file_name]):
+                    self._atomic_write(target, generated.files[file_name])
+        except (OSError, UnicodeError):
+            raise GitOpsWriterError(
+                "write_failed",
+                "The GitOps workload files could not be updated safely.",
             ) from None
 
         return WorkloadWriteResult(
@@ -284,6 +332,41 @@ class GitOpsWorkloadWriter:
                     "app_manifest_conflict",
                     "The existing GitOps workload manifest does not match the deterministic recovery output.",
                 )
+
+    def _validate_update_app_dir(self, app_dir: Path) -> None:
+        unexpected_entries = [
+            entry.name
+            for entry in app_dir.iterdir()
+            if entry.name not in MANIFEST_FILE_ORDER or not entry.is_file()
+        ]
+        if unexpected_entries:
+            raise GitOpsWriterError(
+                "unexpected_app_files",
+                "The GitOps workload folder contains files outside the V1 manifest contract.",
+            )
+        missing_files = [
+            file_name
+            for file_name in MANIFEST_FILE_ORDER
+            if not (app_dir / file_name).is_file()
+        ]
+        if missing_files:
+            raise GitOpsWriterError(
+                "app_manifest_missing",
+                "The GitOps workload folder is missing one or more V1 manifest files.",
+            )
+
+    def _existing_root_content_for_app(self, app_name: str) -> str:
+        validated_name = self.paths.app_dir(app_name).name
+        document = RootKustomizationEditor._load_document(self.paths.root_kustomization)
+        resources = RootKustomizationEditor(self.paths)._validated_resources(document)
+        app_entry = f"apps/{validated_name}"
+        if app_entry not in resources:
+            raise GitOpsWriterError(
+                "app_not_registered",
+                "The GitOps workload is not registered in the root Kustomization.",
+            )
+        document["resources"] = sorted(resources)
+        return dump_yaml(document)
 
     def _restore_root_content(self, app_name: str) -> str:
         root_editor = RootKustomizationEditor(self.paths)

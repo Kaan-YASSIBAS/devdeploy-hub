@@ -27,6 +27,8 @@ from app.schemas.archive import ArchiveFilter
 from app.schemas.deployment_record import (
     DeploymentRecordCreate,
     DeploymentRecordDestroyResponse,
+    DeploymentRecordGitOpsUpdate,
+    DeploymentRecordGitOpsUpdateResponse,
     DeploymentRecordRead,
     DeploymentRecordRecoverResponse,
     DeploymentRuntimeCleanupRead,
@@ -57,6 +59,10 @@ from app.services.gitops.deploy_operation import (
     DeployWorkloadOperationRequest,
     DeployWorkloadOperationService,
 )
+from app.services.gitops.update_operation import (
+    UpdateWorkloadOperationRequest,
+    UpdateWorkloadOperationService,
+)
 from app.services.gitops.destroy_operation import (
     DestroyWorkloadOperationRequest,
     DestroyWorkloadOperationResult,
@@ -80,6 +86,7 @@ router = APIRouter(prefix="/deployment-records", tags=["deployment-records"])
 RECOVER_INTERNAL_MESSAGE = "The deployment recovery operation failed unexpectedly."
 RECONCILE_INTERNAL_MESSAGE = "The deployment reconcile operation failed unexpectedly."
 DESTROY_INTERNAL_MESSAGE = "The deployment destroy operation failed unexpectedly."
+UPDATE_INTERNAL_MESSAGE = "The deployment update operation failed unexpectedly."
 RECOVER_ERROR_STATUS_CODES = {
     "validation_failed": status.HTTP_400_BAD_REQUEST,
     "repo_write_failed": status.HTTP_409_CONFLICT,
@@ -88,6 +95,7 @@ RECOVER_ERROR_STATUS_CODES = {
     "push_failed": status.HTTP_502_BAD_GATEWAY,
 }
 DESTROY_ERROR_STATUS_CODES = RECOVER_ERROR_STATUS_CODES
+UPDATE_ERROR_STATUS_CODES = RECOVER_ERROR_STATUS_CODES
 RegenerateAction = Literal["recover", "reconcile"]
 PREVIEW_ALLOWED_METHODS = {"GET", "HEAD", "POST", "OPTIONS"}
 PREVIEW_RUNTIME_AUTH_HEADER = "X-DevDeploy-Preview-Session"
@@ -136,12 +144,25 @@ def get_destroy_workload_operation_service() -> DestroyWorkloadOperationService:
     return DestroyWorkloadOperationService()
 
 
+def get_update_workload_operation_service() -> UpdateWorkloadOperationService:
+    return UpdateWorkloadOperationService()
+
+
 def _deploy_operation_for_repository(
     operation_service: DeployWorkloadOperationService,
     git_adapter: GitAdapter | None,
 ) -> DeployWorkloadOperationService:
     if git_adapter is not None and type(operation_service) is DeployWorkloadOperationService:
         return DeployWorkloadOperationService(git_adapter=git_adapter)
+    return operation_service
+
+
+def _update_operation_for_repository(
+    operation_service: UpdateWorkloadOperationService,
+    git_adapter: GitAdapter | None,
+) -> UpdateWorkloadOperationService:
+    if git_adapter is not None and type(operation_service) is UpdateWorkloadOperationService:
+        return UpdateWorkloadOperationService(git_adapter=git_adapter)
     return operation_service
 
 
@@ -484,6 +505,173 @@ def update_deployment_record(
     current_user: User = Depends(get_current_user),
 ) -> DeploymentRecord:
     return DeploymentRecordService(db).update(deployment_id, payload, current_user)
+
+
+@router.patch(
+    "/{deployment_id}/gitops",
+    response_model=DeploymentRecordGitOpsUpdateResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def update_gitops_deployment_record(
+    deployment_id: int,
+    payload: DeploymentRecordGitOpsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    config: GitOpsDeployRepositoryConfig = Depends(get_gitops_deploy_repository_config),
+    operation_service: UpdateWorkloadOperationService = Depends(
+        get_update_workload_operation_service
+    ),
+    runtime_service: ProductRuntimeStatusService = Depends(get_product_runtime_status_service),
+    drift_service: DeploymentDriftService = Depends(get_deployment_drift_service),
+    reconcile_service: DeploymentReconcileStatusService = Depends(
+        get_deployment_reconcile_status_service
+    ),
+) -> DeploymentRecordGitOpsUpdateResponse | JSONResponse:
+    records = DeploymentRecordService(db)
+    deployment = records.get_owned(deployment_id, current_user)
+    if deployment.archived_at is not None or deployment.desired_state == "destroyed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Archived or destroyed deployment records cannot be updated.",
+        )
+    if not deployment.gitops_manifest_path:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only GitOps-managed deployment records can be updated through this endpoint.",
+        )
+    if deployment.desired_state != "pending":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only active GitOps-managed deployment records can be updated through this endpoint.",
+        )
+
+    merged = {
+        "image": payload.image if payload.image is not None else deployment.image,
+        "replicas": payload.replicas if payload.replicas is not None else deployment.replicas,
+        "container_port": (
+            payload.container_port
+            if payload.container_port is not None
+            else deployment.container_port
+        ),
+        "service_port": payload.service_port if payload.service_port is not None else deployment.service_port,
+        "preview_path": payload.preview_path if payload.preview_path is not None else deployment.preview_path,
+    }
+    changed_fields = {
+        field_name
+        for field_name, value in merged.items()
+        if getattr(deployment, field_name) != value
+    }
+    if not changed_fields:
+        return DeploymentRecordGitOpsUpdateResponse(
+            status="no_changes",
+            deployment_id=deployment.id,
+            app_name=deployment.app_name,
+            commit_sha=deployment.commit_sha,
+            manifest_path=deployment.gitops_manifest_path,
+            deployment=_read_response(deployment, runtime_service, drift_service, reconcile_service),
+            message="The deployment record already matches the requested update.",
+        )
+
+    try:
+        with prepare_gitops_repository(config) as repository:
+            service = _update_operation_for_repository(operation_service, repository.git_adapter)
+            result = service.execute(
+                UpdateWorkloadOperationRequest(
+                    repo_root=repository.repo_root,
+                    source_root_relative=config.source_root_relative,
+                    expected_branch=config.expected_branch,
+                    remote_name=config.remote_name,
+                    remote_branch=config.remote_branch,
+                    app_name=deployment.app_name,
+                    image=merged["image"],
+                    replicas=merged["replicas"],
+                    container_port=merged["container_port"],
+                    service_port=merged["service_port"],
+                    service_type=deployment.service_type,
+                    namespace=deployment.namespace,
+                )
+            )
+    except ManagedGitRepositoryError as error:
+        raise _repository_unavailable_response(error) from None
+    except Exception:
+        response = DeploymentRecordGitOpsUpdateResponse(
+            status="internal_error",
+            deployment_id=deployment.id,
+            app_name=deployment.app_name,
+            commit_sha=deployment.commit_sha,
+            manifest_path=deployment.gitops_manifest_path,
+            message=UPDATE_INTERNAL_MESSAGE,
+            error_code="internal_error",
+        )
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=response.model_dump(),
+        )
+
+    if result.status in {"pushed_waiting_for_argocd", "no_changes"}:
+        try:
+            updated = records.mark_gitops_updated(
+                deployment,
+                source_path=result.source_path,
+                commit_sha=(
+                    result.commit_sha
+                    if result.status == "pushed_waiting_for_argocd"
+                    or {"image", "replicas", "container_port", "service_port"} & changed_fields
+                    else None
+                ),
+                image=merged["image"],
+                replicas=merged["replicas"],
+                container_port=merged["container_port"],
+                service_port=merged["service_port"],
+                preview_path=merged["preview_path"],
+            )
+        except Exception:
+            db.rollback()
+            response = DeploymentRecordGitOpsUpdateResponse(
+                status="internal_error",
+                deployment_id=deployment.id,
+                app_name=deployment.app_name,
+                commit_sha=result.commit_sha or deployment.commit_sha,
+                manifest_path=deployment.gitops_manifest_path,
+                message=(
+                    "The GitOps update succeeded, but the deployment record could not be updated."
+                ),
+                error_code="product_record_persistence_failed",
+            )
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content=response.model_dump(),
+            )
+        return DeploymentRecordGitOpsUpdateResponse(
+            status="updated",
+            deployment_id=updated.id,
+            app_name=updated.app_name,
+            commit_sha=updated.commit_sha,
+            manifest_path=updated.gitops_manifest_path,
+            deployment=_read_response(updated, runtime_service, drift_service, reconcile_service),
+            message=(
+                "The deployment update commit was pushed and is waiting for Argo CD reconciliation."
+                if result.status == "pushed_waiting_for_argocd"
+                else "The deployment record was updated; GitOps manifests already matched the requested state."
+            ),
+        )
+
+    response = DeploymentRecordGitOpsUpdateResponse(
+        status=result.status,
+        deployment_id=deployment.id,
+        app_name=deployment.app_name,
+        commit_sha=result.commit_sha,
+        manifest_path=deployment.gitops_manifest_path,
+        message=sanitize_git_output(result.message),
+        error_code=result.error_code,
+    )
+    return JSONResponse(
+        status_code=UPDATE_ERROR_STATUS_CODES.get(
+            result.status,
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+        ),
+        content=response.model_dump(),
+    )
 
 
 @router.post("/{deployment_id}/archive", response_model=DeploymentRecordRead)

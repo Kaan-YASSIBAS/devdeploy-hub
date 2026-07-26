@@ -152,6 +152,41 @@ class DeploymentRecordUpdate(BaseModel):
         return self
 
 
+class DeploymentRecordGitOpsUpdate(BaseModel):
+    image: str | None = Field(default=None, min_length=1, max_length=512)
+    replicas: int | None = Field(default=None, ge=1, le=20)
+    container_port: int | None = Field(default=None, ge=1, le=65535)
+    service_port: int | None = Field(default=None, ge=1, le=65535)
+    preview_path: str | None = Field(default=None, max_length=2048)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("image")
+    @classmethod
+    def validate_image(cls, value: str | None) -> str | None:
+        return _clean_image(value) if value is not None else None
+
+    @field_validator("preview_path")
+    @classmethod
+    def validate_preview_path(cls, value: str | None) -> str | None:
+        return normalize_preview_path(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def require_update_field(self) -> "DeploymentRecordGitOpsUpdate":
+        if not self.model_fields_set:
+            raise ValueError("At least one deployment update field is required")
+        for field_name in (
+            "image",
+            "replicas",
+            "container_port",
+            "service_port",
+            "preview_path",
+        ):
+            if field_name in self.model_fields_set and getattr(self, field_name) is None:
+                raise ValueError(f"{field_name} cannot be null")
+        return self
+
+
 class DeploymentRecordRead(BaseModel):
     id: int
     owner_id: int
@@ -229,5 +264,25 @@ class DeploymentRecordDestroyResponse(BaseModel):
     commit_sha: str | None = None
     manifest_path: str | None = None
     runtime_cleanup: DeploymentRuntimeCleanupRead | None = None
+    message: str
+    error_code: str | None = None
+
+
+class DeploymentRecordGitOpsUpdateResponse(BaseModel):
+    status: Literal[
+        "updated",
+        "no_changes",
+        "validation_failed",
+        "repo_write_failed",
+        "render_failed",
+        "commit_failed",
+        "push_failed",
+        "internal_error",
+    ]
+    deployment_id: int
+    app_name: str
+    commit_sha: str | None = None
+    manifest_path: str | None = None
+    deployment: DeploymentRecordRead | None = None
     message: str
     error_code: str | None = None

@@ -22,6 +22,7 @@ from app.models.deployment_record import DeploymentRecord
 from app.models.user import User
 from app.services.gitops.deploy_operation import DeployWorkloadOperationResult
 from app.services.gitops.destroy_operation import DestroyWorkloadOperationResult
+from app.services.gitops.update_operation import UpdateWorkloadOperationResult
 from app.services.gitops.status_reader import (
     NamedWorkloadSnapshot,
     ServicePortSnapshot,
@@ -107,6 +108,25 @@ class FakeDestroyOperationService:
             pushed=True,
             commit_sha="e" * 40,
             message="Destroy commit pushed.",
+        )
+
+    def execute(self, request):
+        self.requests.append(request)
+        return self.result
+
+
+class FakeUpdateOperationService:
+    def __init__(self):
+        self.requests = []
+        self.result = UpdateWorkloadOperationResult(
+            status="pushed_waiting_for_argocd",
+            app_name="payments-api",
+            source_path="gitops/workloads/devdeploy-apps",
+            expected_paths=(),
+            committed=True,
+            pushed=True,
+            commit_sha="f" * 40,
+            message="Update commit pushed.",
         )
 
     def execute(self, request):
@@ -233,6 +253,7 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.runtime_reader = FakeWorkloadRuntimeReader()
         self.manifest_reader = FakeGitOpsManifestReader()
         self.recover_operation = FakeRecoverOperationService()
+        self.update_operation = FakeUpdateOperationService()
         self.destroy_operation = FakeDestroyOperationService()
         self.destroy_cleanup = FakeDestroyRuntimeCleanupService()
         self.recovery_verification = FakeRecoveryVerificationService()
@@ -273,6 +294,9 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.app.dependency_overrides[
             deployment_records.get_deploy_workload_operation_service
         ] = lambda: self.recover_operation
+        self.app.dependency_overrides[
+            deployment_records.get_update_workload_operation_service
+        ] = lambda: self.update_operation
         self.app.dependency_overrides[
             deployment_records.get_destroy_workload_operation_service
         ] = lambda: self.destroy_operation
@@ -357,6 +381,16 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()
 
+    def create_gitops_deployment(self, service_id: int | None = None, **overrides) -> dict:
+        return self.create_deployment(
+            service_id,
+            gitops_manifest_path="gitops/workloads/devdeploy-apps/apps/payments-api",
+            commit_sha="a" * 40,
+            desired_state="pending",
+            status_summary="GitOps manifests published",
+            **overrides,
+        )
+
     def test_service_definition_create_list_get_and_update(self) -> None:
         created = self.create_service()
 
@@ -402,6 +436,196 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(updated.status_code, 200)
         self.assertEqual(updated.json()["desired_state"], "pending")
         self.assertEqual(updated.json()["commit_sha"], "a" * 40)
+
+    def test_gitops_deployment_update_publishes_manifest_change_then_updates_domain_record(self) -> None:
+        service = self.create_service()
+        deployment = self.create_gitops_deployment(service["id"])
+
+        response = self.client.patch(
+            f"/api/v1/deployment-records/{deployment['id']}/gitops",
+            json={
+                "image": "ghcr.io/example/payments:v2",
+                "replicas": 3,
+                "container_port": 9090,
+                "service_port": 8080,
+                "preview_path": "ui",
+            },
+        )
+
+        self.assertEqual(response.status_code, 202, response.text)
+        body = response.json()
+        self.assertEqual(body["status"], "updated")
+        self.assertEqual(body["commit_sha"], "f" * 40)
+        updated = body["deployment"]
+        self.assertEqual(updated["image"], "ghcr.io/example/payments:v2")
+        self.assertEqual(updated["replicas"], 3)
+        self.assertEqual(updated["container_port"], 9090)
+        self.assertEqual(updated["service_port"], 8080)
+        self.assertEqual(updated["preview_path"], "/ui")
+        self.assertEqual(updated["service_definition_id"], service["id"])
+
+        self.assertEqual(len(self.update_operation.requests), 1)
+        request = self.update_operation.requests[0]
+        self.assertEqual(request.app_name, "payments-api")
+        self.assertEqual(request.image, "ghcr.io/example/payments:v2")
+        self.assertEqual(request.replicas, 3)
+        self.assertEqual(request.container_port, 9090)
+        self.assertEqual(request.service_port, 8080)
+        self.assertEqual(request.service_type, "ClusterIP")
+        self.assertEqual(request.namespace, "devdeploy-apps")
+
+        refreshed_service = self.client.get(f"/api/v1/services/{service['id']}").json()
+        self.assertEqual(refreshed_service["default_image"], "ghcr.io/example/payments:v2")
+        self.assertEqual(refreshed_service["default_replicas"], 3)
+        self.assertEqual(refreshed_service["default_port"], 8080)
+
+    def test_gitops_deployment_update_supports_partial_replica_update(self) -> None:
+        deployment = self.create_gitops_deployment()
+
+        response = self.client.patch(
+            f"/api/v1/deployment-records/{deployment['id']}/gitops",
+            json={"replicas": 4},
+        )
+
+        self.assertEqual(response.status_code, 202, response.text)
+        updated = response.json()["deployment"]
+        self.assertEqual(updated["image"], deployment["image"])
+        self.assertEqual(updated["replicas"], 4)
+        self.assertEqual(updated["container_port"], deployment["container_port"])
+        self.assertEqual(updated["service_port"], deployment["service_port"])
+        self.assertEqual(self.update_operation.requests[0].replicas, 4)
+        self.assertEqual(self.update_operation.requests[0].image, deployment["image"])
+
+    def test_gitops_deployment_update_preview_path_only_preserves_commit_and_updates_access(self) -> None:
+        deployment = self.create_gitops_deployment(preview_path="/")
+        self.update_operation.result = UpdateWorkloadOperationResult(
+            status="no_changes",
+            app_name="payments-api",
+            source_path="gitops/workloads/devdeploy-apps",
+            expected_paths=(),
+            committed=False,
+            pushed=False,
+            commit_sha="b" * 40,
+            message="No manifest changes.",
+        )
+        self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = self.ready_workload_snapshot()
+
+        response = self.client.patch(
+            f"/api/v1/deployment-records/{deployment['id']}/gitops",
+            json={"preview_path": "ui"},
+        )
+
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(response.json()["deployment"]["preview_path"], "/ui")
+        self.assertEqual(response.json()["deployment"]["commit_sha"], deployment["commit_sha"])
+        access = self.client.get(f"/api/v1/deployment-records/{deployment['id']}/access")
+        self.assertEqual(access.status_code, 200, access.text)
+        self.assertEqual(
+            access.json()["preview_url"],
+            f"/api/v1/deployment-records/{deployment['id']}/preview/ui",
+        )
+
+    def test_gitops_deployment_update_noop_does_not_call_gitops_operation(self) -> None:
+        deployment = self.create_gitops_deployment(preview_path="/")
+
+        response = self.client.patch(
+            f"/api/v1/deployment-records/{deployment['id']}/gitops",
+            json={
+                "image": deployment["image"],
+                "replicas": deployment["replicas"],
+                "container_port": deployment["container_port"],
+                "service_port": deployment["service_port"],
+                "preview_path": "/",
+            },
+        )
+
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(response.json()["status"], "no_changes")
+        self.assertEqual(self.update_operation.requests, [])
+
+    def test_gitops_deployment_update_rejects_invalid_preview_path_and_port(self) -> None:
+        deployment = self.create_gitops_deployment()
+
+        invalid_preview = self.client.patch(
+            f"/api/v1/deployment-records/{deployment['id']}/gitops",
+            json={"preview_path": "https://attacker.example"},
+        )
+        invalid_port = self.client.patch(
+            f"/api/v1/deployment-records/{deployment['id']}/gitops",
+            json={"service_port": 70000},
+        )
+
+        self.assertEqual(invalid_preview.status_code, 422, invalid_preview.text)
+        self.assertEqual(invalid_port.status_code, 422, invalid_port.text)
+        self.assertEqual(self.update_operation.requests, [])
+
+    def test_gitops_deployment_update_rejects_archived_destroyed_and_non_gitops_records(self) -> None:
+        non_gitops = self.create_deployment()
+        draft_gitops = self.create_deployment(
+            app_name="draft-api",
+            gitops_manifest_path="gitops/workloads/devdeploy-apps/apps/draft-api",
+            commit_sha="a" * 40,
+            desired_state="draft",
+        )
+        gitops = self.create_gitops_deployment(app_name="archived-api")
+        destroyed = self.create_gitops_deployment(app_name="destroyed-api")
+        archived_record = self.db.get(DeploymentRecord, gitops["id"])
+        destroyed_record = self.db.get(DeploymentRecord, destroyed["id"])
+        self.assertIsNotNone(archived_record)
+        self.assertIsNotNone(destroyed_record)
+        archived_record.archived_at = self.fixed_datetime()
+        destroyed_record.desired_state = "destroyed"
+        self.db.commit()
+
+        non_gitops_response = self.client.patch(
+            f"/api/v1/deployment-records/{non_gitops['id']}/gitops",
+            json={"replicas": 3},
+        )
+        draft_gitops_response = self.client.patch(
+            f"/api/v1/deployment-records/{draft_gitops['id']}/gitops",
+            json={"replicas": 3},
+        )
+        archived_response = self.client.patch(
+            f"/api/v1/deployment-records/{gitops['id']}/gitops",
+            json={"replicas": 3},
+        )
+        destroyed_response = self.client.patch(
+            f"/api/v1/deployment-records/{destroyed['id']}/gitops",
+            json={"replicas": 3},
+        )
+
+        self.assertEqual(non_gitops_response.status_code, 409, non_gitops_response.text)
+        self.assertEqual(draft_gitops_response.status_code, 409, draft_gitops_response.text)
+        self.assertEqual(archived_response.status_code, 409, archived_response.text)
+        self.assertEqual(destroyed_response.status_code, 409, destroyed_response.text)
+        self.assertEqual(self.update_operation.requests, [])
+
+    def test_gitops_deployment_update_failure_does_not_update_domain_record(self) -> None:
+        deployment = self.create_gitops_deployment()
+        self.update_operation.result = UpdateWorkloadOperationResult(
+            status="push_failed",
+            app_name="payments-api",
+            source_path="gitops/workloads/devdeploy-apps",
+            expected_paths=(),
+            committed=True,
+            pushed=False,
+            commit_sha="f" * 40,
+            message="remote rejected token=secret-value",
+            error_code="git_push_failed",
+        )
+
+        response = self.client.patch(
+            f"/api/v1/deployment-records/{deployment['id']}/gitops",
+            json={"image": "ghcr.io/example/payments:v2"},
+        )
+
+        self.assertEqual(response.status_code, 502, response.text)
+        self.assertNotIn("secret-value", response.text)
+        self.db.expire_all()
+        record = self.db.get(DeploymentRecord, deployment["id"])
+        self.assertIsNotNone(record)
+        self.assertEqual(record.image, deployment["image"])
+        self.assertEqual(record.commit_sha, deployment["commit_sha"])
 
     def test_deployment_record_create_reactivates_archived_service_definition(self) -> None:
         service = self.create_service("payments-api")

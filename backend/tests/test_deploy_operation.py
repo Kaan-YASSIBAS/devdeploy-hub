@@ -15,6 +15,10 @@ from app.services.gitops.destroy_operation import (
 )
 from app.services.gitops.errors import GitOpsWriterError
 from app.services.gitops.git_adapter import _GitCommandResult, GitAdapter
+from app.services.gitops.update_operation import (
+    UpdateWorkloadOperationRequest,
+    UpdateWorkloadOperationService,
+)
 
 
 ROOT_KUSTOMIZATION = """apiVersion: kustomize.config.k8s.io/v1beta1
@@ -305,6 +309,99 @@ class DeployWorkloadOperationTestCase(unittest.TestCase):
         self.assertFalse(second.pushed)
         self.assertEqual(second.commit_sha, first_head)
         self.assertEqual(self._git(self.repo_root, "rev-parse", "HEAD").strip(), first_head)
+
+    def update_request(self, **overrides) -> UpdateWorkloadOperationRequest:
+        data = {
+            "repo_root": self.repo_root,
+            "app_name": "payment-api",
+            "image": "ghcr.io/example/payment-api:v2.0.0",
+            "replicas": 3,
+            "container_port": 9090,
+            "service_port": 8080,
+        }
+        data.update(overrides)
+        return UpdateWorkloadOperationRequest(**data)
+
+    def test_update_operation_rewrites_existing_manifest_and_uses_scoped_commit(self) -> None:
+        created = DeployWorkloadOperationService().execute(self.request())
+        self.assertEqual(created.status, "pushed_waiting_for_argocd")
+
+        result = UpdateWorkloadOperationService().execute(self.update_request())
+
+        self.assertEqual(result.status, "pushed_waiting_for_argocd", result.message)
+        self.assertTrue(result.committed)
+        self.assertTrue(result.pushed)
+        self.assertEqual(
+            self._git(self.repo_root, "show", "-s", "--format=%s", "HEAD").strip(),
+            "deploy: update payment-api workload",
+        )
+        committed_paths = set(
+            self._git(
+                self.remote,
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                result.commit_sha or "",
+            ).splitlines()
+        )
+        self.assertEqual(
+            committed_paths,
+            {
+                "gitops/workloads/devdeploy-apps/apps/payment-api/deployment.yaml",
+                "gitops/workloads/devdeploy-apps/apps/payment-api/service.yaml",
+            },
+        )
+
+        deployment = yaml.safe_load(
+            (self.source_root / "apps" / "payment-api" / "deployment.yaml").read_text(encoding="utf-8")
+        )
+        service = yaml.safe_load(
+            (self.source_root / "apps" / "payment-api" / "service.yaml").read_text(encoding="utf-8")
+        )
+        container = deployment["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual(deployment["spec"]["replicas"], 3)
+        self.assertEqual(container["image"], "ghcr.io/example/payment-api:v2.0.0")
+        self.assertEqual(container["ports"][0]["containerPort"], 9090)
+        self.assertEqual(service["spec"]["ports"][0]["port"], 8080)
+        self.assertEqual(service["spec"]["ports"][0]["targetPort"], "http")
+        self.assertEqual(
+            yaml.safe_load((self.source_root / "kustomization.yaml").read_text(encoding="utf-8"))[
+                "resources"
+            ],
+            ["apps/payment-api"],
+        )
+
+    def test_update_operation_keeps_matching_manifest_without_empty_commit(self) -> None:
+        created = DeployWorkloadOperationService().execute(
+            self.request(write_mode="recover")
+        )
+        self.assertEqual(created.status, "pushed_waiting_for_argocd")
+        head = self._git(self.repo_root, "rev-parse", "HEAD").strip()
+
+        result = UpdateWorkloadOperationService().execute(
+            self.update_request(
+                image=self.request().image,
+                replicas=self.request().replicas,
+                container_port=self.request().container_port,
+                service_port=self.request().service_port,
+            )
+        )
+
+        self.assertEqual(result.status, "no_changes")
+        self.assertFalse(result.committed)
+        self.assertFalse(result.pushed)
+        self.assertEqual(result.commit_sha, head)
+        self.assertEqual(self._git(self.repo_root, "rev-parse", "HEAD").strip(), head)
+
+    def test_update_operation_rejects_missing_app_without_commit(self) -> None:
+        result = UpdateWorkloadOperationService().execute(self.update_request())
+
+        self.assertEqual(result.status, "repo_write_failed")
+        self.assertEqual(result.error_code, "app_missing")
+        self.assertFalse(result.committed)
+        self.assertFalse(result.pushed)
+        self.assertEqual(self._git(self.repo_root, "rev-parse", "HEAD").strip(), self.initial_sha)
 
     def test_commit_failure_stops_before_push(self) -> None:
         adapter = CommitFailureGitAdapter()

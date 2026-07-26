@@ -159,6 +159,46 @@ class DeploymentRecordService:
         self.db.refresh(updated)
         return self.deployments.get_by_id(updated.id) or updated
 
+    def mark_gitops_updated(
+        self,
+        deployment: DeploymentRecord,
+        *,
+        source_path: str,
+        commit_sha: str | None,
+        image: str,
+        replicas: int,
+        container_port: int,
+        service_port: int,
+        preview_path: str,
+    ) -> DeploymentRecord:
+        data = {
+            "image": image,
+            "replicas": replicas,
+            "container_port": container_port,
+            "service_port": service_port,
+            "preview_path": preview_path,
+            "gitops_manifest_path": build_manifest_path(source_path, deployment.app_name),
+            "desired_state": "pending",
+            "status_summary": "GitOps update manifests published",
+        }
+        if commit_sha is not None:
+            data["commit_sha"] = commit_sha.lower()
+        updated = self.deployments.update(deployment, data)
+        if updated.service_definition_id is not None:
+            service = self.services.get_by_id(updated.service_definition_id)
+            if service is not None:
+                service_updates = {
+                    "default_image": image,
+                    "default_replicas": replicas,
+                    "default_port": service_port,
+                }
+                if service.archived_at is not None:
+                    service_updates["archived_at"] = None
+                self.services.update(service, service_updates)
+        self.db.commit()
+        self.db.refresh(updated)
+        return self.deployments.get_by_id(updated.id) or updated
+
     def mark_recovered(
         self,
         deployment: DeploymentRecord,
