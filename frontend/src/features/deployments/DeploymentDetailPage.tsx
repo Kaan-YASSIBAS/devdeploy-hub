@@ -1,5 +1,5 @@
 import { RotateCcw } from "lucide-react";
-import { useParams } from "react-router-dom";
+import { useParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { applicationsApi, deploymentsApi } from "@/api/client";

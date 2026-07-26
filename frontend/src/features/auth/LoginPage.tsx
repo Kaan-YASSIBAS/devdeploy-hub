@@ -1,6 +1,6 @@
 import { FormEvent, useState } from "react";
 import { ArrowLeft, ShieldCheck } from "lucide-react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";

@@ -5,7 +5,7 @@ import { defineConfig } from "vite";
 const chunkGroups: Record<string, string[]> = {
   charts: ["recharts"],
   motion: ["framer-motion"],
-  react: ["react", "react-dom", "react-router-dom"],
+  react: ["react", "react-dom", "react-router"],
   i18n: ["i18next", "react-i18next", "i18next-browser-languagedetector"],
   ui: ["lucide-react", "sonner"],
   query: ["@tanstack/react-query"]

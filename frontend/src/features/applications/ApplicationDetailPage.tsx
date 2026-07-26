@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Boxes, Clock, ExternalLink, GitBranch, Package, Rocket, Server } from "lucide-react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";

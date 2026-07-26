@@ -1,5 +1,5 @@
 import { RotateCcw, Trash2 } from "lucide-react";
-import { useParams } from "react-router-dom";
+import { useParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";

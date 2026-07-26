@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Outlet } from "react-router-dom";
+import { Outlet } from "react-router";
 import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Sidebar } from "@/components/layout/Sidebar";

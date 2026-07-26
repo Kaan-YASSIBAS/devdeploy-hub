@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Navigate, Outlet, useLocation } from "react-router-dom";
+import { Navigate, Outlet, useLocation } from "react-router";
 import { platformApi } from "@/api/client";
 import { RouteLoader } from "@/app/RouteLoader";
 import { useAuth } from "@/features/auth/useAuth";
