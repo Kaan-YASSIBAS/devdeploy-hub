@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/managed-by: devdeploy
     app.kubernetes.io/part-of: devdeploy-workloads
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: podinfo
