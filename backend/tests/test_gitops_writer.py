@@ -349,6 +349,65 @@ class GitOpsWriterTestCase(unittest.TestCase):
         self.assert_error_code("unexpected_app_files", lambda: writer.destroy("nginx-demo"))
         self.assertTrue((app_dir / "secret.yaml").exists())
 
+    def test_writer_update_touches_only_target_app_manifest_files(self) -> None:
+        writer = GitOpsWorkloadWriter(self.source_root)
+        payments_request = WorkloadWriteRequest(
+            app_name="payments-api",
+            image="ghcr.io/example/payments:v1",
+        )
+        catalog_request = WorkloadWriteRequest(
+            app_name="catalog-api",
+            image="ghcr.io/example/catalog:v1",
+            replicas=2,
+            container_port=8080,
+            service_port=8080,
+        )
+        self.assertTrue(writer.recover(payments_request).changed)
+        self.assertTrue(writer.recover(catalog_request).changed)
+        root_before = (self.source_root / "kustomization.yaml").read_text(encoding="utf-8")
+        catalog_dir = self.apps_root / "catalog-api"
+        catalog_contents_before = {
+            path.name: path.read_text(encoding="utf-8")
+            for path in catalog_dir.iterdir()
+            if path.is_file()
+        }
+
+        result = writer.update(
+            WorkloadWriteRequest(
+                app_name="payments-api",
+                image="ghcr.io/example/payments:v2",
+                replicas=3,
+                container_port=9090,
+                service_port=9090,
+            )
+        )
+
+        self.assertTrue(result.changed)
+        self.assertEqual(
+            sorted(path.name for path in result.written_files),
+            ["deployment.yaml", "kustomization.yaml", "service.yaml"],
+        )
+        self.assertTrue(all(path.parent == self.apps_root / "payments-api" for path in result.written_files))
+        self.assertEqual((self.source_root / "kustomization.yaml").read_text(encoding="utf-8"), root_before)
+        self.assertEqual(
+            {
+                path.name: path.read_text(encoding="utf-8")
+                for path in catalog_dir.iterdir()
+                if path.is_file()
+            },
+            catalog_contents_before,
+        )
+        updated_deployment = yaml.safe_load(
+            (self.apps_root / "payments-api" / "deployment.yaml").read_text(encoding="utf-8")
+        )
+        updated_service = yaml.safe_load(
+            (self.apps_root / "payments-api" / "service.yaml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(updated_deployment["spec"]["replicas"], 3)
+        self.assertEqual(updated_deployment["spec"]["template"]["spec"]["containers"][0]["image"], "ghcr.io/example/payments:v2")
+        self.assertEqual(updated_deployment["spec"]["template"]["spec"]["containers"][0]["ports"][0]["containerPort"], 9090)
+        self.assertEqual(updated_service["spec"]["ports"][0]["port"], 9090)
+
     def test_writer_fails_when_app_folder_exists(self) -> None:
         (self.apps_root / "nginx-demo").mkdir()
         writer = GitOpsWorkloadWriter(self.source_root)

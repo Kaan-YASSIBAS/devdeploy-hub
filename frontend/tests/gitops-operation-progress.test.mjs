@@ -39,8 +39,8 @@ const cleanupEffect = sourceBlock(
 );
 const updateEffect = sourceBlock(
   deployments,
-  "if (\n      !updateInProgress",
-  "const filteredRecords"
+  "const record = records.find((item) => item.id === updateInProgress.record.id);",
+  "}, [queryClient, records, recordsQuery.dataUpdatedAt, recordsQuery.isSuccess, t, updateInProgress]);"
 );
 
 test("create flow shows GitOps operation progress while submit is in progress", () => {
