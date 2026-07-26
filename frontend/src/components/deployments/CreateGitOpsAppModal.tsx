@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { GitOpsOperationTimeline } from "@/components/deployments/GitOpsOperationTimeline";
+import { normalizePreviewPath } from "@/lib/preview-path";
 import type { GitOpsAppDeployInput } from "@/types";
 
 type CreateGitOpsAppModalProps = {
@@ -16,55 +17,6 @@ type CreateGitOpsAppModalProps = {
 };
 
 const APP_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
-
-function normalizePreviewPath(value: string) {
-  const candidate = value.trim();
-  if (!candidate) return "/";
-  const lowered = candidate.toLowerCase().replace(/^\/+/, "");
-  if (
-    candidate.length > 2048 ||
-    candidate.startsWith("//") ||
-    lowered.startsWith("http://") ||
-    lowered.startsWith("https://") ||
-    candidate.includes("\\") ||
-    candidate.startsWith("?") ||
-    candidate.startsWith("#") ||
-    candidate.includes("?") ||
-    candidate.includes("#")
-  ) {
-    return null;
-  }
-
-  let decoded = candidate;
-  for (let index = 0; index < 3; index += 1) {
-    try {
-      const nextValue = decodeURIComponent(decoded);
-      if (nextValue === decoded) break;
-      decoded = nextValue;
-    } catch {
-      return null;
-    }
-  }
-
-  const decodedLowered = decoded.toLowerCase().replace(/^\/+/, "");
-  if (
-    decoded.startsWith("//") ||
-    decodedLowered.startsWith("http://") ||
-    decodedLowered.startsWith("https://") ||
-    decoded.includes("\\") ||
-    decoded.includes("?") ||
-    decoded.includes("#")
-  ) {
-    return null;
-  }
-
-  const normalized = decoded.replace(/^\/+/, "");
-  if (!normalized) return "/";
-  if (normalized.split("/").some((segment) => segment === "." || segment === "..")) {
-    return null;
-  }
-  return `/${normalized}`;
-}
 export function CreateGitOpsAppModal({
   open,
   onOpenChange,

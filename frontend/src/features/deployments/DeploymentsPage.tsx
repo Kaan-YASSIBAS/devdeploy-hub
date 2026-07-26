@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Archive, Database, ExternalLink, Plus, RefreshCw, Rocket, RotateCcw, Search, Trash2 } from "lucide-react";
+import { Archive, Database, ExternalLink, Pencil, Plus, RefreshCw, Rocket, RotateCcw, Search, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -11,6 +11,7 @@ import {
   serviceDefinitionsApi
 } from "@/api/client";
 import { CreateGitOpsAppModal } from "@/components/deployments/CreateGitOpsAppModal";
+import { EditGitOpsDeploymentModal } from "@/components/deployments/EditGitOpsDeploymentModal";
 import { GitOpsDeployStatusCard } from "@/components/deployments/GitOpsDeployStatusCard";
 import { GitOpsOperationTimeline } from "@/components/deployments/GitOpsOperationTimeline";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -28,6 +29,7 @@ import type {
   DeploymentAccess,
   DeploymentAccessStatus,
   DeploymentRecord,
+  DeploymentRecordGitOpsUpdateInput,
   DeploymentRuntimeStatus,
   GitOpsAppDeployInput,
   GitOpsAppDeployResponse,
@@ -39,6 +41,8 @@ const STATUS_POLL_INTERVAL_MS = 3_000;
 const STATUS_POLL_TIMEOUT_MS = 120_000;
 const DELETE_CLEANUP_TIMEOUT_MS = 120_000;
 const DELETE_COMPLETED_DISMISS_MS = 2_500;
+const UPDATE_RECONCILE_TIMEOUT_MS = 120_000;
+const UPDATE_COMPLETED_DISMISS_MS = 2_500;
 
 type DestroyProgressPhase = "requesting" | "cleanup_pending" | "completed" | "timed_out";
 
@@ -48,11 +52,32 @@ type DestroyProgressState = {
   startedAt: number;
 };
 
+type UpdateProgressPhase = "requesting" | "waiting_reconcile" | "completed" | "timed_out";
+
+type UpdateProgressState = {
+  record: DeploymentRecord;
+  expected: {
+    image: string;
+    replicas: number;
+    container_port: number;
+    service_port: number;
+    preview_path: string;
+  };
+  phase: UpdateProgressPhase;
+  startedAt: number;
+};
+
 function runtimeIdentity(namespace: string, name: string) {
   return `${namespace}/${name}`.toLowerCase();
 }
 
 function deleteProgressStep(phase: DestroyProgressPhase): number {
+  if (phase === "requesting") return 0;
+  if (phase === "completed") return 4;
+  return 3;
+}
+
+function updateProgressStep(phase: UpdateProgressPhase): number {
   if (phase === "requesting") return 0;
   if (phase === "completed") return 4;
   return 3;
@@ -134,6 +159,14 @@ function canDestroy(record: DeploymentRecord) {
   return Boolean(record.gitops_manifest_path || record.commit_sha || hasPublishedGitOpsSummary(record.status_summary));
 }
 
+function canEditGitOps(record: DeploymentRecord) {
+  return Boolean(
+    !record.archived_at &&
+      record.desired_state === "pending" &&
+      record.gitops_manifest_path
+  );
+}
+
 function canRecoverDestroyed(record: DeploymentRecord) {
   return Boolean(
     record.archived_at &&
@@ -152,19 +185,24 @@ export function DeploymentsPage() {
   const [pollTimedOut, setPollTimedOut] = useState(false);
   const [accessByDeployment, setAccessByDeployment] = useState<Record<number, DeploymentAccess>>({});
   const [openingPreviewId, setOpeningPreviewId] = useState<number | null>(null);
+  const [editTarget, setEditTarget] = useState<DeploymentRecord | null>(null);
+  const [updateInProgress, setUpdateInProgress] = useState<UpdateProgressState | null>(null);
   const [destroyTarget, setDestroyTarget] = useState<DeploymentRecord | null>(null);
   const [destroyConfirmName, setDestroyConfirmName] = useState("");
   const [destroyInProgress, setDestroyInProgress] = useState<DestroyProgressState | null>(null);
   const [recoverDestroyedTarget, setRecoverDestroyedTarget] = useState<DeploymentRecord | null>(null);
   const [recoverInProgress, setRecoverInProgress] = useState<DeploymentRecord | null>(null);
   const destroyToastId = useRef<ReturnType<typeof toast.loading> | undefined>(undefined);
+  const updateToastId = useRef<ReturnType<typeof toast.loading> | undefined>(undefined);
   const recoverToastId = useRef<ReturnType<typeof toast.loading> | undefined>(undefined);
   const deleteCleanupPolling =
     destroyInProgress?.phase === "cleanup_pending" || destroyInProgress?.phase === "timed_out";
+  const updateReconcilePolling =
+    updateInProgress?.phase === "waiting_reconcile" || updateInProgress?.phase === "timed_out";
   const recordsQuery = useQuery({
     queryKey: ["deployment-records", archiveFilter],
     queryFn: () => deploymentRecordsApi.list({ archiveFilter }),
-    refetchInterval: deleteCleanupPolling ? STATUS_POLL_INTERVAL_MS : false
+    refetchInterval: deleteCleanupPolling || updateReconcilePolling ? STATUS_POLL_INTERVAL_MS : false
   });
   const showUntracked = archiveFilter !== "archived";
   const untrackedQuery = useQuery({
@@ -306,6 +344,61 @@ export function DeploymentsPage() {
     if (window.confirm(t("deployments.records.reconcile.confirm"))) {
       reconcileMutation.mutate(record.id);
     }
+  };
+
+  const updateMutation = useMutation({
+    mutationFn: ({ record, input }: { record: DeploymentRecord; input: DeploymentRecordGitOpsUpdateInput }) =>
+      deploymentRecordsApi.updateGitOps(record.id, input),
+    onMutate: ({ record, input }) => {
+      const expected = {
+        image: input.image ?? record.image,
+        replicas: input.replicas ?? record.replicas,
+        container_port: input.container_port ?? record.container_port,
+        service_port: input.service_port ?? record.service_port,
+        preview_path: input.preview_path ?? record.preview_path
+      };
+      setUpdateInProgress({ record, expected, phase: "requesting", startedAt: Date.now() });
+      setEditTarget(null);
+      updateToastId.current = toast.loading(t("deployments.records.update.progress"));
+    },
+    onSuccess: async (response, { record }) => {
+      if (response.status === "no_changes") {
+        toast.success(t("deployments.records.update.noChanges"), { id: updateToastId.current });
+        updateToastId.current = undefined;
+        setUpdateInProgress((current) =>
+          current?.record.id === record.id
+            ? { ...current, phase: "completed" }
+            : current
+        );
+      } else {
+        toast.loading(t("deployments.records.update.progress"), { id: updateToastId.current });
+        setUpdateInProgress((current) =>
+          current?.record.id === record.id
+            ? { ...current, phase: "waiting_reconcile" }
+            : current
+        );
+      }
+      await queryClient.invalidateQueries({ queryKey: ["deployment-records"] });
+      await queryClient.invalidateQueries({ queryKey: ["service-definitions"] });
+      await queryClient.invalidateQueries({ queryKey: ["untracked-deployments"] });
+      await queryClient.invalidateQueries({ queryKey: ["untracked-services"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      await queryClient.invalidateQueries({ queryKey: ["user-summary"] });
+    },
+    onError: (error) => {
+      toast.error(t(deployErrorKey(getApiErrorStatus(error))), { id: updateToastId.current });
+      setUpdateInProgress(null);
+      updateToastId.current = undefined;
+    }
+  });
+
+  const openEditDialog = (record: DeploymentRecord) => {
+    setEditTarget(record);
+  };
+
+  const closeEditDialog = () => {
+    if (updateMutation.isPending) return;
+    setEditTarget(null);
   };
 
   const destroyMutation = useMutation({
@@ -540,6 +633,85 @@ export function DeploymentsPage() {
     return () => window.clearTimeout(timeout);
   }, [destroyInProgress?.phase]);
 
+  useEffect(() => {
+    if (
+      !updateInProgress ||
+      (updateInProgress.phase !== "waiting_reconcile" && updateInProgress.phase !== "timed_out")
+    ) {
+      return;
+    }
+
+    const record = records.find((item) => item.id === updateInProgress.record.id);
+    const recordsReady = recordsQuery.isSuccess && recordsQuery.dataUpdatedAt >= updateInProgress.startedAt;
+    if (!recordsReady || !record) {
+      return;
+    }
+
+    const dbMatches =
+      record.image === updateInProgress.expected.image &&
+      record.replicas === updateInProgress.expected.replicas &&
+      record.container_port === updateInProgress.expected.container_port &&
+      record.service_port === updateInProgress.expected.service_port &&
+      record.preview_path === updateInProgress.expected.preview_path;
+    const runtime = record.runtime_status;
+    const servicePortMatches =
+      runtime?.service_ports?.some((port) => port.port === updateInProgress.expected.service_port) ?? false;
+    const runtimeMatches =
+      runtime?.display_status === "running" &&
+      runtime.deployment_found &&
+      runtime.service_found &&
+      runtime.desired_replicas === updateInProgress.expected.replicas &&
+      (runtime.ready_replicas ?? 0) >= updateInProgress.expected.replicas &&
+      (runtime.available_replicas ?? 0) >= updateInProgress.expected.replicas &&
+      servicePortMatches;
+    const reconcileMatches = record.reconcile_status?.status === "synced";
+
+    if (!dbMatches || !runtimeMatches || !reconcileMatches) {
+      return;
+    }
+
+    toast.success(t("deployments.records.update.success"), { id: updateToastId.current });
+    updateToastId.current = undefined;
+    setUpdateInProgress((current) =>
+      current?.record.id === updateInProgress.record.id
+        ? { ...current, phase: "completed" }
+        : current
+    );
+    void queryClient.invalidateQueries({ queryKey: ["deployment-records"] });
+    void queryClient.invalidateQueries({ queryKey: ["service-definitions"] });
+    void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+    void queryClient.invalidateQueries({ queryKey: ["user-summary"] });
+  }, [queryClient, records, recordsQuery.dataUpdatedAt, recordsQuery.isSuccess, t, updateInProgress]);
+
+  useEffect(() => {
+    if (!updateInProgress || updateInProgress.phase !== "waiting_reconcile") {
+      return;
+    }
+
+    const elapsed = Date.now() - updateInProgress.startedAt;
+    const remaining = Math.max(0, UPDATE_RECONCILE_TIMEOUT_MS - elapsed);
+    const timeout = window.setTimeout(() => {
+      toast.warning(t("deployments.records.update.timeout"), { id: updateToastId.current });
+      updateToastId.current = undefined;
+      setUpdateInProgress((current) =>
+        current?.record.id === updateInProgress.record.id
+          ? { ...current, phase: "timed_out" }
+          : current
+      );
+    }, remaining);
+
+    return () => window.clearTimeout(timeout);
+  }, [t, updateInProgress]);
+
+  useEffect(() => {
+    if (updateInProgress?.phase !== "completed") {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setUpdateInProgress(null), UPDATE_COMPLETED_DISMISS_MS);
+    return () => window.clearTimeout(timeout);
+  }, [updateInProgress?.phase]);
+
   const filteredRecords = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) {
@@ -747,6 +919,7 @@ export function DeploymentsPage() {
         const recoverEligible = canRecover(record);
         const reconcileEligible = canReconcile(record);
         const destroyEligible = canDestroy(record);
+        const editEligible = canEditGitOps(record);
         const access = accessByDeployment[record.id];
         return (
           <div className="min-w-[220px] space-y-3">
@@ -791,6 +964,20 @@ export function DeploymentsPage() {
                 </div>
               ) : null}
             </div>
+            {editEligible ? (
+              <div className="flex flex-wrap gap-2" data-testid="deployment-edit-actions">
+                <Button
+                  aria-label={t("deployments.records.update.action")}
+                  disabled={updateMutation.isPending || Boolean(updateInProgress)}
+                  size="sm"
+                  variant="outline"
+                  onClick={() => openEditDialog(record)}
+                >
+                  <Pencil className="h-4 w-4" />
+                  {t("deployments.records.update.action")}
+                </Button>
+              </div>
+            ) : null}
             {recoverEligible || reconcileEligible ? (
               <div className="flex flex-wrap gap-2">
                 {recoverEligible ? (
@@ -1015,6 +1202,24 @@ export function DeploymentsPage() {
         </div>
       ) : null}
 
+      {updateInProgress ? (
+        <div className="mb-5 flex items-start gap-3 rounded-lg border border-cyan-300/20 bg-cyan-400/[0.08] px-4 py-3 text-sm text-cyan-50">
+          <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-cyan-200" />
+          <div className="min-w-0 flex-1 space-y-3">
+            <div>
+              <p className="font-medium text-white">{t("deployments.records.update.progressTitle")}</p>
+              <p className="text-cyan-100/90">{t("deployments.records.update.progress")}</p>
+            </div>
+            <GitOpsOperationTimeline
+              activeStep={updateProgressStep(updateInProgress.phase)}
+              completed={updateInProgress.phase === "completed"}
+              kind="update"
+              timedOut={updateInProgress.phase === "timed_out"}
+            />
+          </div>
+        </div>
+      ) : null}
+
       {recoverInProgress ? (
         <div className="mb-5 flex items-start gap-3 rounded-lg border border-sky-300/20 bg-sky-400/[0.08] px-4 py-3 text-sm text-sky-50">
           <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-sky-200" />
@@ -1108,6 +1313,16 @@ export function DeploymentsPage() {
         open={gitOpsModalOpen}
         onDeploy={(input) => gitOpsMutation.mutateAsync(input)}
         onOpenChange={setGitOpsModalOpen}
+      />
+
+      <EditGitOpsDeploymentModal
+        deployment={editTarget}
+        isSubmitting={updateMutation.isPending}
+        open={Boolean(editTarget)}
+        onOpenChange={(open) => {
+          if (!open) closeEditDialog();
+        }}
+        onUpdate={(record, input) => updateMutation.mutateAsync({ record, input })}
       />
 
       <Dialog

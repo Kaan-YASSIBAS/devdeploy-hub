@@ -16,6 +16,8 @@ import type {
   DeploymentRecord,
   DeploymentAccess,
   DeploymentRecordDestroyResponse,
+  DeploymentRecordGitOpsUpdateInput,
+  DeploymentRecordGitOpsUpdateResponse,
   DeploymentRecordRecoverResponse,
   DeploymentRecordUpdateInput,
   DeploymentStatusUpdateInput,
@@ -262,6 +264,13 @@ export const deploymentRecordsApi = {
   },
   async update(id: number, input: DeploymentRecordUpdateInput) {
     const { data } = await apiClient.patch<DeploymentRecord>(`/deployment-records/${id}`, input);
+    return data;
+  },
+  async updateGitOps(id: number, input: DeploymentRecordGitOpsUpdateInput) {
+    const { data } = await apiClient.patch<DeploymentRecordGitOpsUpdateResponse>(
+      `/deployment-records/${id}/gitops`,
+      input
+    );
     return data;
   },
   async archive(id: number) {

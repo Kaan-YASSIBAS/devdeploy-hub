@@ -548,6 +548,35 @@
         "noChanges": "Deployment is already aligned.",
         "error": "Reconcile failed."
       },
+      "update": {
+        "action": "Edit",
+        "title": "Edit deployment",
+        "description": "Update {{name}} through the safe DevDeploy GitOps flow.",
+        "confirmAction": "Update deployment",
+        "submitting": "Updating",
+        "progressTitle": "Update in progress",
+        "progress": "Updating deployment. DevDeploy is pushing the GitOps change, waiting for Argo CD synchronization, and then checking workload readiness.",
+        "operationDescription": "Updating deployment. DevDeploy updates Git desired state, waits for Argo CD sync, and confirms runtime readiness before reporting completion.",
+        "success": "Deployment update completed and runtime readiness was verified.",
+        "noChanges": "No deployment changes to update.",
+        "timeout": "The operation may still be continuing in the background. You can refresh shortly to check the latest status.",
+        "error": "Deployment could not be updated.",
+        "progressSteps": {
+          "prepare": "Preparing update request",
+          "writeGit": "Writing update to Git",
+          "waitArgo": "Waiting for Argo CD sync",
+          "waitRollout": "Waiting for Kubernetes rollout",
+          "completed": "Completed"
+        },
+        "validation": {
+          "required": "Container image is required.",
+          "image": "Container image cannot contain whitespace.",
+          "replicas": "Replicas must be between 1 and 20.",
+          "containerPort": "Container port must be between 1 and 65535.",
+          "servicePort": "Service port must be between 1 and 65535.",
+          "previewPath": "Enter a valid path. Example: /ui"
+        }
+      },
       "destroy": {
         "action": "Destroy",
         "dangerLabel": "Dangerous action",

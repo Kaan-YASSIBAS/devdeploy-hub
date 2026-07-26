@@ -226,6 +226,14 @@ export type DeploymentRecordUpdateInput = Partial<{
   status_summary: string | null;
 }>;
 
+export type DeploymentRecordGitOpsUpdateInput = Partial<{
+  image: string;
+  replicas: number;
+  container_port: number;
+  service_port: number;
+  preview_path: string;
+}>;
+
 export type DeploymentRecordRecoverResponse = {
   status:
     | "recovered"
@@ -246,6 +254,25 @@ export type DeploymentRecordRecoverResponse = {
   app_name: string;
   commit_sha: string | null;
   manifest_path: string | null;
+  message: string;
+  error_code: string | null;
+};
+
+export type DeploymentRecordGitOpsUpdateResponse = {
+  status:
+    | "updated"
+    | "no_changes"
+    | "validation_failed"
+    | "repo_write_failed"
+    | "render_failed"
+    | "commit_failed"
+    | "push_failed"
+    | "internal_error";
+  deployment_id: number;
+  app_name: string;
+  commit_sha: string | null;
+  manifest_path: string | null;
+  deployment: DeploymentRecord | null;
   message: string;
   error_code: string | null;
 };

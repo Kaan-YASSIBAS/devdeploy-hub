@@ -2,7 +2,7 @@ import { CheckCircle2, Circle, LoaderCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 type GitOpsOperationTimelineProps = {
-  kind: "create" | "delete";
+  kind: "create" | "delete" | "update";
   activeStep: number;
   completed?: boolean;
   timedOut?: boolean;
@@ -26,6 +26,14 @@ const DELETE_STEPS = [
   "deployments.records.destroy.progressSteps.completed"
 ];
 
+const UPDATE_STEPS = [
+  "deployments.records.update.progressSteps.prepare",
+  "deployments.records.update.progressSteps.writeGit",
+  "deployments.records.update.progressSteps.waitArgo",
+  "deployments.records.update.progressSteps.waitRollout",
+  "deployments.records.update.progressSteps.completed"
+];
+
 export function GitOpsOperationTimeline({
   kind,
   activeStep,
@@ -34,11 +42,13 @@ export function GitOpsOperationTimeline({
   className = ""
 }: GitOpsOperationTimelineProps) {
   const { t } = useTranslation();
-  const steps = kind === "create" ? CREATE_STEPS : DELETE_STEPS;
+  const steps = kind === "create" ? CREATE_STEPS : kind === "delete" ? DELETE_STEPS : UPDATE_STEPS;
   const descriptionKey =
     kind === "create"
       ? "deployments.gitopsDeploy.operationDescription"
-      : "deployments.records.destroy.operationDescription";
+      : kind === "delete"
+        ? "deployments.records.destroy.operationDescription"
+        : "deployments.records.update.operationDescription";
   const boundedActiveStep = Math.max(0, Math.min(activeStep, steps.length - 1));
 
   return (

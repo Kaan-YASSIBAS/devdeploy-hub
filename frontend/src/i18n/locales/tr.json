@@ -548,6 +548,35 @@
         "noChanges": "Deployment zaten uyumlu.",
         "error": "Uzlaştırma başarısız oldu."
       },
+      "update": {
+        "action": "Düzenle",
+        "title": "Deployment'ı düzenle",
+        "description": "{{name}} deployment'ını güvenli DevDeploy GitOps akışıyla güncelle.",
+        "confirmAction": "Deployment'ı güncelle",
+        "submitting": "Güncelleniyor",
+        "progressTitle": "Güncelleme sürüyor",
+        "progress": "Deployment güncelleniyor. DevDeploy GitOps değişikliğini gönderiyor, Argo CD senkronizasyonunu bekliyor ve ardından workload hazır durumunu kontrol ediyor.",
+        "operationDescription": "Deployment güncelleniyor. DevDeploy Git hedef durumunu günceller, Argo CD sync bekler ve tamamlandı demeden önce runtime hazır durumunu doğrular.",
+        "success": "Deployment güncellemesi tamamlandı ve runtime hazır durumu doğrulandı.",
+        "noChanges": "Güncellenecek deployment değişikliği yok.",
+        "timeout": "İşlem arka planda devam ediyor olabilir. Birazdan yenileyerek durumu kontrol edebilirsin.",
+        "error": "Deployment güncellenemedi.",
+        "progressSteps": {
+          "prepare": "Güncelleme isteği hazırlanıyor",
+          "writeGit": "Güncelleme Git'e yazılıyor",
+          "waitArgo": "Argo CD sync bekleniyor",
+          "waitRollout": "Kubernetes rollout bekleniyor",
+          "completed": "Tamamlandı"
+        },
+        "validation": {
+          "required": "Container image zorunludur.",
+          "image": "Container image boşluk içeremez.",
+          "replicas": "Replica sayısı 1 ile 20 arasında olmalı.",
+          "containerPort": "Container port 1 ile 65535 arasında olmalı.",
+          "servicePort": "Service port 1 ile 65535 arasında olmalı.",
+          "previewPath": "Geçerli bir path gir. Örn: /ui"
+        }
+      },
       "destroy": {
         "action": "Yok et",
         "dangerLabel": "Tehlikeli işlem",
