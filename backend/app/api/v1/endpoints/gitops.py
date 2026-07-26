@@ -393,6 +393,7 @@ def create_gitops_app(
                     container_port=payload.container_port,
                     service_port=payload.service_port,
                     service_type=payload.service_type,
+                    preview_path=payload.preview_path,
                     namespace=WORKLOAD_NAMESPACE,
                     source_path=result.source_path,
                     commit_sha=result.commit_sha,

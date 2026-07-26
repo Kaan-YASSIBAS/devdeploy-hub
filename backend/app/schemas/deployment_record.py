@@ -9,6 +9,7 @@ from app.schemas.runtime_status import DeploymentRuntimeStatusRead
 from app.schemas.deployment_drift import DeploymentDriftStatusRead
 from app.schemas.deployment_reconcile import DeploymentReconcileStatusRead
 from app.schemas.telemetry import HttpTelemetryConfig, disabled_telemetry
+from app.schemas.preview_path import normalize_preview_path
 
 
 APP_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
@@ -49,6 +50,7 @@ class DeploymentRecordCreate(BaseModel):
     container_port: int = Field(default=80, ge=1, le=65535)
     service_port: int = Field(default=80, ge=1, le=65535)
     service_type: Literal["ClusterIP"] = "ClusterIP"
+    preview_path: str = Field(default="/", max_length=2048)
     namespace: str = Field(default="devdeploy-apps", min_length=1, max_length=63)
     gitops_manifest_path: str | None = Field(default=None, max_length=500)
     commit_sha: str | None = None
@@ -68,6 +70,11 @@ class DeploymentRecordCreate(BaseModel):
         if not KUBERNETES_NAME_PATTERN.fullmatch(value):
             raise ValueError("namespace must be a Kubernetes DNS label")
         return value
+
+    @field_validator("preview_path")
+    @classmethod
+    def validate_preview_path(cls, value: str | None) -> str:
+        return normalize_preview_path(value)
 
     @field_validator("gitops_manifest_path")
     @classmethod
@@ -90,6 +97,7 @@ class DeploymentRecordUpdate(BaseModel):
     container_port: int | None = Field(default=None, ge=1, le=65535)
     service_port: int | None = Field(default=None, ge=1, le=65535)
     service_type: Literal["ClusterIP"] | None = None
+    preview_path: str | None = Field(default=None, max_length=2048)
     namespace: str | None = Field(default=None, min_length=1, max_length=63)
     gitops_manifest_path: str | None = Field(default=None, max_length=500)
     commit_sha: str | None = None
@@ -109,6 +117,11 @@ class DeploymentRecordUpdate(BaseModel):
         if value is not None and not KUBERNETES_NAME_PATTERN.fullmatch(value):
             raise ValueError("namespace must be a Kubernetes DNS label")
         return value
+
+    @field_validator("preview_path")
+    @classmethod
+    def validate_preview_path(cls, value: str | None) -> str | None:
+        return normalize_preview_path(value) if value is not None else None
 
     @field_validator("gitops_manifest_path")
     @classmethod
@@ -149,6 +162,7 @@ class DeploymentRecordRead(BaseModel):
     container_port: int
     service_port: int
     service_type: Literal["ClusterIP"]
+    preview_path: str = "/"
     namespace: str
     gitops_manifest_path: str | None = None
     commit_sha: str | None = None

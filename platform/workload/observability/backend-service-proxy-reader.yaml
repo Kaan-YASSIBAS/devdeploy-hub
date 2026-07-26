@@ -85,6 +85,13 @@ rules:
     verbs:
       - get
   - apiGroups:
+      - ""
+    resources:
+      - pods/portforward
+    verbs:
+      - get
+      - create
+  - apiGroups:
       - apps
     resources:
       - deployments

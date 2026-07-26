@@ -248,7 +248,7 @@ export const deploymentRecordsApi = {
     return data;
   },
   previewUrl(path: string) {
-    if (!/^\/api\/v1\/deployment-records\/[1-9][0-9]*\/preview\/$/.test(path)) {
+    if (!/^\/api\/v1\/deployment-records\/[1-9][0-9]*\/preview\/(?:[A-Za-z0-9._~!$&'()*+,;=:@%-]+(?:\/[A-Za-z0-9._~!$&'()*+,;=:@%-]+)*\/?)?$/.test(path)) {
       throw new Error("Invalid deployment preview URL.");
     }
     const apiOrigin = new URL(baseURL, window.location.origin).origin;

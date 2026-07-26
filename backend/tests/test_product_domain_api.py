@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.v1.endpoints import deployment_records, services
+from app.api.v1.endpoints.deployment_records import PREVIEW_RUNTIME_AUTH_HEADER
 from app.api.v1.runtime_status import (
     get_deployment_destroy_runtime_cleanup_service,
     get_deployment_drift_service,
@@ -170,11 +171,34 @@ class FakeWorkloadServiceProxy:
             },
         )
 
-    def get(self, **kwargs) -> ServiceProxyResponse:
+    def request(self, **kwargs) -> ServiceProxyResponse:
         self.calls.append(kwargs)
         if self.error is not None:
             raise self.error
         return self.response
+
+    def get(self, **kwargs) -> ServiceProxyResponse:
+        kwargs.setdefault("method", "GET")
+        kwargs.setdefault("body", None)
+        return self.request(**kwargs)
+
+
+class NegotiatingWorkloadServiceProxy(FakeWorkloadServiceProxy):
+    def request(self, **kwargs) -> ServiceProxyResponse:
+        self.calls.append(kwargs)
+        headers = kwargs.get("request_headers") or {}
+        accept = headers.get("Accept", "")
+        if "text/html" in accept:
+            return ServiceProxyResponse(
+                status_code=200,
+                body=b"<html><body>podinfo ui</body></html>",
+                headers={"Content-Type": "text/html; charset=utf-8"},
+            )
+        return ServiceProxyResponse(
+            status_code=200,
+            body=b'{"status":"json"}',
+            headers={"Content-Type": "application/json"},
+        )
 
 
 class ProductDomainApiTestCase(unittest.TestCase):
@@ -258,7 +282,7 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.app.dependency_overrides[
             get_deployment_recovery_verification_service
         ] = lambda: self.recovery_verification
-        self.client = TestClient(self.app, raise_server_exceptions=False)
+        self.client = TestClient(self.app, base_url="https://testserver", raise_server_exceptions=False)
 
     def tearDown(self) -> None:
         self.client.close()
@@ -325,10 +349,10 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()
 
-    def create_deployment(self, service_id: int | None = None) -> dict:
+    def create_deployment(self, service_id: int | None = None, **overrides) -> dict:
         response = self.client.post(
             "/api/v1/deployment-records",
-            json=self.deployment_payload(service_id),
+            json={**self.deployment_payload(service_id), **overrides},
         )
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()
@@ -1647,13 +1671,14 @@ class ProductDomainApiTestCase(unittest.TestCase):
         cookie = response.headers["set-cookie"]
         self.assertIn("HttpOnly", cookie)
         self.assertIn("Max-Age=120", cookie)
-        self.assertIn("SameSite=lax", cookie)
+        self.assertIn("SameSite=none", cookie)
+        self.assertIn("Secure", cookie)
         self.assertIn(
             f"Path=/api/v1/deployment-records/{deployment['id']}/preview/",
             cookie,
         )
 
-    def test_preview_cookie_secure_attribute_follows_server_configuration(self) -> None:
+    def test_preview_cookie_is_always_secure_for_sandboxed_subresource_auth(self) -> None:
         deployment = self.create_deployment()
         self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = (
             self.ready_workload_snapshot()
@@ -1661,7 +1686,7 @@ class ProductDomainApiTestCase(unittest.TestCase):
 
         with patch(
             "app.api.v1.endpoints.deployment_records.settings.preview_cookie_secure",
-            True,
+            False,
         ):
             response = self.client.get(
                 f"/api/v1/deployment-records/{deployment['id']}/access"
@@ -1669,10 +1694,15 @@ class ProductDomainApiTestCase(unittest.TestCase):
 
         self.assertIn("Secure", response.headers["set-cookie"])
 
-    def test_owner_can_preview_ready_app_without_forwarding_browser_headers(self) -> None:
+    def test_owner_can_preview_ready_app_with_safe_browser_headers_only(self) -> None:
         deployment = self.create_deployment()
         self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = (
             self.ready_workload_snapshot()
+        )
+        self.preview_proxy.response = ServiceProxyResponse(
+            status_code=200,
+            body=b'<html><head><script src="/app.js"></script></head><body>preview</body></html>',
+            headers={"Content-Type": "text/html; charset=utf-8"},
         )
         access = self.client.get(f"/api/v1/deployment-records/{deployment['id']}/access")
         self.client.cookies.set("browser_session", "browser-secret", path="/")
@@ -1680,14 +1710,28 @@ class ProductDomainApiTestCase(unittest.TestCase):
         response = self.client.get(
             access.json()["preview_url"],
             headers={
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "tr-TR,tr;q=0.9",
+                "User-Agent": "Mozilla/5.0 DevDeployPreview",
                 "Authorization": "Bearer browser-secret",
                 "Host": "attacker.example",
+                "Connection": "keep-alive",
+                "X-Forwarded-Host": "attacker.example",
                 "Proxy-Authorization": "Basic proxy-secret",
             },
         )
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.text, "<html><body>preview</body></html>")
+        base_tag = f'<base href="/api/v1/deployment-records/{deployment["id"]}/preview/">'
+        self.assertIn(base_tag, response.text)
+        self.assertIn("devdeploy-preview-routing", response.text)
+        self.assertIn(PREVIEW_RUNTIME_AUTH_HEADER, response.text)
+        self.assertIn("withPreviewAuth", response.text)
+        self.assertIn("headers.set(previewSessionHeader, previewSessionToken)", response.text)
+        self.assertNotIn("browser-secret", response.text)
+        self.assertIn(f'src="/api/v1/deployment-records/{deployment["id"]}/preview/app.js"', response.text)
+        self.assertLess(response.text.index(base_tag), response.text.index("devdeploy-preview-routing"))
+        self.assertLess(response.text.index("devdeploy-preview-routing"), response.text.index("/preview/app.js"))
         self.assertEqual(
             self.preview_proxy.calls,
             [
@@ -1696,6 +1740,13 @@ class ProductDomainApiTestCase(unittest.TestCase):
                     "namespace": "devdeploy-apps",
                     "port": 80,
                     "path": "",
+                    "method": "GET",
+                    "body": None,
+                    "request_headers": {
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        "Accept-Language": "tr-TR,tr;q=0.9",
+                        "User-Agent": "Mozilla/5.0 DevDeployPreview",
+                    },
                 }
             ],
         )
@@ -1703,34 +1754,282 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertNotIn("connection", response.headers)
         self.assertNotIn("server", response.headers)
         self.assertIn("sandbox", response.headers["content-security-policy"])
+        self.assertIn("script-src", response.headers["content-security-policy"])
+        self.assertIn("'unsafe-inline'", response.headers["content-security-policy"])
+        self.assertIn("https:", response.headers["content-security-policy"])
+        self.assertIn("http:", response.headers["content-security-policy"])
         self.assertEqual(response.headers["x-content-type-options"], "nosniff")
+        self.assertEqual(response.headers["x-devdeploy-preview-transport"], "port-forward")
+        self.assertEqual(response.headers["x-devdeploy-preview-injected"], "true")
+        self.assertEqual(response.headers["x-devdeploy-preview-path"], "/")
 
-    def test_preview_requires_scoped_cookie_and_get_only_route(self) -> None:
+    def test_actual_preview_endpoint_uses_browser_default_for_generic_accept(self) -> None:
+        deployment = self.create_deployment(preview_path="/")
+        self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = (
+            self.ready_workload_snapshot()
+        )
+        self.preview_proxy = NegotiatingWorkloadServiceProxy()
+        access = self.client.get(f"/api/v1/deployment-records/{deployment['id']}/access")
+
+        response = self.client.get(access.json()["preview_url"], headers={"Accept": "*/*"})
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("<html><body>podinfo ui</body></html>", response.text)
+        self.assertEqual(response.headers["content-type"], "text/html; charset=utf-8")
+        self.assertEqual(self.preview_proxy.calls[-1]["path"], "")
+        self.assertIn("text/html", self.preview_proxy.calls[-1]["request_headers"]["Accept"])
+
+    def test_actual_preview_endpoint_uses_browser_default_for_json_accept(self) -> None:
+        deployment = self.create_deployment(preview_path="/")
+        self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = (
+            self.ready_workload_snapshot()
+        )
+        self.preview_proxy = NegotiatingWorkloadServiceProxy()
+        access = self.client.get(f"/api/v1/deployment-records/{deployment['id']}/access")
+
+        response = self.client.get(
+            access.json()["preview_url"],
+            headers={"Accept": "application/json"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("<html><body>podinfo ui</body></html>", response.text)
+        self.assertEqual(response.headers["content-type"], "text/html; charset=utf-8")
+        self.assertIn("text/html", self.preview_proxy.calls[-1]["request_headers"]["Accept"])
+
+    def test_nested_preview_runtime_api_path_maps_to_upstream_json(self) -> None:
+        deployment = self.create_deployment(preview_path="/")
+        self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = (
+            self.ready_workload_snapshot()
+        )
+        self.preview_proxy.response = ServiceProxyResponse(
+            status_code=200,
+            body=b'<html><head><script src="/app.js"></script></head><body>preview</body></html>',
+            headers={"Content-Type": "text/html; charset=utf-8"},
+        )
+        access = self.client.get(f"/api/v1/deployment-records/{deployment['id']}/access")
+        runtime_token = create_preview_session_token(
+            user_id=self.user_a.id,
+            deployment_id=deployment["id"],
+        )
+        self.client.cookies.clear()
+        self.preview_proxy.response = ServiceProxyResponse(
+            status_code=200,
+            body=b'{"version":"1.0.0","hostname":"podinfo"}',
+            headers={"Content-Type": "application/json"},
+        )
+
+        response = self.client.get(
+            f"/api/v1/deployment-records/{deployment['id']}/preview/api/info",
+            headers={
+                "Origin": "null",
+                "Accept": "application/json",
+                PREVIEW_RUNTIME_AUTH_HEADER: runtime_token,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.headers["content-type"], "application/json")
+        self.assertEqual(response.headers["access-control-allow-origin"], "null")
+        self.assertEqual(response.headers["access-control-allow-credentials"], "true")
+        self.assertEqual(response.headers["x-devdeploy-preview-transport"], "port-forward")
+        self.assertEqual(response.headers["x-devdeploy-preview-injected"], "false")
+        self.assertEqual(response.headers["x-devdeploy-preview-path"], "/api/info")
+        self.assertEqual(response.json()["hostname"], "podinfo")
+        self.assertEqual(self.preview_proxy.calls[-1]["path"], "api/info")
+        self.assertEqual(access.status_code, 200, access.text)
+        forwarded = self.preview_proxy.calls[-1]["request_headers"]
+        self.assertIn("text/html", forwarded["Accept"])
+        self.assertNotIn(PREVIEW_RUNTIME_AUTH_HEADER, forwarded)
+        self.assertNotIn("Cookie", forwarded)
+        self.assertNotIn("Authorization", forwarded)
+
+    def test_configured_preview_path_is_used_for_access_and_preview(self) -> None:
+        deployment = self.create_deployment(preview_path="ui")
+        self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = (
+            self.ready_workload_snapshot()
+        )
+        self.preview_proxy.response = ServiceProxyResponse(
+            status_code=200,
+            body=b'<html><head><script src="/app.js"></script></head><body>preview</body></html>',
+            headers={"Content-Type": "text/html; charset=utf-8"},
+        )
+        access = self.client.get(f"/api/v1/deployment-records/{deployment['id']}/access")
+
+        self.assertEqual(access.status_code, 200, access.text)
+        self.assertEqual(deployment["preview_path"], "/ui")
+        self.assertEqual(
+            access.json()["preview_url"],
+            f"/api/v1/deployment-records/{deployment['id']}/preview/ui",
+        )
+        self.assertIn(
+            f"Path=/api/v1/deployment-records/{deployment['id']}/preview/",
+            access.headers["set-cookie"],
+        )
+
+        response = self.client.get(access.json()["preview_url"])
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.preview_proxy.calls[-1]["path"], "ui")
+
+    def test_configured_preview_path_surfaces_upstream_not_found(self) -> None:
+        deployment = self.create_deployment(preview_path="ui")
+        self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = (
+            self.ready_workload_snapshot()
+        )
+        self.preview_proxy.response = ServiceProxyResponse(
+            status_code=200,
+            body=b'<html><head><script src="/app.js"></script></head><body>preview</body></html>',
+            headers={"Content-Type": "text/html; charset=utf-8"},
+        )
+        access = self.client.get(f"/api/v1/deployment-records/{deployment['id']}/access")
+        self.preview_proxy.response = ServiceProxyResponse(
+            status_code=404,
+            body=b"not found",
+            headers={"Content-Type": "text/plain"},
+        )
+
+        response = self.client.get(access.json()["preview_url"])
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(self.preview_proxy.calls[-1]["path"], "ui")
+
+    def test_preview_path_validation_rejects_unsafe_values(self) -> None:
+        unsafe_values = (
+            "http://attacker.example",
+            "https://attacker.example",
+            "//attacker.example",
+            "../secret",
+            "/../secret",
+            "folder\\secret",
+            "?target=/ui",
+            "#fragment",
+        )
+
+        for value in unsafe_values:
+            with self.subTest(value=value):
+                response = self.client.post(
+                    "/api/v1/deployment-records",
+                    json={**self.deployment_payload(), "preview_path": value},
+                )
+                self.assertEqual(response.status_code, 422, response.text)
+
+    def test_preview_requires_scoped_session_for_upstream_requests(self) -> None:
         deployment = self.create_deployment()
         self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = (
             self.ready_workload_snapshot()
         )
         preview_url = f"/api/v1/deployment-records/{deployment['id']}/preview/"
 
-        missing_cookie = self.client.get(preview_url)
-
-        self.client.cookies.set(
-            PREVIEW_SESSION_COOKIE,
-            create_preview_session_token(
-                user_id=self.user_a.id,
-                deployment_id=deployment["id"] + 1,
-            ),
-            path=preview_url,
+        missing_session = self.client.get(preview_url, headers={"Origin": "null"})
+        external_origin = self.client.get(
+            preview_url,
+            headers={"Origin": "https://attacker.example"},
         )
-        wrong_deployment = self.client.get(preview_url)
+        wrong_deployment = self.client.get(
+            preview_url,
+            headers={
+                PREVIEW_RUNTIME_AUTH_HEADER: create_preview_session_token(
+                    user_id=self.user_a.id,
+                    deployment_id=deployment["id"] + 1,
+                )
+            },
+        )
+        invalid_session = self.client.get(
+            preview_url,
+            headers={PREVIEW_RUNTIME_AUTH_HEADER: "invalid-preview-session"},
+        )
 
-        self.set_preview_cookie(user_id=self.user_a.id, deployment_id=deployment["id"])
-        posted = self.client.post(preview_url)
-
-        self.assertEqual(missing_cookie.status_code, 401)
+        self.assertEqual(missing_session.status_code, 401)
+        self.assertEqual(missing_session.headers["access-control-allow-origin"], "null")
+        self.assertEqual(missing_session.headers["access-control-allow-credentials"], "true")
+        self.assertEqual(external_origin.status_code, 401)
+        self.assertEqual(external_origin.headers["access-control-allow-origin"], "null")
+        self.assertNotEqual(external_origin.headers["access-control-allow-origin"], "https://attacker.example")
         self.assertEqual(wrong_deployment.status_code, 403)
-        self.assertEqual(posted.status_code, 405)
+        self.assertEqual(invalid_session.status_code, 401)
         self.assertEqual(self.preview_proxy.calls, [])
+
+    def test_preview_preflight_is_local_and_does_not_require_session_cookie(self) -> None:
+        deployment = self.create_deployment()
+        preview_url = f"/api/v1/deployment-records/{deployment['id']}/preview/api/echo"
+
+        response = self.client.options(
+            preview_url,
+            headers={
+                "Origin": "null",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": (
+                    f"Content-Type, X-APP, {PREVIEW_RUNTIME_AUTH_HEADER}, "
+                    "Authorization, Cookie, X-Forwarded-Host"
+                ),
+            },
+        )
+
+        self.assertEqual(response.status_code, 204, response.text)
+        self.assertEqual(response.headers["access-control-allow-origin"], "null")
+        self.assertEqual(response.headers["access-control-allow-credentials"], "true")
+        self.assertIn("POST", response.headers["access-control-allow-methods"])
+        self.assertIn("Content-Type", response.headers["access-control-allow-headers"])
+        self.assertIn("X-APP", response.headers["access-control-allow-headers"])
+        self.assertIn(PREVIEW_RUNTIME_AUTH_HEADER, response.headers["access-control-allow-headers"])
+        self.assertNotIn("Authorization", response.headers["access-control-allow-headers"])
+        self.assertNotIn("Cookie", response.headers["access-control-allow-headers"])
+        self.assertNotIn("X-Forwarded-Host", response.headers["access-control-allow-headers"])
+        self.assertEqual(self.preview_proxy.calls, [])
+
+    def test_preview_runtime_post_forwards_body_and_safe_headers(self) -> None:
+        deployment = self.create_deployment(preview_path="/")
+        self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = (
+            self.ready_workload_snapshot()
+        )
+        runtime_token = create_preview_session_token(
+            user_id=self.user_a.id,
+            deployment_id=deployment["id"],
+        )
+        self.client.cookies.clear()
+        self.client.cookies.set("browser_session", "browser-secret", path="/")
+        self.preview_proxy.response = ServiceProxyResponse(
+            status_code=200,
+            body=b'{"message":"pong"}',
+            headers={"Content-Type": "application/json"},
+        )
+
+        response = self.client.post(
+            f"/api/v1/deployment-records/{deployment['id']}/preview/api/echo",
+            content=b'{"message":"ping"}',
+            headers={
+                "Origin": "null",
+                "Accept": "application/json",
+                "Content-Type": "application/json; charset=UTF-8",
+                "X-APP": "preview-test",
+                PREVIEW_RUNTIME_AUTH_HEADER: runtime_token,
+                "Authorization": "Bearer browser-secret",
+                "Host": "attacker.example",
+                "Connection": "keep-alive",
+                "X-Forwarded-Host": "attacker.example",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.headers["content-type"], "application/json")
+        self.assertEqual(response.headers["access-control-allow-origin"], "null")
+        self.assertEqual(self.preview_proxy.calls[-1]["method"], "POST")
+        self.assertEqual(self.preview_proxy.calls[-1]["path"], "api/echo")
+        self.assertEqual(self.preview_proxy.calls[-1]["body"], b'{"message":"ping"}')
+        forwarded = self.preview_proxy.calls[-1]["request_headers"]
+        self.assertIn("text/html", forwarded["Accept"])
+        self.assertEqual(forwarded["Content-Type"], "application/json; charset=UTF-8")
+        self.assertEqual(forwarded["X-APP"], "preview-test")
+        for blocked_header in (
+            "Authorization",
+            "Cookie",
+            "Host",
+            "Connection",
+            "X-Forwarded-Host",
+            PREVIEW_RUNTIME_AUTH_HEADER,
+        ):
+            self.assertNotIn(blocked_header, forwarded)
 
     def test_preview_is_owner_scoped_and_blocks_missing_or_archived_records(self) -> None:
         deployment = self.create_deployment()
@@ -1847,6 +2146,11 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.runtime_reader.snapshots[("devdeploy-apps", "payments-api")] = (
             self.ready_workload_snapshot()
         )
+        self.preview_proxy.response = ServiceProxyResponse(
+            status_code=200,
+            body=b'<html><head><script src="/app.js"></script></head><body>preview</body></html>',
+            headers={"Content-Type": "text/html; charset=utf-8"},
+        )
         access = self.client.get(f"/api/v1/deployment-records/{deployment['id']}/access")
         preview_url = access.json()["preview_url"]
 
@@ -1857,7 +2161,7 @@ class ProductDomainApiTestCase(unittest.TestCase):
         unavailable = self.client.get(preview_url)
 
         self.assertEqual(forbidden.status_code, 403)
-        self.assertEqual(forbidden.json()["detail"], "Workload Service proxy access is denied.")
+        self.assertEqual(forbidden.json()["detail"], "Workload preview access is denied.")
         self.assertNotIn("raw RBAC", forbidden.text)
         self.assertEqual(unavailable.status_code, 503)
         self.assertEqual(unavailable.json()["detail"], "The app preview service is unavailable.")

@@ -4,6 +4,7 @@ import test from "node:test";
 
 const source = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const deployments = source("../src/features/deployments/DeploymentsPage.tsx");
+const createModal = source("../src/components/deployments/CreateGitOpsAppModal.tsx");
 const client = source("../src/api/client.ts");
 const monitoring = source("../src/features/monitoring/MonitoringPage.tsx");
 const prometheus = source("../../backend/app/services/prometheus_service.py");
@@ -54,4 +55,37 @@ test("restart chart uses namespace-scoped interval increases and remains a bar c
   );
   assert.match(monitoring, /key: "pod_restarts"[\s\S]*type: "bar"/);
   assert.match(monitoring, /emptyMessage=\{isLoading/);
+});
+test("GitOps create modal supports safe optional preview paths", () => {
+  assert.match(createModal, /const \[previewPath, setPreviewPath\] = useState\("\/"\)/);
+  assert.match(createModal, /setPreviewPath\("\/"\)/);
+  assert.match(createModal, /function normalizePreviewPath\(value: string\)/);
+  assert.match(createModal, /if \(!candidate\) return "\/"/);
+  assert.match(createModal, /return `\/\$\{normalized\}`/);
+  assert.match(createModal, /preview_path: normalizedPreviewPath/);
+  assert.match(createModal, /gitops-app-preview-path/);
+  assert.match(createModal, /deployments\.gitopsDeploy\.previewPath/);
+  assert.match(createModal, /deployments\.gitopsDeploy\.validation\.previewPath/);
+  assert.match(createModal, /startsWith\("http:\/\/"\)/);
+  assert.match(createModal, /startsWith\("https:\/\/"\)/);
+  assert.match(createModal, /startsWith\("\/\/"\)/);
+  assert.match(createModal, /segment === "\." \|\| segment === "\.\."/);
+  assert.match(createModal, /candidate\.includes\("\\\\"\)/);
+  assert.equal(english.deployments.gitopsDeploy.previewPath, "Preview path");
+  assert.equal(english.deployments.gitopsDeploy.previewPathPlaceholder, "/, /ui, /dashboard");
+  assert.equal(english.deployments.gitopsDeploy.validation.previewPath, "Enter a valid path. Example: /ui");
+  assert.equal(turkish.deployments.gitopsDeploy.previewPath, "Önizleme path'i");
+  assert.equal(turkish.deployments.gitopsDeploy.previewPathPlaceholder, "/, /ui, /dashboard");
+  assert.equal(turkish.deployments.gitopsDeploy.validation.previewPath, "Geçerli bir path gir. Örn: /ui");
+});
+
+test("preview URL helper accepts only backend-owned preview subpaths", () => {
+  const previewUrlStart = client.indexOf("previewUrl(path: string)");
+  const previewUrlEnd = client.indexOf("async listUntracked", previewUrlStart);
+  const previewUrlSource = client.slice(previewUrlStart, previewUrlEnd);
+
+  assert.match(previewUrlSource, /deployment-records/);
+  assert.match(previewUrlSource, /preview/);
+  assert.match(previewUrlSource, /\[A-Za-z0-9\._~!\$&/);
+  assert.doesNotMatch(previewUrlSource, /https?:\/\//);
 });

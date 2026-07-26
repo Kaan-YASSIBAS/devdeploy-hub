@@ -196,6 +196,7 @@ export type DeploymentRecord = {
   container_port: number;
   service_port: number;
   service_type: "ClusterIP";
+  preview_path: string;
   namespace: string;
   gitops_manifest_path: string | null;
   commit_sha: string | null;
@@ -217,6 +218,7 @@ export type DeploymentRecordUpdateInput = Partial<{
   container_port: number;
   service_port: number;
   service_type: "ClusterIP";
+  preview_path: string;
   namespace: string;
   desired_state: DeploymentRecordDesiredState;
   gitops_manifest_path: string | null;
@@ -388,6 +390,7 @@ export type GitOpsAppDeployInput = {
   container_port: number;
   service_port: number;
   service_type: "ClusterIP";
+  preview_path: string;
 };
 
 export type GitOpsAppDeployResponse = {

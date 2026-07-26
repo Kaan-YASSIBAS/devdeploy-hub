@@ -609,6 +609,10 @@
         "containerPort": "Container port",
         "servicePort": "Service port",
         "serviceType": "Service type",
+      "previewPath": "Preview path",
+      "previewPathPlaceholder": "/, /ui, /dashboard",
+      "previewPathHelper": "Set this if the app UI is served outside the root path. Example: /ui or /dashboard. Uses / when left empty.",
+      "previewPathDefaultHint": "Uses / when left empty.",
         "status": "Status",
         "runtimeDefaults": "Replicas / ports",
         "reconcileStatus": "Reconcile status",
@@ -724,6 +728,10 @@
       "containerPort": "Container port",
       "servicePort": "Service port",
       "serviceType": "Service type",
+      "previewPath": "Preview path",
+      "previewPathPlaceholder": "/, /ui, /dashboard",
+      "previewPathHelper": "Set this if the app UI is served outside the root path. Example: /ui or /dashboard. Uses / when left empty.",
+      "previewPathDefaultHint": "Uses / when left empty.",
       "submit": "Push GitOps deployment",
       "submitting": "Publishing to Git",
       "pushedToast": "GitOps commit pushed. Waiting for Argo CD.",
@@ -757,7 +765,8 @@
         "image": "Container image cannot contain whitespace.",
         "replicas": "Replicas must be between 1 and 20.",
         "containerPort": "Container port must be between 1 and 65535.",
-        "servicePort": "Service port must be between 1 and 65535."
+        "servicePort": "Service port must be between 1 and 65535.",
+        "previewPath": "Enter a valid path. Example: /ui"
       },
       "status": {
         "pushed_waiting_for_argocd": "Waiting for Argo CD",

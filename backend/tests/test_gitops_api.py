@@ -172,7 +172,29 @@ class GitOpsApiTestCase(unittest.TestCase):
         self.assertEqual(record_request.owner_id, 7)
         self.assertEqual(record_request.app_name, self.payload()["app_name"])
         self.assertEqual(record_request.commit_sha, "a" * 40)
+        self.assertEqual(record_request.preview_path, "/")
 
+    def test_preview_path_is_normalized_and_persisted_with_product_record(self) -> None:
+        self.authenticate()
+        payload = {**self.payload(), "preview_path": "ui"}
+
+        response = self.client.post("/api/v1/gitops/apps", json=payload)
+
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(len(self.product_record_service.requests), 1)
+        self.assertEqual(self.product_record_service.requests[0].preview_path, "/ui")
+
+    def test_unsafe_preview_path_is_rejected(self) -> None:
+        self.authenticate()
+
+        response = self.client.post(
+            "/api/v1/gitops/apps",
+            json={**self.payload(), "preview_path": "https://attacker.example"},
+        )
+
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(self.service.requests, [])
+        self.assertEqual(self.product_record_service.requests, [])
     def test_validation_failure_maps_to_safe_bad_request(self) -> None:
         self.authenticate()
         self.service.result = DeployWorkloadOperationResult(

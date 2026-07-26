@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.repositories.deployment_record_repository import DeploymentRecordRepository
 from app.repositories.service_definition_repository import ServiceDefinitionRepository
+from app.schemas.preview_path import normalize_preview_path
 
 
 PUBLISHED_STATUS_SUMMARY = "GitOps manifests published"
@@ -35,6 +36,7 @@ class PublishedDeploymentRecordRequest:
     container_port: int
     service_port: int
     service_type: str
+    preview_path: str
     namespace: str
     source_path: str
     commit_sha: str
@@ -88,6 +90,7 @@ class GitOpsProductRecordService:
                     "container_port": request.container_port,
                     "service_port": request.service_port,
                     "service_type": request.service_type,
+                    "preview_path": normalize_preview_path(request.preview_path),
                     "namespace": request.namespace,
                     "gitops_manifest_path": manifest_path,
                     "commit_sha": request.commit_sha.lower(),

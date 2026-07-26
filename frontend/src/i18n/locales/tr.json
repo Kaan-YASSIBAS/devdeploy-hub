@@ -609,6 +609,10 @@
         "containerPort": "Container port",
         "servicePort": "Service port",
         "serviceType": "Service türü",
+      "previewPath": "Önizleme path'i",
+      "previewPathPlaceholder": "/, /ui, /dashboard",
+      "previewPathHelper": "Uygulama arayüzü kök path dışında çalışıyorsa belirt. Örn: /ui veya /dashboard. Boş bırakılırsa / kullanılır.",
+      "previewPathDefaultHint": "Boş bırakılırsa / kullanılır.",
         "status": "Durum",
         "runtimeDefaults": "Replica / portlar",
         "reconcileStatus": "Reconcile durumu",
@@ -724,6 +728,10 @@
       "containerPort": "Container port",
       "servicePort": "Service port",
       "serviceType": "Service türü",
+      "previewPath": "Önizleme path'i",
+      "previewPathPlaceholder": "/, /ui, /dashboard",
+      "previewPathHelper": "Uygulama arayüzü kök path dışında çalışıyorsa belirt. Örn: /ui veya /dashboard. Boş bırakılırsa / kullanılır.",
+      "previewPathDefaultHint": "Boş bırakılırsa / kullanılır.",
       "submit": "GitOps deployment'ı gönder",
       "submitting": "Git'e gönderiliyor",
       "pushedToast": "GitOps commit'i push edildi. Argo CD bekleniyor.",
@@ -749,7 +757,8 @@
         "image": "Container image boşluk içeremez.",
         "replicas": "Replica sayısı 1 ile 20 arasında olmalı.",
         "containerPort": "Container port 1 ile 65535 arasında olmalı.",
-        "servicePort": "Service port 1 ile 65535 arasında olmalı."
+        "servicePort": "Service port 1 ile 65535 arasında olmalı.",
+        "previewPath": "Geçerli bir path gir. Örn: /ui"
       },
       "status": {
         "pushed_waiting_for_argocd": "Argo CD bekleniyor",

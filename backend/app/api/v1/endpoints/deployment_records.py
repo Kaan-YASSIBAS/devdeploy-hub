@@ -1,3 +1,4 @@
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -73,6 +74,8 @@ from app.services.product_runtime_status import ProductRuntimeStatusService
 from app.repositories.user_repository import UserRepository
 
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/deployment-records", tags=["deployment-records"])
 RECOVER_INTERNAL_MESSAGE = "The deployment recovery operation failed unexpectedly."
 RECONCILE_INTERNAL_MESSAGE = "The deployment reconcile operation failed unexpectedly."
@@ -86,13 +89,19 @@ RECOVER_ERROR_STATUS_CODES = {
 }
 DESTROY_ERROR_STATUS_CODES = RECOVER_ERROR_STATUS_CODES
 RegenerateAction = Literal["recover", "reconcile"]
+PREVIEW_ALLOWED_METHODS = {"GET", "HEAD", "POST", "OPTIONS"}
+PREVIEW_RUNTIME_AUTH_HEADER = "X-DevDeploy-Preview-Session"
+PREVIEW_DEFAULT_CORS_REQUEST_HEADERS = (
+    f"Accept, Accept-Language, Content-Type, User-Agent, X-APP, {PREVIEW_RUNTIME_AUTH_HEADER}"
+)
 PREVIEW_SECURITY_HEADERS = {
     "Cache-Control": "no-store",
     "Content-Security-Policy": (
-        "sandbox allow-scripts; default-src 'self' data: blob:; "
-        "base-uri 'none'; connect-src 'self'; form-action 'none'; "
-        "frame-ancestors 'none'; img-src 'self' data: blob:; "
-        "style-src 'self' 'unsafe-inline'; font-src 'self' data:"
+        "sandbox allow-scripts; default-src 'self' data: blob: https:; "
+        "base-uri 'none'; connect-src 'self' http: https: ws: wss:; form-action 'none'; "
+        "frame-ancestors 'none'; img-src 'self' data: blob: https:; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https:; "
+        "style-src 'self' 'unsafe-inline' https:; font-src 'self' data: https:"
     ),
     "Cross-Origin-Resource-Policy": "same-origin",
     "Referrer-Policy": "no-referrer",
@@ -235,19 +244,76 @@ def get_deployment_access(
             ),
             max_age=PREVIEW_SESSION_TTL_SECONDS,
             httponly=True,
-            secure=settings.preview_cookie_secure,
-            samesite="lax",
-            path=access.preview_url,
+            secure=True,
+            samesite="none",
+            path=f"/api/v1/deployment-records/{deployment.id}/preview/",
         )
     return access
 
+
+def _preview_cors_headers(request: Request) -> dict[str, str]:
+    requested_headers = request.headers.get("access-control-request-headers")
+    allowed_headers = PREVIEW_DEFAULT_CORS_REQUEST_HEADERS
+    if requested_headers:
+        safe_requested_headers: list[str] = []
+        for header_name in requested_headers.split(","):
+            normalized = header_name.strip()
+            lowered = normalized.lower()
+            if not normalized:
+                continue
+            if lowered in {"authorization", "cookie", "host", "connection", "proxy-authorization"}:
+                continue
+            if lowered == PREVIEW_RUNTIME_AUTH_HEADER.lower():
+                safe_requested_headers.append(PREVIEW_RUNTIME_AUTH_HEADER)
+                continue
+            if lowered.startswith("x-forwarded-") or lowered.startswith("x-devdeploy-"):
+                continue
+            if any(marker in lowered for marker in ("auth", "token", "secret", "key")):
+                continue
+            if all(character.isalnum() or character in "-_" for character in normalized):
+                safe_requested_headers.append(normalized)
+        if safe_requested_headers:
+            allowed_headers = ", ".join(sorted(set(safe_requested_headers), key=str.lower))
+
+    return {
+        "Access-Control-Allow-Origin": "null",
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": ", ".join(sorted(PREVIEW_ALLOWED_METHODS)),
+        "Access-Control-Allow-Headers": allowed_headers,
+        "Access-Control-Max-Age": "600",
+        "Vary": "Origin",
+    }
+
+
+def _preview_json_error_response(
+    *,
+    request: Request,
+    status_code: int,
+    detail: str,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={"detail": detail},
+        headers={**PREVIEW_SECURITY_HEADERS, **_preview_cors_headers(request)},
+    )
+
+
+def _preview_http_exception_response(error: HTTPException, request: Request) -> JSONResponse:
+    detail = error.detail if isinstance(error.detail, str) else "Preview request failed."
+    return _preview_json_error_response(
+        request=request,
+        status_code=int(error.status_code),
+        detail=detail,
+    )
 
 def _get_preview_user(
     deployment_id: int,
     request: Request,
     db: Session,
 ) -> User:
-    token = request.cookies.get(PREVIEW_SESSION_COOKIE)
+    token = request.headers.get(PREVIEW_RUNTIME_AUTH_HEADER) or request.cookies.get(
+        PREVIEW_SESSION_COOKIE
+    )
     preview_session = decode_preview_session_token(token) if token else None
     if preview_session is None:
         raise HTTPException(
@@ -268,9 +334,12 @@ def _get_preview_user(
     return user
 
 
-@router.get("/{deployment_id}/preview/")
-@router.get("/{deployment_id}/preview/{preview_path:path}")
-def get_deployment_preview(
+@router.api_route("/{deployment_id}/preview/", methods=["GET", "HEAD", "POST", "OPTIONS"])
+@router.api_route(
+    "/{deployment_id}/preview/{preview_path:path}",
+    methods=["GET", "HEAD", "POST", "OPTIONS"],
+)
+async def get_deployment_preview(
     deployment_id: int,
     request: Request,
     preview_path: str = "",
@@ -278,67 +347,130 @@ def get_deployment_preview(
     runtime_service: ProductRuntimeStatusService = Depends(get_product_runtime_status_service),
     proxy: WorkloadServiceProxy | None = Depends(get_workload_service_proxy_client),
 ) -> Response:
-    current_user = _get_preview_user(deployment_id, request, db)
-    deployment = DeploymentRecordService(db).get_owned(deployment_id, current_user)
-    if deployment.archived_at is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Archived deployment records are not available for app preview.",
+    cors_headers = _preview_cors_headers(request)
+    method = request.method.upper()
+    if method == "OPTIONS":
+        return Response(
+            status_code=status.HTTP_204_NO_CONTENT,
+            headers={**PREVIEW_SECURITY_HEADERS, **cors_headers},
         )
-    if request.url.query:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Preview query parameters are not supported.",
+    if method not in PREVIEW_ALLOWED_METHODS:
+        return _preview_json_error_response(
+            request=request,
+            status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
+            detail="Preview method is not allowed.",
         )
 
+    try:
+        current_user = _get_preview_user(deployment_id, request, db)
+        deployment = DeploymentRecordService(db).get_owned(deployment_id, current_user)
+        if deployment.archived_at is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Archived deployment records are not available for app preview.",
+            )
+        if request.url.query:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Preview query parameters are not supported.",
+            )
+    except HTTPException as error:
+        return _preview_http_exception_response(error, request)
+
+    body = await request.body() if method == "POST" else None
     preview_service = DeploymentPreviewService(
         access_service=DeploymentAccessService(runtime_service),
         proxy=proxy,
     )
     try:
-        result = preview_service.preview(deployment, preview_path)
+        result = preview_service.preview(
+            deployment,
+            preview_path,
+            method=method,
+            body=body,
+            request_headers=request.headers,
+        )
     except PreviewPathError as error:
-        raise HTTPException(
+        return _preview_json_error_response(
+            request=request,
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(error),
-        ) from None
+        )
     except PreviewUnavailableError as error:
         unavailable_status = (
             status.HTTP_503_SERVICE_UNAVAILABLE
             if error.access_status in {"runtime_unavailable", "unknown"}
             else status.HTTP_409_CONFLICT
         )
-        raise HTTPException(
+        return _preview_json_error_response(
+            request=request,
             status_code=unavailable_status,
             detail=f"App preview is unavailable: {error.access_status}.",
-        ) from None
+        )
     except PreviewTimeoutError:
-        raise HTTPException(
+        return _preview_json_error_response(
+            request=request,
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="The app preview request timed out.",
-        ) from None
+        )
     except PreviewForbiddenError:
-        raise HTTPException(
+        return _preview_json_error_response(
+            request=request,
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Workload Service proxy access is denied.",
-        ) from None
+            detail="Workload preview access is denied.",
+        )
     except PreviewServiceUnavailableError:
-        raise HTTPException(
+        return _preview_json_error_response(
+            request=request,
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="The app preview service is unavailable.",
-        ) from None
+        )
     except PreviewUpstreamError:
-        raise HTTPException(
+        return _preview_json_error_response(
+            request=request,
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="The app preview upstream is unavailable.",
-        ) from None
+        )
 
     response_headers = {
         **PREVIEW_SECURITY_HEADERS,
-        "Content-Type": result.content_type,
+        **cors_headers,
+        **result.headers,
     }
+    preview_base_path = f"/api/v1/deployment-records/{deployment_id}/preview/"
+    response_body = DeploymentPreviewService.rewrite_html_for_preview(
+        result.body,
+        response_headers,
+        preview_base_path=preview_base_path,
+        runtime_auth_token=create_preview_session_token(
+            user_id=current_user.id,
+            deployment_id=deployment_id,
+        ),
+    )
+    base_marker = f'<base href="{preview_base_path}">'.encode("utf-8")
+    shim_marker = b"devdeploy-preview-routing"
+    injected = base_marker in response_body and shim_marker in response_body
+    preview_path_header = f"/{preview_path.lstrip('/')}" if preview_path else "/"
+    response_headers.update(
+        {
+            "X-DevDeploy-Preview-Transport": "port-forward",
+            "X-DevDeploy-Preview-Injected": "true" if injected else "false",
+            "X-DevDeploy-Preview-Path": preview_path_header,
+        }
+    )
+    logger.info(
+        "Deployment preview response prepared: deployment_record_id=%s method=%s preview_path=%s status_code=%s content_type=%s injected=%s body_has_base=%s body_has_shim=%s",
+        deployment_id,
+        method,
+        preview_path_header,
+        result.status_code,
+        response_headers.get("Content-Type", ""),
+        injected,
+        base_marker in response_body,
+        shim_marker in response_body,
+    )
     return Response(
-        content=result.body,
+        content=b"" if method == "HEAD" else response_body,
         status_code=result.status_code,
         headers=response_headers,
     )

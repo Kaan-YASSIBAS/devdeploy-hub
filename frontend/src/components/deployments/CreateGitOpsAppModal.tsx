@@ -17,6 +17,54 @@ type CreateGitOpsAppModalProps = {
 
 const APP_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 
+function normalizePreviewPath(value: string) {
+  const candidate = value.trim();
+  if (!candidate) return "/";
+  const lowered = candidate.toLowerCase().replace(/^\/+/, "");
+  if (
+    candidate.length > 2048 ||
+    candidate.startsWith("//") ||
+    lowered.startsWith("http://") ||
+    lowered.startsWith("https://") ||
+    candidate.includes("\\") ||
+    candidate.startsWith("?") ||
+    candidate.startsWith("#") ||
+    candidate.includes("?") ||
+    candidate.includes("#")
+  ) {
+    return null;
+  }
+
+  let decoded = candidate;
+  for (let index = 0; index < 3; index += 1) {
+    try {
+      const nextValue = decodeURIComponent(decoded);
+      if (nextValue === decoded) break;
+      decoded = nextValue;
+    } catch {
+      return null;
+    }
+  }
+
+  const decodedLowered = decoded.toLowerCase().replace(/^\/+/, "");
+  if (
+    decoded.startsWith("//") ||
+    decodedLowered.startsWith("http://") ||
+    decodedLowered.startsWith("https://") ||
+    decoded.includes("\\") ||
+    decoded.includes("?") ||
+    decoded.includes("#")
+  ) {
+    return null;
+  }
+
+  const normalized = decoded.replace(/^\/+/, "");
+  if (!normalized) return "/";
+  if (normalized.split("/").some((segment) => segment === "." || segment === "..")) {
+    return null;
+  }
+  return `/${normalized}`;
+}
 export function CreateGitOpsAppModal({
   open,
   onOpenChange,
@@ -29,6 +77,7 @@ export function CreateGitOpsAppModal({
   const [replicas, setReplicas] = useState("1");
   const [containerPort, setContainerPort] = useState("80");
   const [servicePort, setServicePort] = useState("80");
+  const [previewPath, setPreviewPath] = useState("/");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -41,6 +90,7 @@ export function CreateGitOpsAppModal({
     setReplicas("1");
     setContainerPort("80");
     setServicePort("80");
+    setPreviewPath("/");
     setError(null);
   }, [open]);
 
@@ -67,6 +117,9 @@ export function CreateGitOpsAppModal({
     if (!Number.isInteger(parsedServicePort) || parsedServicePort < 1 || parsedServicePort > 65535) {
       return t("deployments.gitopsDeploy.validation.servicePort");
     }
+    if (normalizePreviewPath(previewPath) === null) {
+      return t("deployments.gitopsDeploy.validation.previewPath");
+    }
     return null;
   };
 
@@ -78,6 +131,8 @@ export function CreateGitOpsAppModal({
       return;
     }
 
+    const normalizedPreviewPath = normalizePreviewPath(previewPath) ?? "/";
+
     try {
       await onDeploy({
         app_name: appName,
@@ -85,7 +140,8 @@ export function CreateGitOpsAppModal({
         replicas: Number(replicas),
         container_port: Number(containerPort),
         service_port: Number(servicePort),
-        service_type: "ClusterIP"
+        service_type: "ClusterIP",
+        preview_path: normalizedPreviewPath
       });
       setError(null);
       onOpenChange(false);
@@ -173,6 +229,22 @@ export function CreateGitOpsAppModal({
           </div>
         </div>
 
+        <div className="space-y-2">
+          <Label htmlFor="gitops-app-preview-path">
+            {t("deployments.gitopsDeploy.previewPath")} {" "}
+            <span className="normal-case text-slate-500">({t("common.optional")})</span>
+          </Label>
+          <Input
+            autoComplete="off"
+            id="gitops-app-preview-path"
+            placeholder={t("deployments.gitopsDeploy.previewPathPlaceholder")}
+            value={previewPath}
+            onChange={(event) => setPreviewPath(event.target.value)}
+          />
+          <p className="text-xs leading-5 text-slate-500">
+            {t("deployments.gitopsDeploy.previewPathHelper")}
+          </p>
+        </div>
         <div className="space-y-2">
           <Label htmlFor="gitops-app-service-type">{t("deployments.gitopsDeploy.serviceType")}</Label>
           <Select

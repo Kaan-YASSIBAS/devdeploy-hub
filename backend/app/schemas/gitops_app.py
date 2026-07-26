@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.schemas.preview_path import normalize_preview_path
+
 
 class GitOpsAppCreateRequest(BaseModel):
     app_name: str = Field(
@@ -14,6 +16,7 @@ class GitOpsAppCreateRequest(BaseModel):
     container_port: int = Field(default=80, ge=1, le=65535)
     service_port: int = Field(default=80, ge=1, le=65535)
     service_type: Literal["ClusterIP"] = "ClusterIP"
+    preview_path: str = Field(default="/", max_length=2048)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -23,6 +26,11 @@ class GitOpsAppCreateRequest(BaseModel):
         if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value):
             raise ValueError("image contains unsupported characters")
         return value
+
+    @field_validator("preview_path")
+    @classmethod
+    def validate_preview_path(cls, value: str | None) -> str:
+        return normalize_preview_path(value)
 
 
 class GitOpsAppCreateResponse(BaseModel):

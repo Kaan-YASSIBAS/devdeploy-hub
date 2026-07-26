@@ -1,4 +1,5 @@
 from app.models.deployment_record import DeploymentRecord
+from app.schemas.preview_path import preview_path_to_route_suffix
 from app.schemas.deployment_access import (
     DeploymentAccessRead,
     DeploymentAccessServiceRead,
@@ -130,6 +131,12 @@ class DeploymentAccessService:
         )
 
     @staticmethod
+    def _preview_url(deployment: DeploymentRecord) -> str:
+        base = f"/api/v1/deployment-records/{deployment.id}/preview/"
+        suffix = preview_path_to_route_suffix(getattr(deployment, "preview_path", "/"))
+        return f"{base}{suffix}" if suffix else base
+
+    @staticmethod
     def _response(
         deployment: DeploymentRecord,
         *,
@@ -144,7 +151,7 @@ class DeploymentAccessService:
             app_name=deployment.app_name,
             message=message,
             preview_url=(
-                f"/api/v1/deployment-records/{deployment.id}/preview/"
+                DeploymentAccessService._preview_url(deployment)
                 if available
                 else None
             ),

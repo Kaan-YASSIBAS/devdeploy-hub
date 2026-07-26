@@ -109,6 +109,14 @@ class ObservabilityBootstrapAssetsTestCase(unittest.TestCase):
         self.assertIn((("",), ("pods", "services"), ("get", "list", "watch")), runtime_rules)
         self.assertIn((("apps",), ("deployments",), ("get", "list", "watch")), runtime_rules)
         self.assertIn((("",), ("services/proxy",), ("get",)), runtime_rules)
+        self.assertIn((("",), ("pods/portforward",), ("get", "create")), runtime_rules)
+        self.assertTrue(
+            any(
+                rule.get("resources") == ["pods/portforward"]
+                and rule.get("verbs") == ["get", "create"]
+                for rule in runtime_role["rules"]
+            )
+        )
         cluster_rules = {
             (tuple(rule["apiGroups"]), tuple(rule["resources"]), tuple(rule["verbs"]))
             for rule in cluster_role["rules"]
@@ -123,15 +131,24 @@ class ObservabilityBootstrapAssetsTestCase(unittest.TestCase):
         self.assertFalse(
             any("services/proxy" in rule[1] for rule in cluster_rules),
         )
+        self.assertFalse(
+            any("pods/portforward" in rule[1] for rule in cluster_rules),
+        )
+
+        all_rules = proxy_role["rules"] + runtime_role["rules"] + cluster_role["rules"]
+        create_rules = [rule for rule in all_rules if "create" in rule.get("verbs", [])]
+        self.assertEqual(create_rules, [{"apiGroups": [""], "resources": ["pods/portforward"], "verbs": ["get", "create"]}])
+        for rule in all_rules:
+            if rule in create_rules:
+                continue
+            self.assertFalse(
+                set(rule.get("verbs", [])).intersection({"create", "update", "patch", "delete", "impersonate"})
+            )
 
         text = str(documents).lower()
         self.assertNotIn("secrets", text)
         self.assertNotIn("configmaps", text)
-        self.assertNotIn("create", text)
-        self.assertNotIn("update", text)
-        self.assertNotIn("patch", text)
-        self.assertNotIn("delete", text)
-        self.assertNotIn("impersonate", text)
+        self.assertNotIn("cluster-admin", text)
 
     def test_workload_observability_kustomization_renders_only_manifest_assets(self) -> None:
         kustomization = self.read_yaml("kustomization.yaml")

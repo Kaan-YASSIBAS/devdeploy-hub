@@ -44,6 +44,7 @@ class DeploymentRecord(Base):
     container_port = Column(Integer, nullable=False, default=80)
     service_port = Column(Integer, nullable=False, default=80)
     service_type = Column(String(32), nullable=False, default="ClusterIP")
+    preview_path = Column(String(2048), nullable=False, default="/", server_default="/")
     namespace = Column(String(63), nullable=False, default="devdeploy-apps")
     gitops_manifest_path = Column(String(500), nullable=True)
     commit_sha = Column(String(64), nullable=True)
