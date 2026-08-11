@@ -10,3 +10,4 @@ __pycache__/
 logs/
 alembic/__pycache__/
 alembic/versions/__pycache__/
+.devdeploy/

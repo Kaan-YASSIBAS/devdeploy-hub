@@ -9,8 +9,9 @@ RUN apk upgrade --no-cache libcrypto3 libssl3 libexpat \
     && apk add --no-cache git
 
 COPY requirements.txt constraints.txt ./
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt -c constraints.txt
+RUN pip install --no-cache-dir --upgrade pip setuptools==84.0.0 msgpack==1.2.1 \
+    && pip install --no-cache-dir -r requirements.txt -c constraints.txt \
+    && python -m pip uninstall -y pip
 
 RUN addgroup -g 10001 -S app \
     && adduser -u 10001 -S -D -G app -h /app -s /sbin/nologin app

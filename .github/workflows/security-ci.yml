@@ -96,7 +96,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build backend image
-        run: docker build -t devdeploy-backend:security-scan ./backend
+        run: docker build --pull -t devdeploy-backend:security-scan ./backend
 
       - name: Scan backend image
         uses: aquasecurity/trivy-action@v0.35.0
@@ -106,6 +106,7 @@ jobs:
           severity: HIGH,CRITICAL
           format: table
           exit-code: "1"
+          args: --sbom-sources rekor
 
   trivy-image-scan-frontend:
     name: Trivy frontend image scan
