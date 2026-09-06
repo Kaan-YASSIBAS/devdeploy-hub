@@ -14,7 +14,7 @@ RUN npm run build
 FROM nginxinc/nginx-unprivileged:1.29-alpine
 
 USER root
-RUN apk upgrade --no-cache libcrypto3 libssl3 libexpat libxml2 \
+RUN apk upgrade --no-cache \
     && apk del --no-cache curl
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf

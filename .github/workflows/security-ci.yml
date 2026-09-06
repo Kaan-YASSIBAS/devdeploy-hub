@@ -100,13 +100,14 @@ jobs:
 
       - name: Scan backend image
         uses: aquasecurity/trivy-action@v0.35.0
+        env:
+          TRIVY_SBOM_SOURCES: rekor
         with:
           scan-type: image
           image-ref: devdeploy-backend:security-scan
           severity: HIGH,CRITICAL
           format: table
           exit-code: "1"
-          args: --sbom-sources rekor
 
   trivy-image-scan-frontend:
     name: Trivy frontend image scan
