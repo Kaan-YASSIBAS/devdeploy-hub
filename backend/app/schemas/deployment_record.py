@@ -90,19 +90,12 @@ class DeploymentRecordCreate(BaseModel):
 
 
 class DeploymentRecordUpdate(BaseModel):
-    service_definition_id: int | None = None
-    app_name: str | None = Field(default=None, min_length=1, max_length=40, pattern=APP_NAME_PATTERN.pattern)
     image: str | None = Field(default=None, min_length=1, max_length=512)
     replicas: int | None = Field(default=None, ge=1, le=20)
     container_port: int | None = Field(default=None, ge=1, le=65535)
     service_port: int | None = Field(default=None, ge=1, le=65535)
     service_type: Literal["ClusterIP"] | None = None
     preview_path: str | None = Field(default=None, max_length=2048)
-    namespace: str | None = Field(default=None, min_length=1, max_length=63)
-    gitops_manifest_path: str | None = Field(default=None, max_length=500)
-    commit_sha: str | None = None
-    desired_state: DesiredState | None = None
-    status_summary: str | None = Field(default=None, max_length=1000)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -111,41 +104,20 @@ class DeploymentRecordUpdate(BaseModel):
     def validate_image(cls, value: str | None) -> str | None:
         return _clean_image(value) if value is not None else None
 
-    @field_validator("namespace")
-    @classmethod
-    def validate_namespace(cls, value: str | None) -> str | None:
-        if value is not None and not KUBERNETES_NAME_PATTERN.fullmatch(value):
-            raise ValueError("namespace must be a Kubernetes DNS label")
-        return value
-
     @field_validator("preview_path")
     @classmethod
     def validate_preview_path(cls, value: str | None) -> str | None:
         return normalize_preview_path(value) if value is not None else None
 
-    @field_validator("gitops_manifest_path")
-    @classmethod
-    def validate_manifest_path(cls, value: str | None) -> str | None:
-        return _clean_manifest_path(value)
-
-    @field_validator("commit_sha")
-    @classmethod
-    def validate_commit_sha(cls, value: str | None) -> str | None:
-        if value is not None and not COMMIT_SHA_PATTERN.fullmatch(value):
-            raise ValueError("commit SHA must be a full Git object ID")
-        return value.lower() if value else None
-
     @model_validator(mode="after")
     def reject_null_required_fields(self) -> "DeploymentRecordUpdate":
         for field_name in (
-            "app_name",
             "image",
             "replicas",
             "container_port",
             "service_port",
             "service_type",
-            "namespace",
-            "desired_state",
+            "preview_path",
         ):
             if field_name in self.model_fields_set and getattr(self, field_name) is None:
                 raise ValueError(f"{field_name} cannot be null")

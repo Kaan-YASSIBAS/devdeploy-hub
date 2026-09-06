@@ -409,7 +409,7 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(updated.json()["name"], "Payments Platform")
         self.assertEqual(updated.json()["default_replicas"], 3)
 
-    def test_deployment_record_create_list_get_and_update_without_gitops_execution(self) -> None:
+    def test_deployment_record_create_list_get_and_update_draft_without_gitops_execution(self) -> None:
         service = self.create_service()
         with patch(
             "app.services.gitops.deploy_operation.DeployWorkloadOperationService.execute"
@@ -422,10 +422,11 @@ class ProductDomainApiTestCase(unittest.TestCase):
         updated = self.client.patch(
             f"/api/v1/deployment-records/{created['id']}",
             json={
-                "desired_state": "pending",
-                "gitops_manifest_path": "apps/payments-api",
-                "commit_sha": "a" * 40,
-                "status_summary": "Waiting for explicit GitOps publication",
+                "image": "ghcr.io/example/payments:draft-v2",
+                "replicas": 3,
+                "container_port": 9090,
+                "service_port": 8080,
+                "preview_path": "dashboard",
             },
         )
 
@@ -434,8 +435,94 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(fetched.status_code, 200)
         self.assertEqual(fetched.json()["owner_id"], self.user_a.id)
         self.assertEqual(updated.status_code, 200)
-        self.assertEqual(updated.json()["desired_state"], "pending")
-        self.assertEqual(updated.json()["commit_sha"], "a" * 40)
+        self.assertEqual(updated.json()["image"], "ghcr.io/example/payments:draft-v2")
+        self.assertEqual(updated.json()["replicas"], 3)
+        self.assertEqual(updated.json()["container_port"], 9090)
+        self.assertEqual(updated.json()["service_port"], 8080)
+        self.assertEqual(updated.json()["preview_path"], "/dashboard")
+        self.assertEqual(updated.json()["app_name"], created["app_name"])
+        self.assertEqual(updated.json()["namespace"], created["namespace"])
+        self.assertEqual(updated.json()["service_definition_id"], service["id"])
+        self.assertEqual(updated.json()["desired_state"], "draft")
+        self.assertIsNone(updated.json()["gitops_manifest_path"])
+        self.assertIsNone(updated.json()["commit_sha"])
+        self.assertEqual(self.update_operation.requests, [])
+        self.assertEqual(self.recover_operation.requests, [])
+        self.assertEqual(self.destroy_operation.requests, [])
+
+    def test_generic_deployment_patch_rejects_immutable_and_system_owned_fields(self) -> None:
+        service = self.create_service()
+        replacement_service = self.create_service("Replacement API")
+        deployment = self.create_deployment(service["id"])
+        immutable_updates = {
+            "id": 99999,
+            "app_name": "renamed-api",
+            "namespace": "other-namespace",
+            "gitops_manifest_path": "gitops/workloads/devdeploy-apps/apps/renamed-api",
+            "commit_sha": "b" * 40,
+            "service_definition_id": replacement_service["id"],
+            "owner_id": self.user_b.id,
+            "desired_state": "pending",
+            "status_summary": "Client-controlled status",
+            "archived_at": "2026-07-06T12:00:00Z",
+            "created_at": "2026-07-06T12:00:00Z",
+            "updated_at": "2026-07-06T12:00:00Z",
+            "telemetry": {"enabled": True, "mode": "managed_http_proxy"},
+            "runtime_status": {"display_status": "running"},
+            "reconcile_status": {"status": "synced"},
+            "drift_status": {"status": "in_sync"},
+        }
+
+        for field_name, value in immutable_updates.items():
+            with self.subTest(field_name=field_name):
+                response = self.client.patch(
+                    f"/api/v1/deployment-records/{deployment['id']}",
+                    json={field_name: value},
+                )
+                self.assertEqual(response.status_code, 422, response.text)
+
+        unchanged = self.client.get(
+            f"/api/v1/deployment-records/{deployment['id']}"
+        ).json()
+        for field_name in (
+            "id",
+            "owner_id",
+            "service_definition_id",
+            "app_name",
+            "namespace",
+            "gitops_manifest_path",
+            "commit_sha",
+            "desired_state",
+            "status_summary",
+            "archived_at",
+            "created_at",
+        ):
+            self.assertEqual(unchanged[field_name], deployment[field_name])
+        self.assertEqual(unchanged["service_definition_id"], service["id"])
+        self.assertEqual(self.update_operation.requests, [])
+        self.assertEqual(self.recover_operation.requests, [])
+        self.assertEqual(self.destroy_operation.requests, [])
+
+    def test_generic_deployment_patch_cannot_bypass_published_gitops_update(self) -> None:
+        service = self.create_service()
+        deployment = self.create_gitops_deployment(service["id"])
+
+        response = self.client.patch(
+            f"/api/v1/deployment-records/{deployment['id']}",
+            json={"image": "ghcr.io/example/payments:bypass"},
+        )
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn("GitOps update endpoint", response.json()["detail"])
+        unchanged = self.client.get(
+            f"/api/v1/deployment-records/{deployment['id']}"
+        ).json()
+        self.assertEqual(unchanged["image"], deployment["image"])
+        self.assertEqual(unchanged["service_definition_id"], service["id"])
+        self.assertEqual(unchanged["commit_sha"], deployment["commit_sha"])
+        self.assertEqual(self.update_operation.requests, [])
+        self.assertEqual(self.recover_operation.requests, [])
+        self.assertEqual(self.destroy_operation.requests, [])
 
     def test_gitops_deployment_update_publishes_manifest_change_then_updates_domain_record(self) -> None:
         service = self.create_service()
@@ -754,7 +841,7 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(
             self.client.patch(
                 f"/api/v1/deployment-records/{deployment['id']}",
-                json={"desired_state": "pending"},
+                json={"image": "ghcr.io/example/denied:v2"},
             ).status_code,
             403,
         )
@@ -1114,19 +1201,8 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(self.recover_operation.requests, [])
 
     def test_recover_no_change_reuses_existing_commit_and_record(self) -> None:
-        deployment = self.create_deployment()
-        existing_commit = "b" * 40
-        self.assertEqual(
-            self.client.patch(
-                f"/api/v1/deployment-records/{deployment['id']}",
-                json={
-                    "commit_sha": existing_commit,
-                    "gitops_manifest_path": "gitops/workloads/devdeploy-apps/apps/payments-api",
-                    "desired_state": "pending",
-                },
-            ).status_code,
-            200,
-        )
+        deployment = self.create_gitops_deployment()
+        existing_commit = deployment["commit_sha"]
         self.recover_operation.result = DeployWorkloadOperationResult(
             status="no_changes",
             app_name="payments-api",
@@ -1231,19 +1307,8 @@ class ProductDomainApiTestCase(unittest.TestCase):
         self.assertEqual(self.recover_operation.requests, [])
 
     def test_reconcile_no_change_reuses_existing_commit_without_duplicate_record(self) -> None:
-        deployment = self.create_deployment()
-        existing_commit = "b" * 40
-        self.assertEqual(
-            self.client.patch(
-                f"/api/v1/deployment-records/{deployment['id']}",
-                json={
-                    "commit_sha": existing_commit,
-                    "gitops_manifest_path": "gitops/workloads/devdeploy-apps/apps/payments-api",
-                    "desired_state": "pending",
-                },
-            ).status_code,
-            200,
-        )
+        deployment = self.create_gitops_deployment()
+        existing_commit = deployment["commit_sha"]
         self.recover_operation.result = DeployWorkloadOperationResult(
             status="no_changes",
             app_name="payments-api",
@@ -1270,18 +1335,7 @@ class ProductDomainApiTestCase(unittest.TestCase):
 
     def test_owner_can_destroy_active_record_without_deleting_service_definition(self) -> None:
         service = self.create_service("payments-api")
-        deployment = self.create_deployment(service["id"])
-        self.assertEqual(
-            self.client.patch(
-                f"/api/v1/deployment-records/{deployment['id']}",
-                json={
-                    "desired_state": "pending",
-                    "gitops_manifest_path": "gitops/workloads/devdeploy-apps/apps/payments-api",
-                    "commit_sha": "a" * 40,
-                },
-            ).status_code,
-            200,
-        )
+        deployment = self.create_gitops_deployment(service["id"])
 
         response = self.client.post(
             f"/api/v1/deployment-records/{deployment['id']}/destroy",

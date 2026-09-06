@@ -106,18 +106,19 @@ class DeploymentRecordService:
         user: User,
     ) -> DeploymentRecord:
         deployment = self.get(deployment_id, user)
-        data = payload.model_dump(exclude_unset=True)
-        if data.get("desired_state") == "destroyed":
+        if (
+            deployment.archived_at is not None
+            or deployment.gitops_manifest_path is not None
+            or deployment.desired_state != "draft"
+        ):
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Use the destroy endpoint to mark deployment records as destroyed.",
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Only active draft deployment records can use the generic update endpoint. "
+                    "Use the GitOps update endpoint for published deployments."
+                ),
             )
-        if "service_definition_id" in data:
-            self._owned_service(
-                data["service_definition_id"],
-                expected_owner_id=deployment.owner_id,
-                user=user,
-            )
+        data = payload.model_dump(exclude_unset=True)
         updated = self.deployments.update(deployment, data)
         self.db.commit()
         self.db.refresh(updated)
